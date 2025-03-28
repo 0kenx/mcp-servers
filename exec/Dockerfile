@@ -31,7 +31,7 @@ RUN apt-get update && \
         git \
         curl \
         wget \
-        vim \
+        ripgrep \
         nano \
         jq \
         zip \
@@ -42,7 +42,14 @@ RUN apt-get update && \
         software-properties-common \
         apt-transport-https \
         nodejs \
-        npm && \
+        npm \
+        less \
+        iproute2 \
+        net-tools \
+        iputils-ping \
+        dnsutils \
+        gnupg \
+        openssh-client && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -55,8 +62,6 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     numpy \
     matplotlib \
     seaborn \
-    scikit-learn \
-    jupyterlab \
     black \
     flake8 \
     mypy \

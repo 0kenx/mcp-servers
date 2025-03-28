@@ -40,10 +40,14 @@ PACKAGE_MANAGERS = {
 # List of pre-installed tools
 PREINSTALLED_TOOLS = [
     # Basic utilities
-    "bash", "curl", "wget", "vim", "nano", "git", "jq", "zip", "unzip",
+    "bash", "curl", "wget", "nano", "git", "jq", "zip", "unzip", "rg", "cat", "sed", "uniq", "grep",
+    # Additional tools
+    "less", "netstat", "ifconfig", "ping", "nslookup", "ip",
+    # Security and SSH tools
+    "gpg", "ssh", "scp", "ssh-keygen", "ssh-agent"
     # Python and packages
     "python", "pip", "ipython", "requests", "pandas", "numpy", "matplotlib", "seaborn", 
-    "scikit-learn", "jupyterlab", "black", "flake8", "mypy", "pytest",
+    "black", "flake8", "mypy", "pytest",
     # Node.js and npm
     "nodejs", "npm"
 ]
@@ -377,28 +381,9 @@ def install_tool(tool: str, package_manager: str = None) -> str:
 
 
 @mcp.tool()
-def install_tools(tools: List[str]) -> str:
+def install_tools(config: Dict[str, List[str]]) -> str:
     """
-    Install multiple tools or packages.
-    
-    Args:
-        tools: List of tool/package names to install
-        
-    Returns:
-        Installation results for each tool
-    """
-    results = []
-    for tool in tools:
-        result = install_tool(tool)
-        results.append(f"{tool}: {result}")
-    
-    return "\n".join(results)
-
-
-@mcp.tool()
-def configure_tools(config: Dict[str, List[str]]) -> str:
-    """
-    Configure and install tools based on a configuration dictionary.
+    Install tools based on a configuration dictionary.
     
     Args:
         config: Dictionary mapping package managers to lists of packages
