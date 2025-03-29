@@ -49,23 +49,13 @@ RUN apt-get update && \
         iputils-ping \
         dnsutils \
         gnupg \
-        openssh-client && \
+        openssh-client \
+        pkg-config \
+        libssl-dev \
+        cmake \
+        && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
-
-# Install Python tools and packages
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir \
-    ipython \
-    requests \
-    pandas \
-    numpy \
-    matplotlib \
-    seaborn \
-    black \
-    flake8 \
-    mypy \
-    pytest
 
 # Change user to non-root
 ARG USERNAME=dev
@@ -85,13 +75,43 @@ RUN groupadd --gid $USER_GID $USERNAME \
 # Copy the application from the builder
 COPY --from=builder --chown=$USERNAME:$USERNAME /app /app
 
+# Make sure the user owns their home directory and tools
+RUN chown -R $USERNAME:$USERNAME /home/$USERNAME
+
 # Set working directory
 WORKDIR /app
 
-# Set the default user.
+# Change to the regular user
 USER $USERNAME
 
-# Place executables in the environment at the front of the path
-ENV PATH="/app/.venv/bin:$PATH"
+# Install Rust (rustup and cargo)
+#RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
+#    echo 'source "$HOME/.cargo/env"' >> /home/$USERNAME/.bashrc
+#RUN $HOME/.cargo/bin/rustup component add rustfmt clippy rust-analyzer && \
+#    $HOME/.cargo/bin/cargo install cargo-watch
+
+# Install Python tools and packages
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir \
+    ipython \
+    requests \
+    pandas \
+    numpy \
+    matplotlib \
+    seaborn \
+    black \
+    flake8 \
+    mypy \
+    pytest
+
+# Install Go
+#RUN curl -OL https://golang.org/dl/go1.24.1.linux-amd64.tar.gz && \
+#    tar -C /usr/local -xzf go1.24.1.linux-amd64.tar.gz && \
+#    rm go1.24.1.linux-amd64.tar.gz && \
+#    echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> /home/$USERNAME/.bashrc
+
+
+# Set environment variables
+ENV PATH="/app/.venv/bin:/home/$USERNAME/.cargo/bin:/usr/local/go/bin:/home/$USERNAME/go/bin:$PATH"
 
 ENTRYPOINT ["python", "/app/src/exec.py"]

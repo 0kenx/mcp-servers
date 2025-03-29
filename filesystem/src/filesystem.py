@@ -686,8 +686,8 @@ def list_directory(path: str) -> str:
         return f"Error listing directory {path}: {str(e)}"
 
 
-@mcp.tool()
-def directory_tree(
+
+def full_directory_tree(
     path: str,
     count_lines: bool = False,
     show_permissions: bool = False,
@@ -796,7 +796,7 @@ def directory_tree(
 
 
 @mcp.tool()
-def git_directory_tree(
+def directory_tree(
     path: str,
     count_lines: bool = False,
     show_permissions: bool = False,
@@ -821,7 +821,7 @@ def git_directory_tree(
     # Check if this is a git repository
     git_dir = os.path.join(validated_path, ".git")
     if not os.path.isdir(git_dir):
-        return f"Error: {path} is not a git repository (no .git directory found)."
+        return full_directory_tree(path, count_lines, show_permissions, show_owner, show_size)
 
     # Find git executable
     git_cmd = shutil.which("git")

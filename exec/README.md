@@ -11,6 +11,7 @@ A Managed Command Processor (MCP) for executing shell commands, Python scripts, 
 - Auto-detect the appropriate package manager for tools
 - List all installed tools and packages
 - Configure the environment with predefined tool sets
+- **NEW**: Multi-language development environments (Rust, Go, Python, JS/TS, Solidity)
 
 ## Available Tools
 
@@ -49,13 +50,31 @@ A Managed Command Processor (MCP) for executing shell commands, Python scripts, 
   - `config`: Dictionary mapping package managers to package lists
   - Example: `{"apt": ["git", "curl"], "pip": ["requests", "numpy"]}`
 
-## Preinstalled Tools
+## Preinstalled Development Environments
 
-The MCP comes with the following tools preinstalled:
+The MCP now comes with the following development environments preinstalled:
 
-- **Basic Utilities**: bash, curl, wget, vim, nano, git, jq, zip, unzip
-- **Python Packages**: python, pip, ipython, requests, pandas, numpy, matplotlib, seaborn, scikit-learn, jupyterlab, black, flake8, mypy, pytest
-- **JavaScript Tools**: nodejs, npm
+### Basic Utilities
+- bash, curl, wget, vim, nano, git, jq, zip, unzip
+
+### Python Environment
+- python 3.12, pip, ipython, requests, pandas, numpy, matplotlib, seaborn
+- Development tools: black, flake8, mypy, pytest
+
+### JavaScript/TypeScript Environment
+- Node.js (v20.x), npm, yarn
+- TypeScript and ts-node globally installed
+
+### Rust Environment
+- rustup, cargo, rustc
+- Additional components: rustfmt, clippy, rust-analyzer
+- Cargo extensions: cargo-watch, cargo-edit, cargo-generate
+
+### Go Environment
+- Go 1.22.1 with standard toolchain
+
+### Solidity Environment
+- Foundry suite: forge, cast, anvil
 
 ## Usage Examples
 
@@ -82,6 +101,29 @@ print(f"Min value: {y.min()}")
 """, script_type="python", timeout=10)
 ```
 
+### Compile and Run a Rust Program
+
+```
+execute_script("""
+fn main() {
+    println!("Hello from Rust!");
+    
+    // Simple fibonacci calculation
+    let n = 10;
+    let mut a = 0;
+    let mut b = 1;
+    
+    for _ in 0..n {
+        let temp = a;
+        a = b;
+        b = temp + b;
+    }
+    
+    println!("Fibonacci number {} is {}", n, a);
+}
+""", script_type="rust", timeout=10)
+```
+
 ### Install a New Tool
 
 ```
@@ -104,8 +146,10 @@ Build the Docker container locally:
 
 ```bash
 # Build the image
-docker build -t mcp-exec .
+./build.sh
 
+# Verify all development environments
+docker run -it --rm mcp-exec /app/verify_envs.sh
 ```
 
 ## Security Notice
