@@ -948,7 +948,9 @@ def get_relative_path(absolute_path: Path) -> str:
     try:
         return str(absolute_path.relative_to(workspace_root))
     except ValueError:
-        raise HistoryError(f"Path {absolute_path} is not within workspace root {workspace_root}")
+        raise HistoryError(
+            f"Path {absolute_path} is not within workspace root {workspace_root}"
+        )
 
 
 def handle_status(args: argparse.Namespace) -> None:
@@ -965,7 +967,9 @@ def handle_status(args: argparse.Namespace) -> None:
 
     log.info(f"Checking status in: {workspace_root}/")
     print(f"{HISTORY_DIR_NAME}")
-    print("EDIT_ID                              TIMESTAMP                  STATUS   OP       CONV_ID      FILE_PATH")
+    print(
+        "EDIT_ID                              TIMESTAMP                  STATUS   OP       CONV_ID      FILE_PATH"
+    )
     print("-" * 100)
 
     # Get all log files
@@ -1045,7 +1049,8 @@ def handle_show(args: argparse.Namespace) -> None:
                 if diff_path.exists():
                     print(f"\nDiff for {entry['file_path']}:")
                     print(diff_path.read_text())
-    else:
+                else:
+                    print(f"No diff file found for edit {target_id}")
         # Show single entry's diff
         if found_entry.get("diff_file"):
             diff_path = history_root / found_entry["diff_file"]
@@ -1187,10 +1192,10 @@ def main():
     parser_accept = subparsers.add_parser("accept", help="Mark edits as accepted.")
     group_accept = parser_accept.add_mutually_exclusive_group(required=True)
     group_accept.add_argument(
-        "-e","--edit-id", help="The specific edit_id to accept."
+        "-e", "--edit-id", help="The specific edit_id to accept."
     )  # Changed to --edit-id for clarity
     group_accept.add_argument(
-        "-c","--conv", help="Accept all pending edits for a conversation_id."
+        "-c", "--conv", help="Accept all pending edits for a conversation_id."
     )
     parser_accept.set_defaults(func=handle_accept)
     # reject
@@ -1199,10 +1204,10 @@ def main():
     )
     group_reject = parser_reject.add_mutually_exclusive_group(required=True)
     group_reject.add_argument(
-        "-e","--edit-id", help="The specific edit_id to reject."
+        "-e", "--edit-id", help="The specific edit_id to reject."
     )  # Changed to --edit-id
     group_reject.add_argument(
-        "-c","--conv", help="Reject all pending/accepted edits for a conversation_id."
+        "-c", "--conv", help="Reject all pending/accepted edits for a conversation_id."
     )
     parser_reject.set_defaults(func=handle_reject)
 

@@ -89,27 +89,31 @@ _last_tool_call_time: Optional[float] = None
 _conversation_timeout: float = 120.0  # seconds
 _conversation_lock = threading.Lock()
 
+
 def _get_or_create_conversation_id() -> str:
     """
     Get the current conversation ID or create a new one if needed.
     Thread-safe and handles timeouts.
     """
     global _current_conversation_id, _last_tool_call_time
-    
+
     with _conversation_lock:
         current_time = time.time()
-        
+
         # If no conversation exists or timeout occurred, create new one
-        if (_current_conversation_id is None or 
-            _last_tool_call_time is None or 
-            current_time - _last_tool_call_time > _conversation_timeout):
+        if (
+            _current_conversation_id is None
+            or _last_tool_call_time is None
+            or current_time - _last_tool_call_time > _conversation_timeout
+        ):
             _current_conversation_id = str(int(current_time))
             _last_tool_call_time = current_time
             log.info(f"Created new conversation: {_current_conversation_id}")
-        
+
         # Update last tool call time
         _last_tool_call_time = current_time
         return _current_conversation_id
+
 
 def finish_edit() -> str:
     """
@@ -117,26 +121,34 @@ def finish_edit() -> str:
     The next tool call will start a new conversation.
     """
     global _current_conversation_id, _last_tool_call_time
-    
+
     with _conversation_lock:
         if _current_conversation_id is None:
             return "No active conversation to finish"
-        
+
         conversation_id = _current_conversation_id
         _current_conversation_id = None
         _last_tool_call_time = None
         log.info(f"Finished conversation: {conversation_id}")
         return f"Finished conversation: {conversation_id}"
 
+
 # --- History Tracking Decorator ---
 def track_edit_history(func: Callable) -> Callable:
     """
     Decorator for MCP tools that modify files to track their history.
     Handles locking, checkpointing, diff generation, and logging.
+    Skips history tracking if the operation is a dry run.
     """
 
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
+        # Check if this is a dry run
+        is_dry_run = kwargs.get("dry_run", False)
+        if is_dry_run:
+            # Skip history tracking for dry runs
+            return func(*args, **kwargs)
+
         wrapper_args = list(args)
         wrapper_kwargs = kwargs.copy()
 
@@ -159,7 +171,9 @@ def track_edit_history(func: Callable) -> Callable:
         conversation_id = _get_or_create_conversation_id()
         current_index = get_next_tool_call_index(conversation_id)
         tool_name = func.__name__
-        log.info(f"Tracking call {current_index} for {tool_name} in conv {conversation_id}")
+        log.info(
+            f"Tracking call {current_index} for {tool_name} in conv {conversation_id}"
+        )
 
         # Determine paths
         file_path_str: Optional[str] = None
@@ -176,7 +190,9 @@ def track_edit_history(func: Callable) -> Callable:
 
         # Retrieve allowed_directories
         if "SERVER_ALLOWED_DIRECTORIES" not in globals():
-            log.critical("SERVER_ALLOWED_DIRECTORIES not found in global scope. Cannot validate path.")
+            log.critical(
+                "SERVER_ALLOWED_DIRECTORIES not found in global scope. Cannot validate path."
+            )
             return "Internal Server Error: Server configuration for allowed directories not found."
         allowed_dirs = globals()["SERVER_ALLOWED_DIRECTORIES"]
 
@@ -235,7 +251,11 @@ def track_edit_history(func: Callable) -> Callable:
 
         # Convert absolute paths to relative paths from workspace root
         relative_file_path = validated_path.relative_to(workspace_root)
-        relative_source_path = validated_source_path.relative_to(workspace_root) if validated_source_path else None
+        relative_source_path = (
+            validated_source_path.relative_to(workspace_root)
+            if validated_source_path
+            else None
+        )
 
         content_before: Optional[List[str]] = None
         hash_before: Optional[str] = None
@@ -311,7 +331,9 @@ def track_edit_history(func: Callable) -> Callable:
             hash_after: Optional[str] = None
             if operation != "delete":
                 try:
-                    with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
+                    with open(
+                        validated_path, "r", encoding="utf-8", errors="ignore"
+                    ) as f:
                         content_after = f.readlines()
                     hash_after = calculate_hash(str(validated_path))
                 except IOError as e:
@@ -342,11 +364,15 @@ def track_edit_history(func: Callable) -> Callable:
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "operation": operation,
                 "file_path": str(relative_file_path),
-                "source_path": str(relative_source_path) if relative_source_path else None,
+                "source_path": str(relative_source_path)
+                if relative_source_path
+                else None,
                 "tool_name": tool_name,
                 "status": "pending",
                 "diff_file": str(relative_diff_path) if diff_content else None,
-                "checkpoint_file": str(relative_checkpoint_path) if checkpoint_created else None,
+                "checkpoint_file": str(relative_checkpoint_path)
+                if checkpoint_created
+                else None,
                 "hash_before": hash_before,
                 "hash_after": hash_after,
             }
@@ -996,21 +1022,25 @@ def list_allowed_directories() -> str:
 
 @mcp.tool()
 @track_edit_history
-def write_file(path: str, content: Union[str, Dict[str, Any]]) -> str:
+def write_file(path: str, content: str) -> str:
     """
     Create a new file or completely overwrite an existing file with new content.
-    If content is a dictionary, it will be automatically converted to a JSON string.
+    If the content is a JSON string, it will be automatically formatted.
     Use with caution as it will overwrite existing files without warning.
     """
     try:
         validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
         # Ensure parent directory exists
         Path(validated_path).parent.mkdir(parents=True, exist_ok=True)
-        
-        # Convert dictionary to JSON string if needed
-        if isinstance(content, dict):
-            content = json.dumps(content, indent=2)
-        
+
+        # Try to parse and format JSON if it's valid JSON
+        try:
+            json_obj = json.loads(content)
+            content = json.dumps(json_obj, indent=2)
+        except json.JSONDecodeError:
+            # Not valid JSON, use content as-is
+            pass
+
         with open(validated_path, "w", encoding="utf-8") as f:
             f.write(content)
         return f"Successfully wrote to {path}"
@@ -1035,31 +1065,19 @@ def edit_file_diff(
         replacements: Dictionary {existing_content: new_content} for replacements.
         inserts: Dictionary {anchor_content: content_to_insert_after}. Empty string "" for anchor inserts at the beginning.
         replace_all: If True, replace/insert after all occurrences; if False, only the first.
-        dry_run: If True, simulate changes but don't write to disk or history.
+        dry_run: If True, show proposed changes without making them.
 
     Returns:
-        A message indicating the changes applied or validation result
+        A message indicating the changes applied or validation result.
+        For dry runs, returns a unified diff showing proposed changes.
     """
-    # --- Dry Run Handling ---
-    if dry_run:
-        log.info(f"Dry run for edit_file_diff on {path}.")
-        try:
-            validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
-            if os.path.exists(validated_path):
-                # TODO: Add simulation logic here if desired, e.g., read content and check if keys exist
-                pass
-            return f"Dry run validation successful for {path}"
-        except Exception as e:
-            return f"Dry run validation failed for {path}: {str(e)}"
-
-    # --- Non-Dry Run Core Logic ---
     try:
         validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
         replacements = replacements or {}
         inserts = inserts or {}
         operations = {"replace": 0, "insert": 0, "errors": []}
 
-        # Read current content (decorator has snapshot, but edits are sequential)
+        # Read current content
         with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
         new_content = content
@@ -1071,6 +1089,15 @@ def edit_file_diff(
             if not old_text:
                 operations["errors"].append("Err: Empty replace key")
                 continue
+
+            # Try to parse and format JSON if it's valid JSON
+            try:
+                json_obj = json.loads(new_text)
+                new_text = json.dumps(json_obj, indent=2)
+            except json.JSONDecodeError:
+                # Not valid JSON, use new_text as-is
+                pass
+
             count = new_content.count(old_text)
             if count == 0:
                 operations["errors"].append(
@@ -1085,6 +1112,15 @@ def edit_file_diff(
         for anchor_text, insert_text in inserts.items():
             if not isinstance(anchor_text, str) or not isinstance(insert_text, str):
                 continue
+
+            # Try to parse and format JSON if it's valid JSON
+            try:
+                json_obj = json.loads(insert_text)
+                insert_text = json.dumps(json_obj, indent=2)
+            except json.JSONDecodeError:
+                # Not valid JSON, use insert_text as-is
+                pass
+
             if anchor_text == "":
                 new_content = insert_text + new_content
                 operations["insert"] += 1
@@ -1111,7 +1147,26 @@ def edit_file_diff(
                     )
                     operations["insert"] += 1
 
-        # --- Write Modified Content ---
+        # --- Handle Dry Run ---
+        if dry_run:
+            if operations["errors"]:
+                return "Dry run validation failed:\n" + "\n".join(operations["errors"])
+
+            # Generate unified diff showing proposed changes
+            try:
+                diff_content = generate_diff(
+                    content.splitlines(),
+                    new_content.splitlines(),
+                    str(validated_path),
+                    str(validated_path),
+                )
+                if diff_content:
+                    return f"Dry run - proposed changes for {path}:\n\n{diff_content}"
+                return f"Dry run - no changes would be made to {path}"
+            except Exception as e:
+                return f"Error generating dry run diff: {str(e)}"
+
+        # --- Apply Changes ---
         if not operations["errors"]:
             with open(validated_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
