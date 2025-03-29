@@ -398,7 +398,7 @@ def track_edit_history(func: Callable) -> Callable:
 
 @mcp.tool()
 def read_file(path: str) -> str:
-    """Read the complete contents of a file."""
+    """Read the complete contents of a file. Prefer using `read_multiple_files` if you need to read multiple files."""
     try:
         validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
         with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -470,26 +470,12 @@ def read_file_by_line(path: str, ranges: List[str]) -> str:
 def read_file_by_keyword(
     path: str,
     keyword: str,
-    before: int = 0,
-    after: int = 0,
+    include_lines_before: int = 0,
+    include_lines_after: int = 0,
     use_regex: bool = False,
     ignore_case: bool = False,
 ) -> str:
-    """
-    Read lines containing a keyword or matching a regex pattern, with optional context.
-    Overlapping regions are combined.
-
-    Args:
-        path: Path to the file
-        keyword: The keyword to search for, or a regex pattern if use_regex is True
-        before: Number of lines to include before each match (default: 0)
-        after: Number of lines to include after each match (default: 0)
-        use_regex: Whether to interpret the keyword as a regular expression (default: False)
-        ignore_case: Whether to ignore case when matching (default: False)
-
-    Returns:
-        Matching lines with context, or a message if no matches are found.
-    """
+    """Read lines containing a keyword or matching a regex pattern, with option to specify the number of lines to include before and after each match."""
     try:
         validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
         with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -519,8 +505,8 @@ def read_file_by_keyword(
     # Determine the ranges of lines to include (with context)
     regions = []
     for match in matches:
-        start = max(0, match - before)
-        end = min(len(lines) - 1, match + after)
+        start = max(0, match - include_lines_before)
+        end = min(len(lines) - 1, match + include_lines_after)
         regions.append((start, end))
 
     # Combine overlapping regions
@@ -576,20 +562,15 @@ def read_file_by_keyword(
 
 @mcp.tool()
 def read_function_by_keyword(
-    path: str, keyword: str, before: int = 0, use_regex: bool = False
+    path: str, keyword: str, include_lines_before: int = 0, use_regex: bool = False
 ) -> str:
     """
     Read a function definition from a file by keyword or regex pattern.
 
-    Searches for the keyword, then captures the function definition by:
-    1. Looking for an opening brace after the keyword
-    2. Tracking brace nesting to find the matching closing brace
-    3. Including the specified number of lines before the function
-
     Args:
         path: Path to the file
         keyword: Keyword to identify the function (usually the function name), or a regex pattern if use_regex is True
-        before: Number of lines to include before the function definition
+        include_lines_before: Number of lines to include before the function definition
         use_regex: Whether to interpret the keyword as a regular expression (default: False)
 
     Returns:
@@ -649,7 +630,7 @@ def read_function_by_keyword(
             return f"Found function at line {match_idx + 1}, but could not locate matching closing brace."
 
         # Include the requested number of lines before the function
-        start_idx = max(0, match_idx - before)
+        start_idx = max(0, match_idx - include_lines_before)
 
         # Extract the function with line numbers
         result = []
@@ -665,9 +646,7 @@ def read_function_by_keyword(
 
 @mcp.tool()
 def create_directory(path: str) -> str:
-    """
-    Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation. If the directory already exists, this operation will succeed silently. Only works within allowed directories.
-    """
+    """Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation. If the directory already exists, this operation will succeed silently."""
     try:
         validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
         os.makedirs(validated_path, exist_ok=True)
@@ -678,12 +657,7 @@ def create_directory(path: str) -> str:
 
 @mcp.tool()
 def list_directory(path: str) -> str:
-    """
-    Get a detailed listing of all files and directories in a specified path.
-    Results clearly distinguish between files and directories with [FILE] and [DIR]
-    prefixes. This tool is essential for understanding directory structure and
-    finding specific files within a directory. Only works within allowed directories.
-    """
+    """Get a detailed listing of all files and directories in a specified path. This tool is similar to the `ls` command. If you need to know the contents of subdirectories, use `directory_tree` instead."""
     try:
         validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
         if not os.path.isdir(validated_path):
@@ -706,7 +680,7 @@ def list_directory(path: str) -> str:
 
 def full_directory_tree(
     path: str,
-    count_lines: bool = False,
+    show_line_count: bool = False,
     show_permissions: bool = False,
     show_owner: bool = False,
     show_size: bool = False,
@@ -716,7 +690,7 @@ def full_directory_tree(
 
     Args:
         path: Path to the directory to display
-        count_lines: Whether to include the number of lines for each file (default: False)
+        show_line_count: Whether to include the number of lines for each file (default: False)
         show_permissions: Whether to show file permissions (default: False)
         show_owner: Whether to show file ownership information (default: False)
         show_size: Whether to show file sizes (default: False)
@@ -794,7 +768,7 @@ def full_directory_tree(
                     metadata = get_metadata(
                         str(entry_path),
                         True,
-                        count_lines,
+                        show_line_count,
                         show_permissions,
                         show_owner,
                         show_size,
@@ -815,31 +789,20 @@ def full_directory_tree(
 @mcp.tool()
 def directory_tree(
     path: str,
-    count_lines: bool = False,
+    show_line_count: bool = False,
     show_permissions: bool = False,
     show_owner: bool = False,
     show_size: bool = False,
+    show_files_ignored_by_git: bool = False,
 ) -> str:
-    """
-    Get a recursive listing of git-tracked files and directories with optional metadata.
-
-    Args:
-        path: Path to the git repository directory
-        count_lines: Whether to include the number of lines for each file (default: False)
-        show_permissions: Whether to show file permissions (default: False)
-        show_owner: Whether to show file ownership information (default: False)
-        show_size: Whether to show file sizes (default: False)
-
-    Returns:
-        A text representation of git-tracked files with full paths and requested metadata
-    """
+    """Get a recursive listing of files and directories inclding subdirectoies. By default no extra metadata is shown and gitignored files are not included."""
     validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
 
     # Check if this is a git repository
     git_dir = os.path.join(validated_path, ".git")
-    if not os.path.isdir(git_dir):
+    if show_files_ignored_by_git or not os.path.isdir(git_dir):
         return full_directory_tree(
-            path, count_lines, show_permissions, show_owner, show_size
+            path, show_line_count, show_permissions, show_owner, show_size
         )
 
     # Find git executable
@@ -910,7 +873,7 @@ def directory_tree(
                     metadata = get_metadata(
                         file_path,
                         True,
-                        count_lines,
+                        show_line_count,
                         show_permissions,
                         show_owner,
                         show_size,
@@ -1023,11 +986,7 @@ def list_allowed_directories() -> str:
 @mcp.tool()
 @track_edit_history
 def write_file(path: str, content: str) -> str:
-    """
-    Create a new file or completely overwrite an existing file with new content.
-    If the content is a JSON string, it will be automatically formatted.
-    Use with caution as it will overwrite existing files without warning.
-    """
+    """Create a new file or completely overwrite an existing file with new content. Use with caution as it will overwrite existing files without warning."""
     try:
         validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
         # Ensure parent directory exists
@@ -1069,7 +1028,23 @@ def edit_file_diff(
 
     Returns:
         A message indicating the changes applied or validation result.
-        For dry runs, returns a unified diff showing proposed changes.
+
+    Example:
+        edit_file_diff(
+            "myfile.py",
+            replacements={
+                "def old_function():\\n    return False\\n": "def new_function():\\n    return True\\n",
+                "MAX_RETRIES = 3": "MAX_RETRIES = 5",
+                "deleted_function() {}": "",
+            },
+            inserts={
+                "": "# Insert comment at beginning of file\\n",
+                "import os": "import sys\\nimport logging\\n",
+                "def main():": "    # Main function follows\\n",
+                "return result  # last line": "# End of file\\n"
+            },
+            replace_all=False
+        )
     """
     try:
         validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
@@ -1223,7 +1198,7 @@ def delete_file(path: str) -> str:
 
 @mcp.tool()
 def finish_edit() -> str:
-    """End the current conversation. The next tool call will start a new conversation."""
+    """Call this tool after all edits are done. This is required by the MCP server."""
     return finish_edit()
 
 
