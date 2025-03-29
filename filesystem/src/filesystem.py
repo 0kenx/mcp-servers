@@ -798,9 +798,17 @@ def directory_tree(
     """Get a recursive listing of files and directories inclding subdirectoies. By default no extra metadata is shown and gitignored files are not included."""
     validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
 
-    # Check if this is a git repository
-    git_dir = os.path.join(validated_path, ".git")
-    if show_files_ignored_by_git or not os.path.isdir(git_dir):
+    # Check if this path is within a git repository by walking up the directory tree
+    def find_git_root(start_path: str) -> Optional[str]:
+        current = Path(start_path).resolve()
+        while current != current.parent:  # Stop at root
+            if (current / ".git").exists():
+                return str(current)
+            current = current.parent
+        return None
+
+    git_root = find_git_root(validated_path)
+    if not git_root or show_files_ignored_by_git:
         return full_directory_tree(
             path, show_line_count, show_permissions, show_owner, show_size
         )
@@ -825,10 +833,7 @@ def directory_tree(
             return "Error: Git executable not found. Please ensure Git is installed and in your PATH."
 
     try:
-        # Change into the repository directory and run git ls-files
-        original_dir = os.getcwd()
-        os.chdir(validated_path)
-
+        output_lines = []
         try:
             # git config --global --add safe.directory /path
             subprocess.run(
@@ -838,7 +843,7 @@ def directory_tree(
                     "--global",
                     "--add",
                     "safe.directory",
-                    validated_path,
+                    git_root,
                 ],
                 capture_output=False,
                 text=False,
@@ -850,48 +855,49 @@ def directory_tree(
                 [git_cmd, "ls-files"], capture_output=True, text=True, check=True
             )
 
-            git_files = list(result.stdout.strip().split("\n"))
-            if not git_files or (len(git_files) == 1 and not git_files[0]):
-                return "No tracked files found in the repository."
+        git_files = list(result.stdout.strip().split("\n"))
+        if not git_files or (len(git_files) == 1 and not git_files[0]):
+            return "No tracked files found in the repository."
 
-            # Add repository root as the first entry
-            output_lines = [f"{validated_path}/ [git repository root]"]
+        # Get the relative path from git root to the requested directory
+        rel_path = os.path.relpath(validated_path, git_root)
+        if rel_path == ".":
+            rel_path = ""
 
-            # Collect tracked files
-            for rel_file in git_files:
-                if not rel_file:  # Skip empty lines
-                    continue
+        # Collect tracked files
+        for rel_file in git_files:
+            if not rel_file:  # Skip empty lines
+                continue
 
-                # Skip .git directory and its contents
-                if rel_file.startswith(".git/"):
-                    continue
+            # Skip .git directory and its contents
+            if rel_file.startswith(".git/"):
+                continue
 
-                file_path = os.path.join(validated_path, rel_file)
+            # Skip files not under the requested directory
+            if rel_path and not rel_file.startswith(rel_path + os.sep):
+                continue
 
-                # Get and add metadata
-                if os.path.exists(file_path):
-                    metadata = get_metadata(
-                        file_path,
-                        True,
-                        show_line_count,
-                        show_permissions,
-                        show_owner,
-                        show_size,
-                    )
-                    if metadata:
-                        output_lines.append(f"{file_path} [{metadata}]")
-                    else:
-                        output_lines.append(file_path)
+            file_path = os.path.join(git_root, rel_file)
+
+            # Get and add metadata
+            if os.path.exists(file_path):
+                metadata = get_metadata(
+                    file_path,
+                    True,
+                    show_line_count,
+                    show_permissions,
+                    show_owner,
+                    show_size,
+                )
+                if metadata:
+                    output_lines.append(f"{file_path} [{metadata}]")
                 else:
-                    # Handle case where file is tracked but doesn't exist locally
-                    output_lines.append(f"{file_path} [tracked but missing]")
+                    output_lines.append(file_path)
+            else:
+                # Handle case where file is tracked but doesn't exist locally
+                output_lines.append(f"{file_path} [tracked but missing]")
 
-            return "\n".join(output_lines)
-
-        finally:
-            # Ensure we change back to the original directory even if an error occurs
-            if os.getcwd() != original_dir:
-                os.chdir(original_dir)
+        return "\n".join(output_lines)
 
     except subprocess.CalledProcessError as e:
         return f"Error executing git command: {e.stderr}"
