@@ -59,6 +59,9 @@ try:
         print("Error: No valid allowed directories provided.", file=sys.stderr)
         sys.exit(1)
 
+    # Initialize working directory as None
+    WORKING_DIRECTORY = None
+
     # Validate that all directories exist and are accessible
     for i, dir_arg in enumerate(sys.argv[1:]):
         dir_path = SERVER_ALLOWED_DIRECTORIES[i]  # Use the already processed path
@@ -68,9 +71,9 @@ try:
                 file=sys.stderr,
             )
             sys.exit(1)
-        if not os.access(dir_path, os.R_OK | os.W_OK | os.X_OK):
+        if not os.access(dir_path, os.R_OK):
             print(
-                f"Error: Insufficient permissions (need rwx) for allowed directory '{dir_path}'.",
+                f"Error: Insufficient permissions (need read access) for allowed directory '{dir_path}'.",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -834,26 +837,26 @@ def directory_tree(
 
     try:
         output_lines = []
-        try:
-            # git config --global --add safe.directory /path
-            subprocess.run(
-                [
-                    git_cmd,
-                    "config",
-                    "--global",
-                    "--add",
-                    "safe.directory",
-                    git_root,
-                ],
-                capture_output=False,
-                text=False,
-                check=False,
-            )
 
-            # Run git ls-files to get all tracked files
-            result = subprocess.run(
-                [git_cmd, "ls-files"], capture_output=True, text=True, check=True
-            )
+        # git config --global --add safe.directory /path
+        subprocess.run(
+            [
+                git_cmd,
+                "config",
+                "--global",
+                "--add",
+                "safe.directory",
+                git_root,
+            ],
+            capture_output=False,
+            text=False,
+            check=False,
+        )
+
+        # Run git ls-files to get all tracked files
+        result = subprocess.run(
+            [git_cmd, "ls-files"], capture_output=True, text=True, check=True
+        )
 
         git_files = list(result.stdout.strip().split("\n"))
         if not git_files or (len(git_files) == 1 and not git_files[0]):
@@ -992,9 +995,9 @@ def list_allowed_directories() -> str:
 @mcp.tool()
 @track_edit_history
 def write_file(path: str, content: str) -> str:
-    """Create a new file or completely overwrite an existing file with new content. Use with caution as it will overwrite existing files without warning."""
+    """Create a new file or completely overwrite an existing file with new content. Use with caution as it will overwrite existing files without warning. Prefer using edit_file_diff if the lines changed account for less than 25% of the file."""
     try:
-        validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+        validated_path = validate_path(path, WORKING_DIRECTORY)
         # Ensure parent directory exists
         Path(validated_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -1023,7 +1026,7 @@ def edit_file_diff(
     dry_run: bool = False,
 ) -> str:
     """
-    Edit a file using diff logic.
+    Edit a file using diff logic. Prefer using this over write_file if the lines changed account for less than 25% of the file.
 
     Args:
         path: Path to the file to edit.
@@ -1053,7 +1056,7 @@ def edit_file_diff(
         )
     """
     try:
-        validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+        validated_path = validate_path(path, WORKING_DIRECTORY)
         replacements = replacements or {}
         inserts = inserts or {}
         operations = {"replace": 0, "insert": 0, "errors": []}
@@ -1175,8 +1178,8 @@ def move_file(source: str, destination: str) -> str:
     """Move/rename a file."""
     try:
         # Decorator validates both source and dest using SERVER_ALLOWED_DIRECTORIES
-        validated_source_path = validate_path(source, SERVER_ALLOWED_DIRECTORIES)
-        validated_dest_path = validate_path(destination, SERVER_ALLOWED_DIRECTORIES)
+        validated_source_path = validate_path(source, WORKING_DIRECTORY)
+        validated_dest_path = validate_path(destination, WORKING_DIRECTORY)
         if os.path.exists(validated_dest_path):
             return f"Error: Destination path {destination} already exists."
         Path(validated_dest_path).parent.mkdir(parents=True, exist_ok=True)
@@ -1191,7 +1194,7 @@ def move_file(source: str, destination: str) -> str:
 def delete_file(path: str) -> str:
     """Delete a file."""
     try:
-        validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+        validated_path = validate_path(path, WORKING_DIRECTORY)
         # Existence/type checks happen within decorator now before op
         if os.path.isdir(validated_path):
             return f"Error: Path {path} is a directory."
@@ -1206,6 +1209,42 @@ def delete_file(path: str) -> str:
 def finish_edit() -> str:
     """Call this tool after all edits are done. This is required by the MCP server."""
     return finish_edit()
+
+
+@mcp.tool()
+def set_working_directory(path: str) -> str:
+    """
+    Set the working directory for file operations. This directory must be within one of the allowed directories.
+    Only files within the working directory can be modified.
+    """
+    global WORKING_DIRECTORY
+    try:
+        # First validate the path is within allowed directories
+        validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+
+        # Check if it's a directory
+        if not os.path.isdir(validated_path):
+            return f"Error: '{path}' is not a directory."
+
+        # Check if we have write permissions
+        if not os.access(validated_path, os.W_OK):
+            return f"Error: No write permission for directory '{path}'."
+
+        # Set the working directory
+        WORKING_DIRECTORY = validated_path
+        return f"Working directory set to: {validated_path}"
+    except ValueError as e:
+        return f"Error: {str(e)}"
+    except Exception as e:
+        return f"Error setting working directory: {str(e)}"
+
+
+@mcp.tool()
+def get_working_directory() -> str:
+    """Get the current working directory for file operations."""
+    if WORKING_DIRECTORY is None:
+        return "No working directory set"
+    return WORKING_DIRECTORY
 
 
 if __name__ == "__main__":
