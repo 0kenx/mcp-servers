@@ -34,22 +34,34 @@ PACKAGE_MANAGERS = {
         "install": ["npm", "install", "-g"],
         "search": ["npm", "search"],
         "list": ["npm", "list", "-g", "--depth=0"],
+    },
+    "cargo": {
+        "install": ["cargo", "install"],
+        "search": ["cargo", "search"],
+        "list": ["cargo", "install", "--list"],
     }
 }
 
-# List of pre-installed tools
-PREINSTALLED_TOOLS = [
+# List of pre-installed commands
+PREINSTALLED_COMMANDS = [
     # Basic utilities
     "bash", "curl", "wget", "nano", "git", "jq", "zip", "unzip", "rg", "cat", "sed", "uniq", "grep",
-    # Additional tools
+    # Additional commands
     "less", "netstat", "ifconfig", "ping", "nslookup", "ip",
-    # Security and SSH tools
-    "gpg", "ssh", "scp", "ssh-keygen", "ssh-agent"
+    # Security and SSH
+    "gpg", "ssh", "scp", "ssh-keygen", "ssh-agent",
     # Python and packages
     "python", "pip", "ipython", "requests", "pandas", "numpy", "matplotlib", "seaborn", 
     "black", "flake8", "mypy", "pytest",
     # Node.js and npm
-    "nodejs", "npm"
+    "nodejs", "npm", "yarn", "typescript", "ts-node",
+    # Rust ecosystem
+    "rustc", "cargo", "rustup", "rustfmt", "clippy", "rust-analyzer", 
+    "cargo-watch", "cargo-edit", "cargo-generate",
+    # Go ecosystem
+    "go", "gofmt", "godoc",
+    # Build essentials and development tools
+    "gcc", "g++", "make", "cmake", "pkg-config", "libssl-dev"
 ]
 
 class OutputType(Enum):
@@ -153,8 +165,8 @@ def format_output(result: Dict[str, Any], output_type: OutputType) -> str:
     return "\n".join(output)
 
 
-def is_tool_installed(name: str) -> bool:
-    """Check if a command-line tool is installed"""
+def is_command_installed(name: str) -> bool:
+    """Check if a terminal command is installed"""
     return shutil.which(name) is not None
 
 
@@ -170,6 +182,10 @@ def detect_package_manager(package: str) -> str:
     # Node.js package
     if package.startswith("node-"):
         return "npm"
+    
+    # Rust package (crate)
+    if package.startswith("rust-") or package.startswith("cargo-"):
+        return "cargo"
     
     # Default to apt for system packages
     return "apt"
@@ -265,7 +281,7 @@ def execute_script(
     
     Args:
         script: The script content to execute
-        script_type: Type of script (bash, python, js)
+        script_type: Type of script (bash, python, js, go, rust)
         timeout: Maximum execution time in seconds
         output_type: Which outputs to return ("stdout", "stderr", "both")
         
@@ -291,6 +307,50 @@ def execute_script(
             command = ["python", script_path]
         elif script_type == "js" or script_type == "javascript":
             command = ["node", script_path]
+        elif script_type == "ts" or script_type == "typescript":
+            command = ["ts-node", script_path]
+        elif script_type == "rust" or script_type == "rs":
+            # For Rust, we need to compile and then run
+            rust_dir = tempfile.mkdtemp()
+            src_dir = os.path.join(rust_dir, "src")
+            os.makedirs(src_dir)
+            
+            # Move the script to the src directory
+            rs_file = os.path.join(src_dir, "main.rs")
+            shutil.move(script_path, rs_file)
+            
+            # Create a simple Cargo.toml
+            with open(os.path.join(rust_dir, "Cargo.toml"), "w") as f:
+                f.write("""
+[package]
+name = "temp_script"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+                """.strip())
+            
+            # Compile and run
+            compile_cmd = ["cargo", "build", "--release"]
+            compile_result = run_command(compile_cmd, timeout=60, output_enum=output_enum, shell=False)
+            
+            if compile_result["returncode"] == 0:
+                command = [os.path.join(rust_dir, "target", "release", "temp_script")]
+            else:
+                return format_output(compile_result, output_enum)
+        elif script_type == "go":
+            # For Go, we need to compile and then run
+            go_file = script_path
+            exe_file = script_path + ".exe"
+            
+            # Compile the Go code
+            compile_cmd = ["go", "build", "-o", exe_file, go_file]
+            compile_result = run_command(compile_cmd, timeout=60, output_enum=output_enum, shell=False)
+            
+            if compile_result["returncode"] == 0:
+                command = [exe_file]
+            else:
+                return format_output(compile_result, output_enum)
         else:
             os.unlink(script_path)
             return f"Unsupported script type: {script_type}"
@@ -302,78 +362,38 @@ def execute_script(
         return format_output(result, output_enum)
     finally:
         # Clean up the temporary file
-        os.unlink(script_path)
+        if os.path.exists(script_path):
+            os.unlink(script_path)
 
 
 @mcp.tool()
-def list_installed_tools() -> str:
-    """
-    List all the tools and packages installed in the system.
-    
-    Returns:
-        Formatted list of installed tools and packages
-    """
-    output = ["# Installed Tools and Packages", ""]
-    
-    # List installed apt packages
-    apt_result = run_command(PACKAGE_MANAGERS["apt"]["list"])
-    if apt_result["returncode"] == 0:
-        packages = apt_result["stdout"].strip().split("\n")
-        output.append("## System Packages (apt)")
-        for package in packages:
-            if package and "installed" in package:
-                output.append(f"- {package.split('/')[0]}")
-        output.append("")
-    
-    # List installed pip packages
-    pip_result = run_command(PACKAGE_MANAGERS["pip"]["list"])
-    if pip_result["returncode"] == 0:
-        packages = pip_result["stdout"].strip().split("\n")[2:]  # Skip header rows
-        output.append("## Python Packages (pip)")
-        for package in packages:
-            if package:
-                parts = package.split()
-                if len(parts) >= 2:
-                    output.append(f"- {parts[0]} ({parts[1]})")
-        output.append("")
-    
-    # List installed npm packages
-    npm_result = run_command(PACKAGE_MANAGERS["npm"]["list"])
-    if npm_result["returncode"] == 0:
-        packages = npm_result["stdout"].strip().split("\n")[1:]  # Skip first line
-        output.append("## Node.js Packages (npm)")
-        for package in packages:
-            if package and "├──" in package:
-                package_info = package.split("├──")[1].strip()
-                if package_info:
-                    output.append(f"- {package_info}")
-        output.append("")
-    
-    return "\n".join(output)
+def list_installed_commands() -> str:
+    """List all the commands installed in the system."""
+    return "\n".join(PREINSTALLED_COMMANDS)
 
 
 @mcp.tool()
-def install_tool(tool: str, package_manager: str = None) -> str:
+def install_command(command: str, package_manager: str = None) -> str:
     """
-    Install a tool or package.
+    Install a command or package.
     
     Args:
-        tool: Name of the tool or package to install
+        command: Name of the command or package to install
         package_manager: Override the auto-detected package manager (apt, pip, npm)
         
     Returns:
         Installation result message
     """
-    # Check if the tool is already installed
-    if is_tool_installed(tool) or tool in PREINSTALLED_TOOLS:
-        return f"{tool} is already installed"
+    # Check if the command is already installed
+    if is_command_installed(command) or command in PREINSTALLED_COMMANDS:
+        return f"{command} is already installed"
     
     # Install the package
-    result = install_package(tool, package_manager)
+    result = install_package(command, package_manager)
     
     if result["success"]:
-        # Add to preinstalled tools list for future reference
-        PREINSTALLED_TOOLS.append(tool)
+        # Add to preinstalled commands list for future reference
+        PREINSTALLED_COMMANDS.append(command)
         return result["message"]
     else:
         error_details = result.get("error", "")
@@ -381,16 +401,16 @@ def install_tool(tool: str, package_manager: str = None) -> str:
 
 
 @mcp.tool()
-def install_tools(config: Dict[str, List[str]]) -> str:
+def configure_packages(config: Dict[str, List[str]]) -> str:
     """
-    Install tools based on a configuration dictionary.
+    Configure and install packages based on a configuration dictionary.
     
     Args:
         config: Dictionary mapping package managers to lists of packages
                Example: {"apt": ["git", "curl"], "pip": ["requests", "numpy"]}
         
     Returns:
-        Installation results for each tool
+        Installation results for each package
     """
     results = []
     
@@ -400,7 +420,7 @@ def install_tools(config: Dict[str, List[str]]) -> str:
             continue
         
         for package in packages:
-            result = install_tool(package, package_manager)
+            result = install_package(package, package_manager)
             results.append(f"{package} ({package_manager}): {result}")
     
     return "\n".join(results)

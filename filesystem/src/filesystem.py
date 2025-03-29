@@ -7,10 +7,13 @@ import inspect
 import uuid
 import fnmatch
 from pathlib import Path
-from typing import List, Dict, Optional, Any, Callable
+from typing import List, Dict, Optional, Any, Callable, Union
 from datetime import datetime, timezone
 from functools import wraps
 from mcp.server.fastmcp import FastMCP
+import threading
+import time
+import json
 
 from mcp_edit_utils import (
     normalize_path,
@@ -56,6 +59,9 @@ try:
         print("Error: No valid allowed directories provided.", file=sys.stderr)
         sys.exit(1)
 
+    # Initialize working directory as None
+    WORKING_DIRECTORY = None
+
     # Validate that all directories exist and are accessible
     for i, dir_arg in enumerate(sys.argv[1:]):
         dir_path = SERVER_ALLOWED_DIRECTORIES[i]  # Use the already processed path
@@ -65,9 +71,9 @@ try:
                 file=sys.stderr,
             )
             sys.exit(1)
-        if not os.access(dir_path, os.R_OK | os.W_OK | os.X_OK):
+        if not os.access(dir_path, os.R_OK):
             print(
-                f"Error: Insufficient permissions (need rwx) for allowed directory '{dir_path}'.",
+                f"Error: Insufficient permissions (need read access) for allowed directory '{dir_path}'.",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -80,18 +86,72 @@ except Exception as e:
     print(f"Error processing allowed directories: {e}", file=sys.stderr)
     sys.exit(1)
 
+# --- Global Conversation Tracking ---
+_current_conversation_id: Optional[str] = None
+_last_tool_call_time: Optional[float] = None
+_conversation_timeout: float = 120.0  # seconds
+_conversation_lock = threading.Lock()
+
+
+def _get_or_create_conversation_id() -> str:
+    """
+    Get the current conversation ID or create a new one if needed.
+    Thread-safe and handles timeouts.
+    """
+    global _current_conversation_id, _last_tool_call_time
+
+    with _conversation_lock:
+        current_time = time.time()
+
+        # If no conversation exists or timeout occurred, create new one
+        if (
+            _current_conversation_id is None
+            or _last_tool_call_time is None
+            or current_time - _last_tool_call_time > _conversation_timeout
+        ):
+            _current_conversation_id = str(int(current_time))
+            _last_tool_call_time = current_time
+            log.info(f"Created new conversation: {_current_conversation_id}")
+
+        # Update last tool call time
+        _last_tool_call_time = current_time
+        return _current_conversation_id
+
+
+def finish_edit() -> str:
+    """
+    End the current conversation and return its ID.
+    The next tool call will start a new conversation.
+    """
+    global _current_conversation_id, _last_tool_call_time
+
+    with _conversation_lock:
+        if _current_conversation_id is None:
+            return "No active conversation to finish"
+
+        conversation_id = _current_conversation_id
+        _current_conversation_id = None
+        _last_tool_call_time = None
+        log.info(f"Finished conversation: {conversation_id}")
+        return f"Finished conversation: {conversation_id}"
+
 
 # --- History Tracking Decorator ---
 def track_edit_history(func: Callable) -> Callable:
     """
     Decorator for MCP tools that modify files to track their history.
     Handles locking, checkpointing, diff generation, and logging.
-    Requires the decorated function to accept 'mcp_conversation_id' as a
-    keyword argument and 'allowed_dirs' list passed via kwargs to the decorator call itself if needed.
+    Skips history tracking if the operation is a dry run.
     """
 
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
+        # Check if this is a dry run
+        is_dry_run = kwargs.get("dry_run", False)
+        if is_dry_run:
+            # Skip history tracking for dry runs
+            return func(*args, **kwargs)
+
         wrapper_args = list(args)
         wrapper_kwargs = kwargs.copy()
 
@@ -110,12 +170,8 @@ def track_edit_history(func: Callable) -> Callable:
             log.error(f"Bind failed for {func.__name__}: {e}.")
             return f"Error: Missing required arguments for {func.__name__}."
 
-        conversation_id = bound_args.arguments.get("mcp_conversation_id")
-        if not conversation_id or not isinstance(conversation_id, str):
-            return (
-                f"Error: mcp_conversation_id (string) is required for {func.__name__}."
-            )
-
+        # Get or create conversation ID
+        conversation_id = _get_or_create_conversation_id()
         current_index = get_next_tool_call_index(conversation_id)
         tool_name = func.__name__
         log.info(
@@ -134,11 +190,8 @@ def track_edit_history(func: Callable) -> Callable:
 
         if not file_path_str:
             return "Internal Server Error: Path argument missing."
-        # Retrieve allowed_directories - THIS IS THE KEY DEPENDENCY
-        # Assuming it's available globally in the server's scope for now.
-        # If not, it MUST be passed somehow (e.g., via func default, context, decorator arg)
-        # Let's pretend it's available globally called `SERVER_ALLOWED_DIRECTORIES`
-        # You MUST replace this with the actual way you access the list
+
+        # Retrieve allowed_directories
         if "SERVER_ALLOWED_DIRECTORIES" not in globals():
             log.critical(
                 "SERVER_ALLOWED_DIRECTORIES not found in global scope. Cannot validate path."
@@ -198,6 +251,15 @@ def track_edit_history(func: Callable) -> Callable:
         checkpoint_dir.mkdir(exist_ok=True)
         relative_diff_path = Path(DIFFS_DIR) / conversation_id / f"{edit_id}.diff"
         diff_file_path = history_root / relative_diff_path
+
+        # Convert absolute paths to relative paths from workspace root
+        relative_file_path = validated_path.relative_to(workspace_root)
+        relative_source_path = (
+            validated_source_path.relative_to(workspace_root)
+            if validated_source_path
+            else None
+        )
+
         content_before: Optional[List[str]] = None
         hash_before: Optional[str] = None
         checkpoint_created = False
@@ -248,127 +310,86 @@ def track_edit_history(func: Callable) -> Callable:
             current_log_entries = read_log_file(log_file_path)
             seen_paths = set(
                 e["file_path"] for e in current_log_entries if "file_path" in e
-            ) | set(
-                e.get("source_path")
-                for e in current_log_entries
-                if e.get("source_path")
             )
-            needs_checkpoint = str(path_to_checkpoint) not in seen_paths
 
-            if (
-                needs_checkpoint
-                and operation != "create"
-                and file_existed_before_locked
-            ):
-                log.info(f"Creating checkpoint for {path_to_checkpoint}...")
-                try:
-                    with (
-                        open(path_to_checkpoint, "rb") as fr,
-                        open(checkpoint_file, "wb") as fw,
-                    ):
-                        fw.write(fr.read())
-                    checkpoint_created = True
-                except Exception as e:
-                    log.error(f"Checkpoint failed: {e}")
-                    relative_checkpoint_path = None
+            # Only create checkpoint if this is the first time we're seeing this path
+            if str(relative_file_path) not in seen_paths:
+                checkpoint_created = True
+                if file_existed_before_locked:
+                    try:
+                        shutil.copy2(path_to_checkpoint, checkpoint_file)
+                    except IOError as e:
+                        log.error(f"Failed to create checkpoint: {e}")
+                        raise HistoryError(f"Failed to create checkpoint: {e}")
 
-            # --- Execute Original Function ---
-            call_args = bound_args.arguments.copy()  # Get dict of args
-            original_result = func(**call_args)  # Call original func
+            # --- Execute Operation ---
+            try:
+                result = func(*wrapper_args, **wrapper_kwargs)
+            except Exception as e:
+                log.error(f"Operation failed: {e}")
+                raise
 
             # --- Read State After Operation ---
-            hash_after: Optional[str] = None
             content_after: Optional[List[str]] = None
-            path_after_op = validated_path
-            file_exists_after = path_after_op.exists()
-            if operation != "delete" and file_exists_after:
-                hash_after = calculate_hash(str(path_after_op))
-                if operation != "move":
-                    try:
-                        with open(
-                            path_after_op, "r", encoding="utf-8", errors="ignore"
-                        ) as f:
-                            content_after = f.readlines()
-                    except IOError:
-                        content_after = None
-            elif operation != "delete" and not file_exists_after:
-                log.warning(
-                    f"File {path_after_op} gone after non-delete op {tool_name}"
-                )
-                content_after = []
-
-            # --- Generate and Save Diff ---
-            diff_content: Optional[str] = None
-            if (
-                operation in ["create", "replace", "edit"]
-                and content_before is not None
-                and content_after is not None
-            ):
-                rel_path_diff = sanitize_path_for_filename(
-                    str(validated_path), workspace_root
-                )
-                diff_content = generate_diff(
-                    content_before, content_after, rel_path_diff, rel_path_diff
-                )
+            hash_after: Optional[str] = None
+            if operation != "delete":
                 try:
-                    with open(diff_file_path, "w", encoding="utf-8") as f:
-                        f.write(diff_content)
+                    with open(
+                        validated_path, "r", encoding="utf-8", errors="ignore"
+                    ) as f:
+                        content_after = f.readlines()
+                    hash_after = calculate_hash(str(validated_path))
                 except IOError as e:
-                    log.error(f"Failed write diff: {e}")
+                    log.error(f"Failed to read file after operation: {e}")
+                    content_after = None
+                    hash_after = None
 
-            # --- Create and Append Log Entry ---
-            log_entry = {  # Fields as defined before
+            # --- Generate Diff ---
+            if content_before is not None and content_after is not None:
+                try:
+                    diff_content = generate_diff(
+                        content_before,
+                        content_after,
+                        str(relative_file_path),
+                        str(relative_file_path),
+                    )
+                    if diff_content:
+                        diff_file_path.write_text(diff_content)
+                except Exception as e:
+                    log.error(f"Failed to generate diff: {e}")
+                    raise HistoryError(f"Failed to generate diff: {e}")
+
+            # --- Log Entry ---
+            log_entry = {
                 "edit_id": edit_id,
                 "conversation_id": conversation_id,
                 "tool_call_index": current_index,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "operation": operation,
-                "file_path": str(validated_path),
-                "source_path": str(validated_source_path)
-                if validated_source_path
+                "file_path": str(relative_file_path),
+                "source_path": str(relative_source_path)
+                if relative_source_path
                 else None,
                 "tool_name": tool_name,
                 "status": "pending",
-                "diff_file": str(relative_diff_path)
-                if diff_content is not None
-                else None,
+                "diff_file": str(relative_diff_path) if diff_content else None,
                 "checkpoint_file": str(relative_checkpoint_path)
                 if checkpoint_created
                 else None,
                 "hash_before": hash_before,
                 "hash_after": hash_after,
             }
+
             current_log_entries.append(log_entry)
             write_log_file(log_file_path, current_log_entries)
 
-            return original_result  # Success
+            return result
 
-        except (
-            ValueError,
-            FileNotFoundError,
-            IsADirectoryError,
-            HistoryError,
-            TimeoutError,
-        ) as e:
-            log.warning(f"Op failed for {tool_name} on {file_path_str}: {e}")
-            # Return error message directly if safe, or use original result if func returned error string
-            return (
-                str(e)
-                if isinstance(
-                    e, (FileNotFoundError, IsADirectoryError, TimeoutError, ValueError)
-                )
-                else f"Error: {e}"
-            )
-        except Exception as e:
-            log.exception(
-                f"Unexpected error in track_edit_history for {tool_name}: {e}"
-            )
-            return f"Internal Server Error during history tracking: {e}"
         finally:
             # --- Release Locks ---
-            release_lock(log_file_lock)
             release_lock(target_file_lock)
             release_lock(source_file_lock)
+            release_lock(log_file_lock)
 
     return wrapper
 
@@ -380,7 +401,7 @@ def track_edit_history(func: Callable) -> Callable:
 
 @mcp.tool()
 def read_file(path: str) -> str:
-    """Read the complete contents of a file."""
+    """Read the complete contents of a file. Prefer using `read_multiple_files` if you need to read multiple files."""
     try:
         validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
         with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -452,26 +473,12 @@ def read_file_by_line(path: str, ranges: List[str]) -> str:
 def read_file_by_keyword(
     path: str,
     keyword: str,
-    before: int = 0,
-    after: int = 0,
+    include_lines_before: int = 0,
+    include_lines_after: int = 0,
     use_regex: bool = False,
     ignore_case: bool = False,
 ) -> str:
-    """
-    Read lines containing a keyword or matching a regex pattern, with optional context.
-    Overlapping regions are combined.
-
-    Args:
-        path: Path to the file
-        keyword: The keyword to search for, or a regex pattern if use_regex is True
-        before: Number of lines to include before each match (default: 0)
-        after: Number of lines to include after each match (default: 0)
-        use_regex: Whether to interpret the keyword as a regular expression (default: False)
-        ignore_case: Whether to ignore case when matching (default: False)
-
-    Returns:
-        Matching lines with context, or a message if no matches are found.
-    """
+    """Read lines containing a keyword or matching a regex pattern, with option to specify the number of lines to include before and after each match."""
     try:
         validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
         with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -501,8 +508,8 @@ def read_file_by_keyword(
     # Determine the ranges of lines to include (with context)
     regions = []
     for match in matches:
-        start = max(0, match - before)
-        end = min(len(lines) - 1, match + after)
+        start = max(0, match - include_lines_before)
+        end = min(len(lines) - 1, match + include_lines_after)
         regions.append((start, end))
 
     # Combine overlapping regions
@@ -558,20 +565,15 @@ def read_file_by_keyword(
 
 @mcp.tool()
 def read_function_by_keyword(
-    path: str, keyword: str, before: int = 0, use_regex: bool = False
+    path: str, keyword: str, include_lines_before: int = 0, use_regex: bool = False
 ) -> str:
     """
     Read a function definition from a file by keyword or regex pattern.
 
-    Searches for the keyword, then captures the function definition by:
-    1. Looking for an opening brace after the keyword
-    2. Tracking brace nesting to find the matching closing brace
-    3. Including the specified number of lines before the function
-
     Args:
         path: Path to the file
         keyword: Keyword to identify the function (usually the function name), or a regex pattern if use_regex is True
-        before: Number of lines to include before the function definition
+        include_lines_before: Number of lines to include before the function definition
         use_regex: Whether to interpret the keyword as a regular expression (default: False)
 
     Returns:
@@ -631,7 +633,7 @@ def read_function_by_keyword(
             return f"Found function at line {match_idx + 1}, but could not locate matching closing brace."
 
         # Include the requested number of lines before the function
-        start_idx = max(0, match_idx - before)
+        start_idx = max(0, match_idx - include_lines_before)
 
         # Extract the function with line numbers
         result = []
@@ -647,9 +649,7 @@ def read_function_by_keyword(
 
 @mcp.tool()
 def create_directory(path: str) -> str:
-    """
-    Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation. If the directory already exists, this operation will succeed silently. Only works within allowed directories.
-    """
+    """Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation. If the directory already exists, this operation will succeed silently."""
     try:
         validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
         os.makedirs(validated_path, exist_ok=True)
@@ -660,12 +660,7 @@ def create_directory(path: str) -> str:
 
 @mcp.tool()
 def list_directory(path: str) -> str:
-    """
-    Get a detailed listing of all files and directories in a specified path.
-    Results clearly distinguish between files and directories with [FILE] and [DIR]
-    prefixes. This tool is essential for understanding directory structure and
-    finding specific files within a directory. Only works within allowed directories.
-    """
+    """Get a detailed listing of all files and directories in a specified path. This tool is similar to the `ls` command. If you need to know the contents of subdirectories, use `directory_tree` instead."""
     try:
         validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
         if not os.path.isdir(validated_path):
@@ -686,10 +681,9 @@ def list_directory(path: str) -> str:
         return f"Error listing directory {path}: {str(e)}"
 
 
-@mcp.tool()
-def directory_tree(
+def full_directory_tree(
     path: str,
-    count_lines: bool = False,
+    show_line_count: bool = False,
     show_permissions: bool = False,
     show_owner: bool = False,
     show_size: bool = False,
@@ -699,7 +693,7 @@ def directory_tree(
 
     Args:
         path: Path to the directory to display
-        count_lines: Whether to include the number of lines for each file (default: False)
+        show_line_count: Whether to include the number of lines for each file (default: False)
         show_permissions: Whether to show file permissions (default: False)
         show_owner: Whether to show file ownership information (default: False)
         show_size: Whether to show file sizes (default: False)
@@ -777,7 +771,7 @@ def directory_tree(
                     metadata = get_metadata(
                         str(entry_path),
                         True,
-                        count_lines,
+                        show_line_count,
                         show_permissions,
                         show_owner,
                         show_size,
@@ -796,32 +790,31 @@ def directory_tree(
 
 
 @mcp.tool()
-def git_directory_tree(
+def directory_tree(
     path: str,
-    count_lines: bool = False,
+    show_line_count: bool = False,
     show_permissions: bool = False,
     show_owner: bool = False,
     show_size: bool = False,
+    show_files_ignored_by_git: bool = False,
 ) -> str:
-    """
-    Get a recursive listing of git-tracked files and directories with optional metadata.
-
-    Args:
-        path: Path to the git repository directory
-        count_lines: Whether to include the number of lines for each file (default: False)
-        show_permissions: Whether to show file permissions (default: False)
-        show_owner: Whether to show file ownership information (default: False)
-        show_size: Whether to show file sizes (default: False)
-
-    Returns:
-        A text representation of git-tracked files with full paths and requested metadata
-    """
+    """Get a recursive listing of files and directories inclding subdirectoies. By default no extra metadata is shown and gitignored files are not included."""
     validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
 
-    # Check if this is a git repository
-    git_dir = os.path.join(validated_path, ".git")
-    if not os.path.isdir(git_dir):
-        return f"Error: {path} is not a git repository (no .git directory found)."
+    # Check if this path is within a git repository by walking up the directory tree
+    def find_git_root(start_path: str) -> Optional[str]:
+        current = Path(start_path).resolve()
+        while current != current.parent:  # Stop at root
+            if (current / ".git").exists():
+                return str(current)
+            current = current.parent
+        return None
+
+    git_root = find_git_root(validated_path)
+    if not git_root or show_files_ignored_by_git:
+        return full_directory_tree(
+            path, show_line_count, show_permissions, show_owner, show_size
+        )
 
     # Find git executable
     git_cmd = shutil.which("git")
@@ -843,73 +836,71 @@ def git_directory_tree(
             return "Error: Git executable not found. Please ensure Git is installed and in your PATH."
 
     try:
-        # Change into the repository directory and run git ls-files
-        original_dir = os.getcwd()
-        os.chdir(validated_path)
+        output_lines = []
 
-        try:
-            # git config --global --add safe.directory /path
-            subprocess.run(
-                [
-                    git_cmd,
-                    "config",
-                    "--global",
-                    "--add",
-                    "safe.directory",
-                    validated_path,
-                ],
-                capture_output=False,
-                text=False,
-                check=False,
-            )
+        # git config --global --add safe.directory /path
+        subprocess.run(
+            [
+                git_cmd,
+                "config",
+                "--global",
+                "--add",
+                "safe.directory",
+                git_root,
+            ],
+            capture_output=False,
+            text=False,
+            check=False,
+        )
 
-            # Run git ls-files to get all tracked files
-            result = subprocess.run(
-                [git_cmd, "ls-files"], capture_output=True, text=True, check=True
-            )
+        # Run git ls-files to get all tracked files
+        result = subprocess.run(
+            [git_cmd, "ls-files"], capture_output=True, text=True, check=True
+        )
 
-            git_files = list(result.stdout.strip().split("\n"))
-            if not git_files or (len(git_files) == 1 and not git_files[0]):
-                return "No tracked files found in the repository."
+        git_files = list(result.stdout.strip().split("\n"))
+        if not git_files or (len(git_files) == 1 and not git_files[0]):
+            return "No tracked files found in the repository."
 
-            # Add repository root as the first entry
-            output_lines = [f"{validated_path}/ [git repository root]"]
+        # Get the relative path from git root to the requested directory
+        rel_path = os.path.relpath(validated_path, git_root)
+        if rel_path == ".":
+            rel_path = ""
 
-            # Collect tracked files
-            for rel_file in git_files:
-                if not rel_file:  # Skip empty lines
-                    continue
+        # Collect tracked files
+        for rel_file in git_files:
+            if not rel_file:  # Skip empty lines
+                continue
 
-                # Skip .git directory and its contents
-                if rel_file.startswith(".git/"):
-                    continue
+            # Skip .git directory and its contents
+            if rel_file.startswith(".git/"):
+                continue
 
-                file_path = os.path.join(validated_path, rel_file)
+            # Skip files not under the requested directory
+            if rel_path and not rel_file.startswith(rel_path + os.sep):
+                continue
 
-                # Get and add metadata
-                if os.path.exists(file_path):
-                    metadata = get_metadata(
-                        file_path,
-                        True,
-                        count_lines,
-                        show_permissions,
-                        show_owner,
-                        show_size,
-                    )
-                    if metadata:
-                        output_lines.append(f"{file_path} [{metadata}]")
-                    else:
-                        output_lines.append(file_path)
+            file_path = os.path.join(git_root, rel_file)
+
+            # Get and add metadata
+            if os.path.exists(file_path):
+                metadata = get_metadata(
+                    file_path,
+                    True,
+                    show_line_count,
+                    show_permissions,
+                    show_owner,
+                    show_size,
+                )
+                if metadata:
+                    output_lines.append(f"{file_path} [{metadata}]")
                 else:
-                    # Handle case where file is tracked but doesn't exist locally
-                    output_lines.append(f"{file_path} [tracked but missing]")
+                    output_lines.append(file_path)
+            else:
+                # Handle case where file is tracked but doesn't exist locally
+                output_lines.append(f"{file_path} [tracked but missing]")
 
-            return "\n".join(output_lines)
-
-        finally:
-            # Ensure we change back to the original directory even if an error occurs
-            if os.getcwd() != original_dir:
-                os.chdir(original_dir)
+        return "\n".join(output_lines)
 
     except subprocess.CalledProcessError as e:
         return f"Error executing git command: {e.stderr}"
@@ -1003,14 +994,21 @@ def list_allowed_directories() -> str:
 
 @mcp.tool()
 @track_edit_history
-def write_file(path: str, content: str, mcp_conversation_id: str) -> str:
-    """
-    Create a new file or completely overwrite an existing file with new content. Use with caution as it will overwrite existing files without warning. Only works within allowed directories. mcp_conversation_id is required for history tracking, and should be unique for each LLM response and the same across multiple tool calls.
-    """
+def write_file(path: str, content: str) -> str:
+    """Create a new file or completely overwrite an existing file with new content. Use with caution as it will overwrite existing files without warning. Prefer using edit_file_diff if the lines changed account for less than 25% of the file."""
     try:
-        validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+        validated_path = validate_path(path, WORKING_DIRECTORY)
         # Ensure parent directory exists
         Path(validated_path).parent.mkdir(parents=True, exist_ok=True)
+
+        # Try to parse and format JSON if it's valid JSON
+        try:
+            json_obj = json.loads(content)
+            content = json.dumps(json_obj, indent=2)
+        except json.JSONDecodeError:
+            # Not valid JSON, use content as-is
+            pass
+
         with open(validated_path, "w", encoding="utf-8") as f:
             f.write(content)
         return f"Successfully wrote to {path}"
@@ -1026,29 +1024,27 @@ def edit_file_diff(
     inserts: Dict[str, str] = None,
     replace_all: bool = True,
     dry_run: bool = False,
-    mcp_conversation_id: Optional[str] = None,
 ) -> str:
     """
-    Edit a file using diff logic.
+    Edit a file using diff logic. Prefer using this over write_file if the lines changed account for less than 25% of the file.
 
     Args:
         path: Path to the file to edit.
         replacements: Dictionary {existing_content: new_content} for replacements.
         inserts: Dictionary {anchor_content: content_to_insert_after}. Empty string "" for anchor inserts at the beginning.
         replace_all: If True, replace/insert after all occurrences; if False, only the first.
-        dry_run: If True, simulate changes but don't write to disk or history.
-        mcp_conversation_id: Required for history tracking. Don't fill it in for the first tool call in each conversation. A value will be returned on the first call and should be used for all subsequent calls of any tool.
+        dry_run: If True, show proposed changes without making them.
 
     Returns:
-        A message indicating the changes applied or validation result
+        A message indicating the changes applied or validation result.
 
     Example:
         edit_file_diff(
-            ctx,
             "myfile.py",
             replacements={
                 "def old_function():\\n    return False\\n": "def new_function():\\n    return True\\n",
-                "MAX_RETRIES = 3": "MAX_RETRIES = 5"
+                "MAX_RETRIES = 3": "MAX_RETRIES = 5",
+                "deleted_function() {}": "",
             },
             inserts={
                 "": "# Insert comment at beginning of file\\n",
@@ -1059,26 +1055,13 @@ def edit_file_diff(
             replace_all=False
         )
     """
-    # --- Dry Run Handling ---
-    if dry_run:
-        log.info(f"Dry run for edit_file_diff on {path}.")
-        try:
-            validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
-            if os.path.exists(validated_path):
-                # TODO: Add simulation logic here if desired, e.g., read content and check if keys exist
-                pass
-            return f"Dry run validation successful for {path}"
-        except Exception as e:
-            return f"Dry run validation failed for {path}: {str(e)}"
-
-    # --- Non-Dry Run Core Logic ---
     try:
-        validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+        validated_path = validate_path(path, WORKING_DIRECTORY)
         replacements = replacements or {}
         inserts = inserts or {}
         operations = {"replace": 0, "insert": 0, "errors": []}
 
-        # Read current content (decorator has snapshot, but edits are sequential)
+        # Read current content
         with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
         new_content = content
@@ -1090,6 +1073,15 @@ def edit_file_diff(
             if not old_text:
                 operations["errors"].append("Err: Empty replace key")
                 continue
+
+            # Try to parse and format JSON if it's valid JSON
+            try:
+                json_obj = json.loads(new_text)
+                new_text = json.dumps(json_obj, indent=2)
+            except json.JSONDecodeError:
+                # Not valid JSON, use new_text as-is
+                pass
+
             count = new_content.count(old_text)
             if count == 0:
                 operations["errors"].append(
@@ -1104,6 +1096,15 @@ def edit_file_diff(
         for anchor_text, insert_text in inserts.items():
             if not isinstance(anchor_text, str) or not isinstance(insert_text, str):
                 continue
+
+            # Try to parse and format JSON if it's valid JSON
+            try:
+                json_obj = json.loads(insert_text)
+                insert_text = json.dumps(json_obj, indent=2)
+            except json.JSONDecodeError:
+                # Not valid JSON, use insert_text as-is
+                pass
+
             if anchor_text == "":
                 new_content = insert_text + new_content
                 operations["insert"] += 1
@@ -1130,7 +1131,26 @@ def edit_file_diff(
                     )
                     operations["insert"] += 1
 
-        # --- Write Modified Content ---
+        # --- Handle Dry Run ---
+        if dry_run:
+            if operations["errors"]:
+                return "Dry run validation failed:\n" + "\n".join(operations["errors"])
+
+            # Generate unified diff showing proposed changes
+            try:
+                diff_content = generate_diff(
+                    content.splitlines(),
+                    new_content.splitlines(),
+                    str(validated_path),
+                    str(validated_path),
+                )
+                if diff_content:
+                    return f"Dry run - proposed changes for {path}:\n\n{diff_content}"
+                return f"Dry run - no changes would be made to {path}"
+            except Exception as e:
+                return f"Error generating dry run diff: {str(e)}"
+
+        # --- Apply Changes ---
         if not operations["errors"]:
             with open(validated_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
@@ -1154,12 +1174,12 @@ def edit_file_diff(
 
 @mcp.tool()
 @track_edit_history
-def move_file(source: str, destination: str, mcp_conversation_id: Optional[str] = None) -> str:
-    """Move/rename a file. mcp_conversation_id is required for history tracking, and should be unique for each LLM response and the same across multiple tool calls."""
+def move_file(source: str, destination: str) -> str:
+    """Move/rename a file."""
     try:
         # Decorator validates both source and dest using SERVER_ALLOWED_DIRECTORIES
-        validated_source_path = validate_path(source, SERVER_ALLOWED_DIRECTORIES)
-        validated_dest_path = validate_path(destination, SERVER_ALLOWED_DIRECTORIES)
+        validated_source_path = validate_path(source, WORKING_DIRECTORY)
+        validated_dest_path = validate_path(destination, WORKING_DIRECTORY)
         if os.path.exists(validated_dest_path):
             return f"Error: Destination path {destination} already exists."
         Path(validated_dest_path).parent.mkdir(parents=True, exist_ok=True)
@@ -1171,18 +1191,60 @@ def move_file(source: str, destination: str, mcp_conversation_id: Optional[str] 
 
 @mcp.tool()
 @track_edit_history
-def delete_file(path: str, mcp_conversation_id: Optional[str] = None) -> str:
-    """Delete a file. mcp_conversation_id is required for history tracking, and should be unique for each LLM response and the same across multiple tool calls."""
+def delete_file(path: str) -> str:
+    """Delete a file."""
     try:
-        validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+        validated_path = validate_path(path, WORKING_DIRECTORY)
         # Existence/type checks happen within decorator now before op
         if os.path.isdir(validated_path):
-            return f"Error: Path {path} is a directory."  # Should be caught by decorator? Redundant check ok.
+            return f"Error: Path {path} is a directory."
         # Decorator ensures file exists before calling this core logic if op is delete
         os.remove(validated_path)
         return f"Successfully deleted {path}"
     except (ValueError, FileNotFoundError, Exception) as e:
         return f"Error deleting file: {str(e)}"
+
+
+@mcp.tool()
+def finish_edit() -> str:
+    """Call this tool after all edits are done. This is required by the MCP server."""
+    return finish_edit()
+
+
+@mcp.tool()
+def set_working_directory(path: str) -> str:
+    """
+    Set the working directory for file operations. This directory must be within one of the allowed directories.
+    Only files within the working directory can be modified.
+    """
+    global WORKING_DIRECTORY
+    try:
+        # First validate the path is within allowed directories
+        validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+
+        # Check if it's a directory
+        if not os.path.isdir(validated_path):
+            return f"Error: '{path}' is not a directory."
+
+        # Check if we have write permissions
+        if not os.access(validated_path, os.W_OK):
+            return f"Error: No write permission for directory '{path}'."
+
+        # Set the working directory
+        WORKING_DIRECTORY = validated_path
+        return f"Working directory set to: {validated_path}"
+    except ValueError as e:
+        return f"Error: {str(e)}"
+    except Exception as e:
+        return f"Error setting working directory: {str(e)}"
+
+
+@mcp.tool()
+def get_working_directory() -> str:
+    """Get the current working directory for file operations."""
+    if WORKING_DIRECTORY is None:
+        return "No working directory set"
+    return WORKING_DIRECTORY
 
 
 if __name__ == "__main__":
