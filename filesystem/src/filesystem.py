@@ -7,10 +7,13 @@ import inspect
 import uuid
 import fnmatch
 from pathlib import Path
-from typing import List, Dict, Optional, Any, Callable
+from typing import List, Dict, Optional, Any, Callable, Union
 from datetime import datetime, timezone
 from functools import wraps
 from mcp.server.fastmcp import FastMCP
+import threading
+import time
+import json
 
 from mcp_edit_utils import (
     normalize_path,
@@ -80,14 +83,56 @@ except Exception as e:
     print(f"Error processing allowed directories: {e}", file=sys.stderr)
     sys.exit(1)
 
+# --- Global Conversation Tracking ---
+_current_conversation_id: Optional[str] = None
+_last_tool_call_time: Optional[float] = None
+_conversation_timeout: float = 120.0  # seconds
+_conversation_lock = threading.Lock()
+
+def _get_or_create_conversation_id() -> str:
+    """
+    Get the current conversation ID or create a new one if needed.
+    Thread-safe and handles timeouts.
+    """
+    global _current_conversation_id, _last_tool_call_time
+    
+    with _conversation_lock:
+        current_time = time.time()
+        
+        # If no conversation exists or timeout occurred, create new one
+        if (_current_conversation_id is None or 
+            _last_tool_call_time is None or 
+            current_time - _last_tool_call_time > _conversation_timeout):
+            _current_conversation_id = str(int(current_time))
+            _last_tool_call_time = current_time
+            log.info(f"Created new conversation: {_current_conversation_id}")
+        
+        # Update last tool call time
+        _last_tool_call_time = current_time
+        return _current_conversation_id
+
+def finish_edit() -> str:
+    """
+    End the current conversation and return its ID.
+    The next tool call will start a new conversation.
+    """
+    global _current_conversation_id, _last_tool_call_time
+    
+    with _conversation_lock:
+        if _current_conversation_id is None:
+            return "No active conversation to finish"
+        
+        conversation_id = _current_conversation_id
+        _current_conversation_id = None
+        _last_tool_call_time = None
+        log.info(f"Finished conversation: {conversation_id}")
+        return f"Finished conversation: {conversation_id}"
 
 # --- History Tracking Decorator ---
 def track_edit_history(func: Callable) -> Callable:
     """
     Decorator for MCP tools that modify files to track their history.
     Handles locking, checkpointing, diff generation, and logging.
-    Requires the decorated function to accept 'mcp_conversation_id' as a
-    keyword argument and 'allowed_dirs' list passed via kwargs to the decorator call itself if needed.
     """
 
     @wraps(func)
@@ -110,17 +155,11 @@ def track_edit_history(func: Callable) -> Callable:
             log.error(f"Bind failed for {func.__name__}: {e}.")
             return f"Error: Missing required arguments for {func.__name__}."
 
-        conversation_id = bound_args.arguments.get("mcp_conversation_id")
-        if not conversation_id or not isinstance(conversation_id, str):
-            return (
-                f"Error: mcp_conversation_id (string) is required for {func.__name__}."
-            )
-
+        # Get or create conversation ID
+        conversation_id = _get_or_create_conversation_id()
         current_index = get_next_tool_call_index(conversation_id)
         tool_name = func.__name__
-        log.info(
-            f"Tracking call {current_index} for {tool_name} in conv {conversation_id}"
-        )
+        log.info(f"Tracking call {current_index} for {tool_name} in conv {conversation_id}")
 
         # Determine paths
         file_path_str: Optional[str] = None
@@ -134,15 +173,10 @@ def track_edit_history(func: Callable) -> Callable:
 
         if not file_path_str:
             return "Internal Server Error: Path argument missing."
-        # Retrieve allowed_directories - THIS IS THE KEY DEPENDENCY
-        # Assuming it's available globally in the server's scope for now.
-        # If not, it MUST be passed somehow (e.g., via func default, context, decorator arg)
-        # Let's pretend it's available globally called `SERVER_ALLOWED_DIRECTORIES`
-        # You MUST replace this with the actual way you access the list
+
+        # Retrieve allowed_directories
         if "SERVER_ALLOWED_DIRECTORIES" not in globals():
-            log.critical(
-                "SERVER_ALLOWED_DIRECTORIES not found in global scope. Cannot validate path."
-            )
+            log.critical("SERVER_ALLOWED_DIRECTORIES not found in global scope. Cannot validate path.")
             return "Internal Server Error: Server configuration for allowed directories not found."
         allowed_dirs = globals()["SERVER_ALLOWED_DIRECTORIES"]
 
@@ -962,14 +996,21 @@ def list_allowed_directories() -> str:
 
 @mcp.tool()
 @track_edit_history
-def write_file(path: str, content: str, mcp_conversation_id: str) -> str:
+def write_file(path: str, content: Union[str, Dict[str, Any]]) -> str:
     """
-    Create a new file or completely overwrite an existing file with new content. Use with caution as it will overwrite existing files without warning. Only works within allowed directories. mcp_conversation_id is required for history tracking, and should be unique for each LLM response and the same across multiple tool calls.
+    Create a new file or completely overwrite an existing file with new content.
+    If content is a dictionary, it will be automatically converted to a JSON string.
+    Use with caution as it will overwrite existing files without warning.
     """
     try:
         validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
         # Ensure parent directory exists
         Path(validated_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Convert dictionary to JSON string if needed
+        if isinstance(content, dict):
+            content = json.dumps(content, indent=2)
+        
         with open(validated_path, "w", encoding="utf-8") as f:
             f.write(content)
         return f"Successfully wrote to {path}"
@@ -985,7 +1026,6 @@ def edit_file_diff(
     inserts: Dict[str, str] = None,
     replace_all: bool = True,
     dry_run: bool = False,
-    mcp_conversation_id: Optional[str] = None,
 ) -> str:
     """
     Edit a file using diff logic.
@@ -996,27 +1036,9 @@ def edit_file_diff(
         inserts: Dictionary {anchor_content: content_to_insert_after}. Empty string "" for anchor inserts at the beginning.
         replace_all: If True, replace/insert after all occurrences; if False, only the first.
         dry_run: If True, simulate changes but don't write to disk or history.
-        mcp_conversation_id: Required for history tracking. Don't fill it in for the first tool call in each conversation. A value will be returned on the first call and should be used for all subsequent calls of any tool.
 
     Returns:
         A message indicating the changes applied or validation result
-
-    Example:
-        edit_file_diff(
-            ctx,
-            "myfile.py",
-            replacements={
-                "def old_function():\\n    return False\\n": "def new_function():\\n    return True\\n",
-                "MAX_RETRIES = 3": "MAX_RETRIES = 5"
-            },
-            inserts={
-                "": "# Insert comment at beginning of file\\n",
-                "import os": "import sys\\nimport logging\\n",
-                "def main():": "    # Main function follows\\n",
-                "return result  # last line": "# End of file\\n"
-            },
-            replace_all=False
-        )
     """
     # --- Dry Run Handling ---
     if dry_run:
@@ -1113,10 +1135,8 @@ def edit_file_diff(
 
 @mcp.tool()
 @track_edit_history
-def move_file(
-    source: str, destination: str, mcp_conversation_id: Optional[str] = None
-) -> str:
-    """Move/rename a file. mcp_conversation_id is required for history tracking, and should be unique for each LLM response and the same across multiple tool calls."""
+def move_file(source: str, destination: str) -> str:
+    """Move/rename a file."""
     try:
         # Decorator validates both source and dest using SERVER_ALLOWED_DIRECTORIES
         validated_source_path = validate_path(source, SERVER_ALLOWED_DIRECTORIES)
@@ -1132,18 +1152,24 @@ def move_file(
 
 @mcp.tool()
 @track_edit_history
-def delete_file(path: str, mcp_conversation_id: Optional[str] = None) -> str:
-    """Delete a file. mcp_conversation_id is required for history tracking, and should be unique for each LLM response and the same across multiple tool calls."""
+def delete_file(path: str) -> str:
+    """Delete a file."""
     try:
         validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
         # Existence/type checks happen within decorator now before op
         if os.path.isdir(validated_path):
-            return f"Error: Path {path} is a directory."  # Should be caught by decorator? Redundant check ok.
+            return f"Error: Path {path} is a directory."
         # Decorator ensures file exists before calling this core logic if op is delete
         os.remove(validated_path)
         return f"Successfully deleted {path}"
     except (ValueError, FileNotFoundError, Exception) as e:
         return f"Error deleting file: {str(e)}"
+
+
+@mcp.tool()
+def finish_edit() -> str:
+    """End the current conversation. The next tool call will start a new conversation."""
+    return finish_edit()
 
 
 if __name__ == "__main__":
