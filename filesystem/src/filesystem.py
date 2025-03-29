@@ -198,6 +198,11 @@ def track_edit_history(func: Callable) -> Callable:
         checkpoint_dir.mkdir(exist_ok=True)
         relative_diff_path = Path(DIFFS_DIR) / conversation_id / f"{edit_id}.diff"
         diff_file_path = history_root / relative_diff_path
+
+        # Convert absolute paths to relative paths from workspace root
+        relative_file_path = validated_path.relative_to(workspace_root)
+        relative_source_path = validated_source_path.relative_to(workspace_root) if validated_source_path else None
+
         content_before: Optional[List[str]] = None
         hash_before: Optional[str] = None
         checkpoint_created = False
@@ -248,127 +253,80 @@ def track_edit_history(func: Callable) -> Callable:
             current_log_entries = read_log_file(log_file_path)
             seen_paths = set(
                 e["file_path"] for e in current_log_entries if "file_path" in e
-            ) | set(
-                e.get("source_path")
-                for e in current_log_entries
-                if e.get("source_path")
             )
-            needs_checkpoint = str(path_to_checkpoint) not in seen_paths
 
-            if (
-                needs_checkpoint
-                and operation != "create"
-                and file_existed_before_locked
-            ):
-                log.info(f"Creating checkpoint for {path_to_checkpoint}...")
-                try:
-                    with (
-                        open(path_to_checkpoint, "rb") as fr,
-                        open(checkpoint_file, "wb") as fw,
-                    ):
-                        fw.write(fr.read())
-                    checkpoint_created = True
-                except Exception as e:
-                    log.error(f"Checkpoint failed: {e}")
-                    relative_checkpoint_path = None
+            # Only create checkpoint if this is the first time we're seeing this path
+            if str(relative_file_path) not in seen_paths:
+                checkpoint_created = True
+                if file_existed_before_locked:
+                    try:
+                        shutil.copy2(path_to_checkpoint, checkpoint_file)
+                    except IOError as e:
+                        log.error(f"Failed to create checkpoint: {e}")
+                        raise HistoryError(f"Failed to create checkpoint: {e}")
 
-            # --- Execute Original Function ---
-            call_args = bound_args.arguments.copy()  # Get dict of args
-            original_result = func(**call_args)  # Call original func
+            # --- Execute Operation ---
+            try:
+                result = func(*wrapper_args, **wrapper_kwargs)
+            except Exception as e:
+                log.error(f"Operation failed: {e}")
+                raise
 
             # --- Read State After Operation ---
-            hash_after: Optional[str] = None
             content_after: Optional[List[str]] = None
-            path_after_op = validated_path
-            file_exists_after = path_after_op.exists()
-            if operation != "delete" and file_exists_after:
-                hash_after = calculate_hash(str(path_after_op))
-                if operation != "move":
-                    try:
-                        with open(
-                            path_after_op, "r", encoding="utf-8", errors="ignore"
-                        ) as f:
-                            content_after = f.readlines()
-                    except IOError:
-                        content_after = None
-            elif operation != "delete" and not file_exists_after:
-                log.warning(
-                    f"File {path_after_op} gone after non-delete op {tool_name}"
-                )
-                content_after = []
-
-            # --- Generate and Save Diff ---
-            diff_content: Optional[str] = None
-            if (
-                operation in ["create", "replace", "edit"]
-                and content_before is not None
-                and content_after is not None
-            ):
-                rel_path_diff = sanitize_path_for_filename(
-                    str(validated_path), workspace_root
-                )
-                diff_content = generate_diff(
-                    content_before, content_after, rel_path_diff, rel_path_diff
-                )
+            hash_after: Optional[str] = None
+            if operation != "delete":
                 try:
-                    with open(diff_file_path, "w", encoding="utf-8") as f:
-                        f.write(diff_content)
+                    with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
+                        content_after = f.readlines()
+                    hash_after = calculate_hash(str(validated_path))
                 except IOError as e:
-                    log.error(f"Failed write diff: {e}")
+                    log.error(f"Failed to read file after operation: {e}")
+                    content_after = None
+                    hash_after = None
 
-            # --- Create and Append Log Entry ---
-            log_entry = {  # Fields as defined before
+            # --- Generate Diff ---
+            if content_before is not None and content_after is not None:
+                try:
+                    diff_content = generate_diff(
+                        content_before,
+                        content_after,
+                        str(relative_file_path),
+                        str(relative_file_path),
+                    )
+                    if diff_content:
+                        diff_file_path.write_text(diff_content)
+                except Exception as e:
+                    log.error(f"Failed to generate diff: {e}")
+                    raise HistoryError(f"Failed to generate diff: {e}")
+
+            # --- Log Entry ---
+            log_entry = {
                 "edit_id": edit_id,
                 "conversation_id": conversation_id,
                 "tool_call_index": current_index,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "operation": operation,
-                "file_path": str(validated_path),
-                "source_path": str(validated_source_path)
-                if validated_source_path
-                else None,
+                "file_path": str(relative_file_path),
+                "source_path": str(relative_source_path) if relative_source_path else None,
                 "tool_name": tool_name,
                 "status": "pending",
-                "diff_file": str(relative_diff_path)
-                if diff_content is not None
-                else None,
-                "checkpoint_file": str(relative_checkpoint_path)
-                if checkpoint_created
-                else None,
+                "diff_file": str(relative_diff_path) if diff_content else None,
+                "checkpoint_file": str(relative_checkpoint_path) if checkpoint_created else None,
                 "hash_before": hash_before,
                 "hash_after": hash_after,
             }
+
             current_log_entries.append(log_entry)
             write_log_file(log_file_path, current_log_entries)
 
-            return original_result  # Success
+            return result
 
-        except (
-            ValueError,
-            FileNotFoundError,
-            IsADirectoryError,
-            HistoryError,
-            TimeoutError,
-        ) as e:
-            log.warning(f"Op failed for {tool_name} on {file_path_str}: {e}")
-            # Return error message directly if safe, or use original result if func returned error string
-            return (
-                str(e)
-                if isinstance(
-                    e, (FileNotFoundError, IsADirectoryError, TimeoutError, ValueError)
-                )
-                else f"Error: {e}"
-            )
-        except Exception as e:
-            log.exception(
-                f"Unexpected error in track_edit_history for {tool_name}: {e}"
-            )
-            return f"Internal Server Error during history tracking: {e}"
         finally:
             # --- Release Locks ---
-            release_lock(log_file_lock)
             release_lock(target_file_lock)
             release_lock(source_file_lock)
+            release_lock(log_file_lock)
 
     return wrapper
 

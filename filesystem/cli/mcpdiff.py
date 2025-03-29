@@ -913,266 +913,240 @@ def reapply_conversation_state(
 # --- CLI Command Functions ---
 
 
-def find_workspace_and_history(path: Optional[str]) -> Tuple[Path, Path]:
-    """Finds the workspace and history root from CWD or specified path."""
-    start_path = Path(path) if path else Path.cwd()
-    history_root = get_history_root(str(start_path))
-    if not history_root:
-        print(
-            f"Error: Could not find MCP history root (.mcp/edit_history/) in '{start_path}' or parent directories.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    workspace_root = history_root.parent.parent  # Calculate here where needed
-    return workspace_root, history_root
+def find_workspace_root(start_path: Optional[str] = None) -> Optional[Path]:
+    """
+    Find the workspace root (directory containing .mcp) by walking up from start_path.
+    If start_path is None, uses current directory.
+    """
+    current = Path(start_path if start_path else os.getcwd()).resolve()
+    while current != current.parent:  # Stop at root
+        if (current / ".mcp").exists():
+            return current
+        current = current.parent
+    return None
 
 
-# --- handle_status ---
-# Needs workspace_root for relative paths
-def handle_status(args):
-    workspace_root, history_root = find_workspace_and_history(
-        args.workspace
-    )  # Get workspace_root here
-    log.info(f"Checking status in: {history_root}")
-    log_dir = history_root / LOGS_DIR
-    # ... (rest of status logic - unchanged, uses workspace_root correctly) ...
-    all_entries = []
-    if args.conv:  # Load specific conv log
-        log_file = log_dir / f"{args.conv}.log"
-        if log_file.exists():
-            all_entries.extend(read_log_file(log_file))
-        else:
-            print(f"Log file not found: {args.conv}", file=sys.stderr)
-    else:  # Load all logs
-        for log_file in log_dir.glob("*.log"):
-            all_entries.extend(read_log_file(log_file))
-    # Filter
-    filtered_entries = all_entries
-    if args.file:
-        target_path = str(Path(args.file).resolve())
-        filtered_entries = [
-            e
-            for e in filtered_entries
-            if e.get("file_path") == target_path or e.get("source_path") == target_path
-        ]
-    if args.status:
-        filtered_entries = [
-            e for e in filtered_entries if e.get("status") == args.status
-        ]
-    # Sort and limit
-    filtered_entries.sort(
-        key=lambda e: (e.get("timestamp", ""), e.get("tool_call_index", 0))
-    )
-    if args.limit > 0:
-        filtered_entries = filtered_entries[-args.limit :]
-    # Print
-    if not filtered_entries:
-        print("No matching history entries found.")
+def get_workspace_path(relative_path: str) -> Path:
+    """
+    Convert a path relative to workspace root to an absolute path.
+    Raises HistoryError if workspace root cannot be found.
+    """
+    workspace_root = find_workspace_root()
+    if not workspace_root:
+        raise HistoryError("Could not find workspace root (directory containing .mcp)")
+    return workspace_root / relative_path
+
+
+def get_relative_path(absolute_path: Path) -> str:
+    """
+    Convert an absolute path to a path relative to workspace root.
+    Raises HistoryError if workspace root cannot be found.
+    """
+    workspace_root = find_workspace_root()
+    if not workspace_root:
+        raise HistoryError("Could not find workspace root (directory containing .mcp)")
+    try:
+        return str(absolute_path.relative_to(workspace_root))
+    except ValueError:
+        raise HistoryError(f"Path {absolute_path} is not within workspace root {workspace_root}")
+
+
+def handle_status(args: argparse.Namespace) -> None:
+    """Handle the status command."""
+    workspace_root = find_workspace_root()
+    if not workspace_root:
+        print("Error: Could not find workspace root (directory containing .mcp)")
         return
-    print(
-        f"{'EDIT_ID':<36} {'TIMESTAMP':<26} {'STATUS':<8} {'OP':<8} {'CONV_ID':<15} FILE_PATH"
-    )
-    print("-" * 120)
-    for entry in filtered_entries:
-        ts = entry.get("timestamp", "")
-        file_str = entry.get("file_path", "N/A")
-        conv_id_short = entry.get("conversation_id", "N/A")[:15]
-        try:
-            ts_str = datetime.fromisoformat(ts.replace("Z", "+00:00")).strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
-        except:
-            ts_str = ts[:19]
-        try:
-            file_str = str(
-                Path(file_str).relative_to(workspace_root)
-            )  # Use workspace_root
-        except ValueError:
-            pass
+
+    history_root = workspace_root / HISTORY_DIR_NAME
+    if not history_root.exists():
+        print("No history found in this workspace.")
+        return
+
+    log.info(f"Checking status in: {workspace_root}/")
+    print(f"{HISTORY_DIR_NAME}")
+    print("EDIT_ID                              TIMESTAMP                  STATUS   OP       CONV_ID      FILE_PATH")
+    print("-" * 100)
+
+    # Get all log files
+    log_dir = history_root / LOGS_DIR
+    if not log_dir.exists():
+        print("No history logs found.")
+        return
+
+    log_files = sorted(log_dir.glob("*.log"))
+    all_entries = []
+    for log_file in log_files:
+        entries = read_log_file(log_file)
+        all_entries.extend(entries)
+
+    # Filter entries based on command line arguments
+    if args.conv:
+        all_entries = [e for e in all_entries if e["conversation_id"] == args.conv]
+    if args.file:
+        all_entries = [e for e in all_entries if e["file_path"] == args.file]
+    if args.status:
+        all_entries = [e for e in all_entries if e["status"] == args.status]
+
+    # Sort entries by timestamp
+    all_entries.sort(key=lambda x: x["timestamp"])
+
+    # Display entries
+    for entry in all_entries[: args.limit]:
         print(
-            f"{entry.get('edit_id', 'N/A'):<36} {ts_str:<26} {entry.get('status', 'N/A'):<8} {entry.get('operation', 'N/A'):<8} {conv_id_short:<15} {file_str}"
+            f"{entry['edit_id']}  {entry['timestamp']}  {entry['status']:<8} {entry['operation']:<7} {entry['conversation_id']:<10} {entry['file_path']}"
         )
 
 
-# --- handle_show ---
-# Doesn't need workspace_root directly
-def handle_show(args):
-    # Corrected: workspace_root is not needed here, only history_root
-    _, history_root = find_workspace_and_history(args.workspace)
-    identifier = args.identifier
-    # ... (rest of show logic - unchanged) ...
-    found_diffs = False
+def handle_show(args: argparse.Namespace) -> None:
+    """Handle the show command."""
+    workspace_root = find_workspace_root()
+    if not workspace_root:
+        print("Error: Could not find workspace root (directory containing .mcp)")
+        return
+
+    history_root = workspace_root / HISTORY_DIR_NAME
+    if not history_root.exists():
+        print("No history found in this workspace.")
+        return
+
+    # Get all log files
     log_dir = history_root / LOGS_DIR
-    potential_diff_path = None  # Try finding by edit_id first
-    for conv_dir in (history_root / DIFFS_DIR).iterdir():
-        if conv_dir.is_dir():
-            diff_file = conv_dir / f"{identifier}.diff"
-            if diff_file.exists():
-                potential_diff_path = diff_file
+    if not log_dir.exists():
+        print("No history logs found.")
+        return
+
+    # Find the entry with matching edit_id or conversation_id
+    target_id = args.identifier
+    found_entry = None
+    found_file = None
+
+    for log_file in log_dir.glob("*.log"):
+        entries = read_log_file(log_file)
+        for entry in entries:
+            if entry["edit_id"] == target_id or entry["conversation_id"] == target_id:
+                found_entry = entry
+                found_file = log_file
                 break
-    if potential_diff_path:  # Found by edit_id
-        try:
-            with open(potential_diff_path, "r", encoding="utf-8") as f:
-                print(f.read())
-                found_diffs = True
-        except IOError as e:
-            print(f"Error reading diff {potential_diff_path}: {e}", file=sys.stderr)
-    else:  # Try finding by conversation_id
-        log_file = log_dir / f"{identifier}.log"
-        if log_file.exists():
-            entries = read_log_file(log_file)
-            entries.sort(key=lambda e: e.get("tool_call_index", 0))
-            for entry in entries:
-                diff_path_str = entry.get("diff_file")
-                print(
-                    f"\n--- Edit: {entry['edit_id']} (Op: {entry['operation']}, File: {entry['file_path']}, Status: {entry['status']}) ---"
-                )
-                if diff_path_str:
-                    diff_path = history_root / diff_path_str
-                    if diff_path.exists():
-                        try:
-                            with open(diff_path, "r", encoding="utf-8") as f:
-                                print(f.read())
-                                found_diffs = True
-                        except IOError as e:
-                            print(
-                                f"  Error reading diff file {diff_path}: {e}",
-                                file=sys.stderr,
-                            )
-                    else:
-                        print(f"  Diff file not found: {diff_path}")
-                elif entry["operation"] not in ["delete", "move"]:
-                    print("  (No diff file associated)")
-    if not found_diffs:
-        print(f"No diff found for identifier: {identifier}", file=sys.stderr)
+        if found_entry:
+            break
+
+    if not found_entry:
+        print(f"No history entry found with ID: {target_id}")
+        return
+
+    # If it's a conversation_id, show all entries in that conversation
+    if found_entry["conversation_id"] == target_id:
+        entries = read_log_file(found_file)
+        conversation_entries = [e for e in entries if e["conversation_id"] == target_id]
+        for entry in conversation_entries:
+            if entry.get("diff_file"):
+                diff_path = history_root / entry["diff_file"]
+                if diff_path.exists():
+                    print(f"\nDiff for {entry['file_path']}:")
+                    print(diff_path.read_text())
+    else:
+        # Show single entry's diff
+        if found_entry.get("diff_file"):
+            diff_path = history_root / found_entry["diff_file"]
+            if diff_path.exists():
+                print(diff_path.read_text())
+            else:
+                print(f"No diff file found for edit {target_id}")
 
 
-# --- modify_status --- (unchanged)
-def modify_status(
-    history_root: Path,
-    target_status: str,
-    edit_id: Optional[str] = None,
-    conversation_id: Optional[str] = None,
-) -> List[Tuple[str, str]]:
-    # ... (logic remains the same) ...
-    if not edit_id and not conversation_id:
-        raise ValueError("Need edit_id or conversation_id")
+def handle_accept(args: argparse.Namespace) -> None:
+    """Handle the accept command."""
+    workspace_root = find_workspace_root()
+    if not workspace_root:
+        print("Error: Could not find workspace root (directory containing .mcp)")
+        return
+
+    history_root = workspace_root / HISTORY_DIR_NAME
+    if not history_root.exists():
+        print("No history found in this workspace.")
+        return
+
+    # Get all log files
     log_dir = history_root / LOGS_DIR
-    affected_files_map: Dict[Tuple[str, str], bool] = {}
-    log_files_to_process: List[Path] = []
-    if conversation_id:
-        log_file = log_dir / f"{conversation_id}.log"
-        if log_file.exists():
-            log_files_to_process.append(log_file)
-        else:
-            raise FileNotFoundError(f"Log file not found: {conversation_id}")
-    else:  # Find log containing edit_id
-        found = False
-        for log_file in log_dir.glob("*.log"):
-            try:
-                with open(log_file, "r") as f:
-                    if edit_id in f.read():
-                        log_files_to_process.append(log_file)
-                        found = True
-                        break
-            except IOError:
-                continue
-        if not found:
-            raise FileNotFoundError(f"Log not found for edit_id: {edit_id}")
-    # Process logs
-    for log_file in log_files_to_process:
-        log_lock = None
-        modified = False
-        conv_id = log_file.stem
-        try:
-            log_lock = acquire_lock(str(log_file))
-            entries = read_log_file(log_file)
-            new_entries = []
-            for entry in entries:
-                current_edit_id = entry.get("edit_id")
-                current_status = entry.get("status")
-                target_this = False
-                if edit_id and current_edit_id == edit_id:
-                    target_this = True
-                elif (
-                    conversation_id
-                    and entry.get("conversation_id") == conversation_id
-                    and current_status == "pending"
-                ):
-                    target_this = True
-                if target_this and current_status != target_status:
-                    if (
-                        current_status == "pending"
-                    ):  # Only allow pending -> accepted/rejected
-                        entry["status"] = target_status
-                        modified = True
-                        log.info(
-                            f"Set status to '{target_status}' for {current_edit_id} in {conv_id}"
-                        )
-                        if entry.get("file_path"):
-                            affected_files_map[(conv_id, entry["file_path"])] = True
-                        if entry.get("source_path"):
-                            affected_files_map[(conv_id, entry["source_path"])] = (
-                                True  # Track source for moves
-                            )
-                    else:
-                        log.warning(
-                            f"Cannot change {current_edit_id} from '{current_status}' to '{target_status}'."
-                        )
-                new_entries.append(entry)
-            if modified:
-                write_log_file(log_file, new_entries)
-        except (HistoryError, FileNotFoundError, TimeoutError) as e:
-            log.error(f"Failed modify status in {log_file}: {e}")
-        finally:
-            release_lock(log_lock)
-    return list(affected_files_map.keys())
+    if not log_dir.exists():
+        print("No history logs found.")
+        return
+
+    # Find the entry with matching edit_id or conversation_id
+    target_id = args.edit_id if args.edit_id else args.conv
+    found_entry = None
+    found_file = None
+
+    for log_file in log_dir.glob("*.log"):
+        entries = read_log_file(log_file)
+        for entry in entries:
+            if entry["edit_id"] == target_id or entry["conversation_id"] == target_id:
+                found_entry = entry
+                found_file = log_file
+                break
+        if found_entry:
+            break
+
+    if not found_entry:
+        print(f"No history entry found with ID: {target_id}")
+        return
+
+    # Update status to accepted
+    entries = read_log_file(found_file)
+    for entry in entries:
+        if entry["edit_id"] == target_id or entry["conversation_id"] == target_id:
+            entry["status"] = "accepted"
+
+    write_log_file(found_file, entries)
+    print(f"Marked edit(s) as accepted: {target_id}")
 
 
-# --- handle_accept --- (unchanged)
-def handle_accept(args):
-    _, history_root = find_workspace_and_history(args.workspace)
-    try:
-        modify_status(history_root, "accepted", args.edit_id, args.conv)
-        print("Status updated to 'accepted'.")
-    except (ValueError, FileNotFoundError) as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+def handle_reject(args: argparse.Namespace) -> None:
+    """Handle the reject command."""
+    workspace_root = find_workspace_root()
+    if not workspace_root:
+        print("Error: Could not find workspace root (directory containing .mcp)")
+        return
 
+    history_root = workspace_root / HISTORY_DIR_NAME
+    if not history_root.exists():
+        print("No history found in this workspace.")
+        return
 
-# --- handle_reject --- (unchanged)
-def handle_reject(args):
-    _, history_root = find_workspace_and_history(args.workspace)
-    try:
-        affected_conv_files = modify_status(
-            history_root, "rejected", args.edit_id, args.conv
-        )
-        print("Status updated to 'rejected'. Triggering re-apply...")
-        overall_success = True
-        processed_files = set()
-        for conv_id, file_path in affected_conv_files:
-            if (conv_id, file_path) in processed_files:
-                continue
-            print(
-                f"Re-applying changes for file: {file_path} (conversation: {conv_id})"
-            )
-            success = reapply_conversation_state(conv_id, file_path, history_root)
-            if not success:
-                print(f"ERROR: Failed re-apply for: {file_path}", file=sys.stderr)
-                overall_success = False
-            processed_files.add((conv_id, file_path))
-        if overall_success:
-            print("Re-apply completed successfully.")
-        else:
-            print("Re-apply completed with errors.", file=sys.stderr)
-            sys.exit(1)
-    except (ValueError, FileNotFoundError, ExternalModificationError) as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
-        log.exception("Unexpected error during reject")
-        print(f"Unexpected Error: {e}", file=sys.stderr)
-        sys.exit(1)
+    # Get all log files
+    log_dir = history_root / LOGS_DIR
+    if not log_dir.exists():
+        print("No history logs found.")
+        return
+
+    # Find the entry with matching edit_id or conversation_id
+    target_id = args.edit_id if args.edit_id else args.conv
+    found_entry = None
+    found_file = None
+
+    for log_file in log_dir.glob("*.log"):
+        entries = read_log_file(log_file)
+        for entry in entries:
+            if entry["edit_id"] == target_id or entry["conversation_id"] == target_id:
+                found_entry = entry
+                found_file = log_file
+                break
+        if found_entry:
+            break
+
+    if not found_entry:
+        print(f"No history entry found with ID: {target_id}")
+        return
+
+    # Update status to rejected
+    entries = read_log_file(found_file)
+    for entry in entries:
+        if entry["edit_id"] == target_id or entry["conversation_id"] == target_id:
+            entry["status"] = "rejected"
+
+    write_log_file(found_file, entries)
+    print(f"Marked edit(s) as rejected: {target_id}")
 
 
 # --- Main Argparse Setup --- (unchanged)
@@ -1213,10 +1187,10 @@ def main():
     parser_accept = subparsers.add_parser("accept", help="Mark edits as accepted.")
     group_accept = parser_accept.add_mutually_exclusive_group(required=True)
     group_accept.add_argument(
-        "--edit-id", help="The specific edit_id to accept."
+        "-e","--edit-id", help="The specific edit_id to accept."
     )  # Changed to --edit-id for clarity
     group_accept.add_argument(
-        "--conv", help="Accept all pending edits for a conversation_id."
+        "-c","--conv", help="Accept all pending edits for a conversation_id."
     )
     parser_accept.set_defaults(func=handle_accept)
     # reject
@@ -1225,10 +1199,10 @@ def main():
     )
     group_reject = parser_reject.add_mutually_exclusive_group(required=True)
     group_reject.add_argument(
-        "--edit-id", help="The specific edit_id to reject."
+        "-e","--edit-id", help="The specific edit_id to reject."
     )  # Changed to --edit-id
     group_reject.add_argument(
-        "--conv", help="Reject all pending/accepted edits for a conversation_id."
+        "-c","--conv", help="Reject all pending/accepted edits for a conversation_id."
     )
     parser_reject.set_defaults(func=handle_reject)
 
