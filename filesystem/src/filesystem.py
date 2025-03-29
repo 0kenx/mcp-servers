@@ -686,7 +686,6 @@ def list_directory(path: str) -> str:
         return f"Error listing directory {path}: {str(e)}"
 
 
-
 def full_directory_tree(
     path: str,
     count_lines: bool = False,
@@ -821,7 +820,9 @@ def directory_tree(
     # Check if this is a git repository
     git_dir = os.path.join(validated_path, ".git")
     if not os.path.isdir(git_dir):
-        return full_directory_tree(path, count_lines, show_permissions, show_owner, show_size)
+        return full_directory_tree(
+            path, count_lines, show_permissions, show_owner, show_size
+        )
 
     # Find git executable
     git_cmd = shutil.which("git")
@@ -1154,7 +1155,9 @@ def edit_file_diff(
 
 @mcp.tool()
 @track_edit_history
-def move_file(source: str, destination: str, mcp_conversation_id: Optional[str] = None) -> str:
+def move_file(
+    source: str, destination: str, mcp_conversation_id: Optional[str] = None
+) -> str:
     """Move/rename a file. mcp_conversation_id is required for history tracking, and should be unique for each LLM response and the same across multiple tool calls."""
     try:
         # Decorator validates both source and dest using SERVER_ALLOWED_DIRECTORIES

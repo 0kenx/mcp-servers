@@ -447,7 +447,7 @@ def release_lock(lock: Optional[filelock.FileLock]):
 
             # Attempt to remove the physical lock file after releasing the lock object
             try:
-                if os.path.exists(lock_path): # Check if it still exists
+                if os.path.exists(lock_path):  # Check if it still exists
                     os.remove(lock_path)
                     log.debug(f"Removed lock file: {lock_path}")
                 else:

@@ -1,17 +1,17 @@
 #!/usr/bin/env python
 # mcpdiff.py
 
-import argparse
 import sys
+import subprocess
+import argparse
 import os
 import re
 import hashlib
 import json
 import logging
-import subprocess
-import difflib
-import filelock
 import threading
+import tempfile
+import fcntl
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple
@@ -421,47 +421,63 @@ def sanitize_path_for_filename(abs_path: str, workspace_root: Path) -> str:
         return hashlib.sha256(abs_path.encode()).hexdigest()
 
 
-def acquire_lock(lock_path: str) -> filelock.FileLock:
-    """Acquires a file lock, creating parent directory if needed."""
-    lock_file = Path(f"{lock_path}.lock")
-    try:
-        lock_file.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        log.error(f"Could not create directory for lock file {lock_file}: {e}")
-        raise TimeoutError(f"Failed to create directory for lock {lock_path}") from e
+class FileLock:
+    """A simple file locking mechanism using fcntl."""
 
-    lock = filelock.FileLock(str(lock_file), timeout=LOCK_TIMEOUT)
-    try:
-        lock.acquire()
-        log.debug(f"Acquired lock: {lock_file}")
-        return lock
-    except filelock.Timeout:
-        log.error(f"Timeout acquiring lock: {lock_file}")
-        raise TimeoutError(f"Could not acquire lock for {lock_path}")
+    def __init__(self, path: str):
+        self.path = path
+        self.lock_path = f"{path}.lock"
+        self.lock_file = None
+        self.is_locked = False
 
-
-def release_lock(lock: Optional[filelock.FileLock]):
-    """Releases a file lock if it's held and removes the lock file."""
-    if lock and lock.is_locked:
-        lock_path = lock.lock_file
+    def acquire(self):
+        """Acquire the lock."""
         try:
-            lock.release()
-            log.debug(f"Released lock object for: {lock_path}")
+            # Create lock file if it doesn't exist
+            Path(self.lock_path).parent.mkdir(parents=True, exist_ok=True)
+            self.lock_file = open(self.lock_path, "w")
+            fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.is_locked = True
+            log.debug(f"Acquired lock: {self.lock_path}")
+        except (IOError, OSError) as e:
+            if self.lock_file:
+                self.lock_file.close()
+            raise TimeoutError(f"Could not acquire lock for {self.path}: {e}")
 
-            # Attempt to remove the physical lock file after releasing the lock object
+    def release(self):
+        """Release the lock."""
+        if self.lock_file:
             try:
-                if os.path.exists(lock_path): # Check if it still exists
-                    os.remove(lock_path)
-                    log.debug(f"Removed lock file: {lock_path}")
-                else:
-                    log.debug(f"Lock file already gone: {lock_path}")
-            except OSError as e:
-                # Log error if removal fails, but don't prevent further execution
-                log.warning(f"Could not remove lock file {lock_path}: {e}")
+                if self.is_locked:
+                    fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_UN)
+                self.lock_file.close()
+                try:
+                    os.unlink(self.lock_path)
+                except OSError:
+                    pass  # Ignore errors removing lock file
+            finally:
+                self.is_locked = False
+                self.lock_file = None
 
-        except Exception as e:
-            # Catch potential errors during lock release itself
-            log.error(f"Error releasing lock object for {lock_path}: {e}")
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+
+
+def acquire_lock(lock_path: str) -> FileLock:
+    """Acquires a file lock, creating parent directory if needed."""
+    lock = FileLock(lock_path)
+    lock.acquire()
+    return lock
+
+
+def release_lock(lock: Optional[FileLock]):
+    """Releases a file lock if it's held."""
+    if lock:
+        lock.release()
 
 
 def calculate_hash(file_path: str) -> Optional[str]:
@@ -485,21 +501,39 @@ def generate_diff(
     path_a: str,
     path_b: str,
 ) -> str:
-    """Generates a unified diff string."""
+    """Generates a unified diff string using GNU diff."""
+    with (
+        tempfile.NamedTemporaryFile(mode="w", suffix="_before") as before_file,
+        tempfile.NamedTemporaryFile(mode="w", suffix="_after") as after_file,
+    ):
+        # Write content to temp files
+        before_file.writelines(content_before_lines)
+        after_file.writelines(content_after_lines)
+        before_file.flush()
+        after_file.flush()
 
-    # Ensure lines end with newline for difflib if they don't (except maybe last line)
-    def ensure_nl(lines):
-        return [(l if l.endswith("\n") else l + "\n") for l in lines]
-
-    # difflib expects lines WITH newlines
-    diff_iter = difflib.unified_diff(
-        content_before_lines,  # Assume lines read by readlines() have them
-        content_after_lines,
-        fromfile=f"a/{path_a}",
-        tofile=f"b/{path_b}",
-        lineterm="\n",
-    )
-    return "".join(diff_iter)
+        # Run GNU diff
+        try:
+            result = subprocess.run(
+                [
+                    "diff",
+                    "-u",
+                    "--label",
+                    f"a/{path_a}",
+                    "--label",
+                    f"b/{path_b}",
+                    before_file.name,
+                    after_file.name,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,  # Don't raise on non-zero exit (diff returns 1 if files differ)
+            )
+            return result.stdout if result.stdout else ""
+        except FileNotFoundError:
+            raise HistoryError("GNU diff command not found. Please install diffutils.")
+        except subprocess.SubprocessError as e:
+            raise HistoryError(f"Error running diff command: {e}")
 
 
 def apply_patch(
@@ -613,7 +647,6 @@ def get_next_tool_call_index(conversation_id: str) -> int:
         _tool_call_counters[conversation_id] = current_index
         # Optional: Add cleanup logic here for old conversation IDs if needed
     return current_index
-
 
 
 # --- Core Re-apply Logic ---
