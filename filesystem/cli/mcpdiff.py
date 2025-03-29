@@ -7,6 +7,10 @@ from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
 
+src_path = Path(__file__).parent.parent / 'src'
+print("Path being added:", src_path)  # Debug line
+sys.path.insert(0, str(src_path))
+import mcp_edit_utils
 try:
     from mcp_edit_utils import (
         get_history_root,
@@ -18,13 +22,13 @@ try:
         apply_patch,
         HistoryError,
         ExternalModificationError,
-        log,  # Use the logger from utils
+        log,
         LOGS_DIR,
         DIFFS_DIR,
     )
 except ImportError:
     print(
-        "Error: Could not import mcp_shared_utils. Make sure it's accessible.",
+        "Error: Could not import mcp_edit_utils. Make sure it's accessible.",
         file=sys.stderr,
     )
     sys.exit(1)

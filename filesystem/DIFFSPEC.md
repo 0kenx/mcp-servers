@@ -1,12 +1,9 @@
-Okay, here is a draft for `DIFFSPEC.md` explaining the design and architecture of the LLM file edit history and review functionality.
 
----
-
-# **MCP Edit History & Diff Specification (DIFFSPEC.md)**
+# **MCP Edit History & Diff Specification**
 
 ## 1. Overview
 
-This document describes the design for enabling review and revert capabilities for file modifications performed by a Large Language Model (LLM) via a secure MCP (Machine Control Plane) filesystem server.
+This document describes the design for enabling review and revert capabilities for file modifications performed by a Large Language Model (LLM) via an MCP filesystem server.
 
 The core requirements are:
 
