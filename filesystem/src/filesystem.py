@@ -203,12 +203,17 @@ def _finish_edit() -> str:
 def _resolve_path(path: str) -> str:
     """
     Resolve a path relative to the working directory if set.
-    Handles '.' to mean working directory when WORKING_DIRECTORY is set.
+    Handles '.' and bare filenames to mean working directory when WORKING_DIRECTORY is set.
     """
     if WORKING_DIRECTORY is not None:
-        if path == "." or path.startswith("./") or path.startswith(".\\"):
-            # Replace leading '.' with working directory
-            return os.path.join(WORKING_DIRECTORY, path[1:].lstrip("/\\"))
+        if (
+            path == "."
+            or path.startswith("./")
+            or path.startswith(".\\")
+            or not os.path.isabs(path)  # Handle bare filenames
+        ):
+            # Replace leading '.' with working directory or prepend working directory to relative path
+            return os.path.join(WORKING_DIRECTORY, path.lstrip("./\\"))
     return path
 
 
@@ -289,7 +294,9 @@ def track_edit_history(func: Callable) -> Callable:
             if not history_root:
                 return f"Error: Cannot track history for path {resolved_file_path}."
             # Validate paths using the retrieved allowed_dirs
-            validated_path = Path(validate_path(resolved_file_path, allowed_dirs)).resolve()
+            validated_path = Path(
+                validate_path(resolved_file_path, allowed_dirs)
+            ).resolve()
             validated_source_path = (
                 Path(validate_path(resolved_source_path, allowed_dirs)).resolve()
                 if source_path_str
@@ -759,13 +766,25 @@ def list_directory(path: str) -> str:
         validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
         if not os.path.isdir(validated_path):
             return f"Error: '{path}' is not a directory."
+
         entries = os.listdir(validated_path)
-        formatted = []
-        for entry in sorted(entries):
+        dirs = []
+        files = []
+
+        for entry in entries:
             entry_path = os.path.join(validated_path, entry)
-            # Use a safer check for isdir/isfile
-            prefix = "[DIR] " if os.path.isdir(entry_path) else "[FILE]"
-            formatted.append(f"{prefix} {entry}")
+            if os.path.isdir(entry_path):
+                dirs.append(f"[DIR]  {entry}")
+            else:
+                files.append(f"[FILE] {entry}")
+
+        # Sort each category separately
+        dirs.sort()
+        files.sort()
+
+        # Combine sorted categories
+        formatted = dirs + files
+
         return (
             f"Contents of {path}:\n" + "\n".join(formatted)
             if formatted
@@ -906,7 +925,15 @@ def directory_tree(
             current = current.parent
         return None
 
-    git_root = find_git_root(validated_path)
+    # First try to find git root from the working directory
+    git_root = None
+    if WORKING_DIRECTORY is not None:
+        git_root = find_git_root(WORKING_DIRECTORY)
+
+    # If not found, try from the target path
+    if git_root is None:
+        git_root = find_git_root(validated_path)
+
     if not git_root or show_files_ignored_by_git:
         return full_directory_tree(
             path, show_line_count, show_permissions, show_owner, show_size
@@ -1205,13 +1232,23 @@ def write_file(ctx: Context, path: str, content: str) -> str:
         # Ensure parent directory exists
         Path(validated_path).parent.mkdir(parents=True, exist_ok=True)
 
-        # Try to parse and format JSON if it's valid JSON
+        # Handle JSON content
         try:
+            # First try to parse as JSON string
             json_obj = json.loads(content)
             content = json.dumps(json_obj, indent=2)
         except json.JSONDecodeError:
-            # Not valid JSON, use content as-is
-            pass
+            # If that fails, try to clean up the content
+            # Remove any leading/trailing whitespace and quotes
+            cleaned_content = content.strip().strip("\"'")
+            # Unescape escaped quotes
+            cleaned_content = cleaned_content.replace('\\"', '"')
+            try:
+                json_obj = json.loads(cleaned_content)
+                content = json.dumps(json_obj, indent=2)
+            except json.JSONDecodeError:
+                # If both attempts fail, write the content as-is
+                pass
 
         with open(validated_path, "w", encoding="utf-8") as f:
             f.write(content)
@@ -1285,8 +1322,17 @@ def edit_file_diff(
                 json_obj = json.loads(new_text)
                 new_text = json.dumps(json_obj, indent=2)
             except json.JSONDecodeError:
-                # Not valid JSON, use new_text as-is
-                pass
+                # If that fails, try to clean up the content
+                # Remove any leading/trailing whitespace and quotes
+                cleaned_content = new_text.strip().strip("\"'")
+                # Unescape escaped quotes
+                cleaned_content = cleaned_content.replace('\\"', '"')
+                try:
+                    json_obj = json.loads(cleaned_content)
+                    new_text = json.dumps(json_obj, indent=2)
+                except json.JSONDecodeError:
+                    # If both attempts fail, write the content as-is
+                    pass
 
             count = new_content.count(old_text)
             if count == 0:
@@ -1308,8 +1354,17 @@ def edit_file_diff(
                 json_obj = json.loads(insert_text)
                 insert_text = json.dumps(json_obj, indent=2)
             except json.JSONDecodeError:
-                # Not valid JSON, use insert_text as-is
-                pass
+                # If that fails, try to clean up the content
+                # Remove any leading/trailing whitespace and quotes
+                cleaned_content = new_text.strip().strip("\"'")
+                # Unescape escaped quotes
+                cleaned_content = cleaned_content.replace('\\"', '"')
+                try:
+                    json_obj = json.loads(cleaned_content)
+                    new_text = json.dumps(json_obj, indent=2)
+                except json.JSONDecodeError:
+                    # If both attempts fail, write the content as-is
+                    pass
 
             if anchor_text == "":
                 new_content = insert_text + new_content
