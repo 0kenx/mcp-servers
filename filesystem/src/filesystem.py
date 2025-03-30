@@ -1219,6 +1219,145 @@ def get_working_directory() -> str:
     return WORKING_DIRECTORY
 
 
+@mcp.tool()
+def changes_since_last_commit(path: str = ".") -> str:
+    """
+    Show changes in the working directory since the last commit.
+    Combines git status and git diff to show both tracked and untracked changes.
+
+    Args:
+        path: Path to check changes in (defaults to current working directory)
+
+    Returns:
+        A string containing the git status and diff output
+    """
+    try:
+        resolved_path = _resolve_path(path)
+        validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
+
+        # Find git root
+        def find_git_root(start_path: str) -> Optional[str]:
+            current = Path(start_path).resolve()
+            while current != current.parent:  # Stop at root
+                if (current / ".git").exists():
+                    return str(current)
+                current = current.parent
+            return None
+
+        # First try to find git root from the working directory
+        git_root = None
+        if WORKING_DIRECTORY is not None:
+            git_root = find_git_root(WORKING_DIRECTORY)
+
+        # If not found, try from the target path
+        if git_root is None:
+            git_root = find_git_root(validated_path)
+
+        if not git_root:
+            return f"Error: No git repository found in or above {path}"
+
+        # Find git executable
+        git_cmd = shutil.which("git")
+        if not git_cmd:
+            # Try common locations for git if shutil.which fails
+            common_git_paths = [
+                "/usr/bin/git",
+                "/usr/local/bin/git",
+                "/opt/homebrew/bin/git",
+                "C:\\Program Files\\Git\\bin\\git.exe",
+                "C:\\Program Files (x86)\\Git\\bin\\git.exe",
+            ]
+            for git_path in common_git_paths:
+                if os.path.isfile(git_path):
+                    git_cmd = git_path
+                    break
+
+            if not git_cmd:
+                return "Error: Git executable not found. Please ensure Git is installed and in your PATH."
+
+        # Add repository to safe.directory to avoid Git security warnings
+        subprocess.run(
+            [git_cmd, "config", "--global", "--add", "safe.directory", git_root],
+            capture_output=False,
+            text=False,
+            check=False,
+        )
+
+        # Get relative path from git root to target path
+        rel_path = os.path.relpath(validated_path, git_root)
+
+        # Change to git root directory for git commands
+        original_cwd = os.getcwd()
+        os.chdir(git_root)
+
+        try:
+            # Get git status
+            status_result = subprocess.run(
+                [git_cmd, "status", "-s", rel_path],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            # Get git diff
+            diff_result = subprocess.run(
+                [git_cmd, "diff", "HEAD", rel_path],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            # Get untracked files diff
+            untracked_diff = ""
+            if status_result.stdout:
+                # Get list of untracked files from status
+                untracked = []
+                for line in status_result.stdout.splitlines():
+                    if line.startswith("??"):
+                        untracked.append(line[3:])
+
+                # Get diff for untracked files
+                if untracked:
+                    for file in untracked:
+                        try:
+                            with open(
+                                file, "r", encoding="utf-8", errors="ignore"
+                            ) as f:
+                                content = f.read()
+                            untracked_diff += (
+                                f"\n=== Untracked file: {file} ===\n{content}\n"
+                            )
+                        except Exception as e:
+                            untracked_diff += (
+                                f"\n=== Error reading untracked file {file}: {e} ===\n"
+                            )
+
+            # Combine outputs
+            output = []
+            if status_result.stdout:
+                output.append("=== Git Status ===")
+                output.append(status_result.stdout)
+
+            if diff_result.stdout:
+                output.append("\n=== Git Diff (tracked files) ===")
+                output.append(diff_result.stdout)
+
+            if untracked_diff:
+                output.append("\n=== Untracked Files Content ===")
+                output.append(untracked_diff)
+
+            return "\n".join(output) if output else "No changes found"
+
+        finally:
+            # Restore original working directory
+            os.chdir(original_cwd)
+
+    except subprocess.CalledProcessError as e:
+        return f"Error executing git command: {e.stderr}"
+    except Exception as e:
+        return f"Error checking changes: {str(e)}"
+
+
 # === Modifying Tools (Tracked) ===
 
 
