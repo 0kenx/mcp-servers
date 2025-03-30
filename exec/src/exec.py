@@ -281,6 +281,8 @@ async def execute_command(
         timeout: Maximum execution time in seconds (default: 30)
         output_type: Which outputs to return ("stdout", "stderr", "both")
     """
+    global last_session_id, active_sessions
+
     # Check for blacklisted commands
     if is_command_blacklisted(command):
         return "Error: This command has been blacklisted"
@@ -365,27 +367,53 @@ async def execute_command(
 async def read_output(session_id: str, output_type: str = "both") -> str:
     """
     Read new output from a running session using the session ID returned by execute_command.
+    Non-blocking - returns immediately with any new output available.
 
     Args:
         session_id: The session ID returned by execute_command
         output_type: Which outputs to return ("stdout", "stderr", "both")
     """
+    global active_sessions
+
     session = active_sessions.get(session_id)
     if not session:
         return f"Error: Session {session_id} not found"
 
-    # Read any new output
-    stdout_data, stderr_data = await session.process.communicate()
+    async def drain_output(stream) -> str:
+        output = []
+        while True:
+            try:
+                line = await asyncio.wait_for(stream.readline(), timeout=0.1)
+                if not line:
+                    break
+                output.append(line.decode().rstrip("\n"))
+            except asyncio.TimeoutError:
+                break
+        return "\n".join(output)
+
+    # Read any new output (non-blocking)
+    new_stdout = (
+        await drain_output(session.process.stdout) if session.process.stdout else ""
+    )
+    new_stderr = (
+        await drain_output(session.process.stderr) if session.process.stderr else ""
+    )
 
     # Update buffers
-    if stdout_data:
-        session.stdout_buffer += stdout_data.decode()
-    if stderr_data:
-        session.stderr_buffer += stderr_data.decode()
+    if new_stdout:
+        if session.stdout_buffer:
+            session.stdout_buffer += "\n" + new_stdout
+        else:
+            session.stdout_buffer = new_stdout
+    if new_stderr:
+        if session.stderr_buffer:
+            session.stderr_buffer += "\n" + new_stderr
+        else:
+            session.stderr_buffer = new_stderr
 
     session.last_read = datetime.now()
 
-    # Check if process has completed
+    # Check if process has completed without blocking
     returncode = session.process.returncode
     is_running = returncode is None
 
@@ -410,6 +438,8 @@ async def read_output(session_id: str, output_type: str = "both") -> str:
 @mcp.tool()
 async def force_terminate(session_id: str) -> str:
     """Force terminate a running session using the session ID returned by execute_command."""
+    global active_sessions
+
     session = active_sessions.get(session_id)
     if not session:
         return f"Error: Session {session_id} not found"
