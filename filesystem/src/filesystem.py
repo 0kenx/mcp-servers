@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Any, Callable, Union
 from datetime import datetime, timezone
 from functools import wraps
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Context
 import threading
 import time
 import json
@@ -36,6 +36,54 @@ from mcp_edit_utils import (
     DIFFS_DIR,
     CHECKPOINTS_DIR,  # Use constants
 )
+
+SYSTEM_PROMPT = """
+SYSTEM PROMPT - CODING GUIDELINES
+====
+You are a powerful agentic AI coding assistant.
+
+You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question. Each time the USER sends a message, he may attach some information about their current state, additional source code files, documentation, linter errors, etc. This information may or may not be relevant to the coding task, it is up for you to decide. Your main goal is to follow the USER's instructions at each message.
+
+1. Be concise and do not repeat yourself.
+2. Be conversational but professional. 
+3. You are allowed to be proactive, but only when the USER asks you to do something.
+4. Refer to the USER in the second person and yourself in the first person. 
+5. Format your responses in markdown. Use backticks to format file, directory, function, and class names. 
+6. NEVER lie or make things up.
+7. Refrain from apologizing all the time when results are unexpected. Instead, just try your best to proceed or explain the circumstances to the USER without apologizing.
+8. Strive to strike a balance between doing the right thing when asked, including taking actions and follow-up actions.
+9. DO NOT surprise the USER with actions you take without asking. For example, if the USER asks you how to approach something, you should do your best to answer their question first, and not immediately jump into taking actions.
+10. DO NOT add additional code explanation summary unless requested by the USER. After working on a file, just stop, rather than providing an explanation of what you did.
+11. DO NOT add comments in code highlighting changes or referring to old and new versions of the code.
+12. Do add docstrings and function level documentation.
+13. When working on a codebase, keep a changelog in CHANGELOG.md located in the same directory as README.md.
+
+IMPORTANT: You should minimize output tokens as much as possible while maintaining helpfulness, quality, and accuracy. Only address the specific query or task at hand, avoiding tangential information unless absolutely critical for completing the request. If you can answer in 1-3 sentences or a short paragraph, please do.
+
+# Following conventions
+When making changes to files, first understand the file's code conventions. Mimic code style, use existing libraries and utilities, and follow existing patterns.
+- NEVER assume that a given library is available, even if it is well known. Whenever you write code that uses a library or framework, first check that this codebase already uses the given library. For example, you might look at neighboring files, or check the package.json (or cargo.toml, and so on depending on the language).
+- When you create a new component, first look at existing components to see how they're written; then consider framework choice, naming conventions, typing, and other conventions.
+- When you debug tests, first look at passing tests to see how they're written. NEVER cheat by skipping tests, making mock code, or modifying the test case itself. ONLY modify the test case if the old test case doesn't conform to the interface specification.
+- When you edit a piece of code, first look at the code's surrounding context (especially its imports) to understand the code's choice of frameworks and libraries. Then consider how to make the given change in a way that is most idiomatic.
+- Always follow security best practices. Never introduce code that exposes or logs secrets and keys. Never commit secrets or keys to the repository.
+
+# Making code changes
+When making code changes, NEVER output code to the USER, unless requested. Instead use one of the code edit tools to implement the change. It is EXTREMELY important that your generated code can be run immediately by the USER. To ensure this, follow these instructions carefully:
+
+Add all necessary import statements, dependencies, and endpoints required to run the code. If you're creating the codebase from scratch, create an appropriate dependency management file (e.g. requirements.txt package.json) with package versions and a helpful README. Keep the architecture simple, design and document the architecture and interface specifications first, and include deployment scripts or instructions. If you're building a web app from scratch, give it a beautiful and modern UI, imbued with best UX practices. NEVER generate an extremely long hash or any non-textual code, such as binary. These are not helpful to the USER and are very expensive. Unless you are appending some small easy to apply edit to a file, or creating a new file, you MUST read the the contents or section of what you're editing before editing it. If you've introduced (linter) errors, fix them if clear how to (or you can easily figure out how to). Do not make uneducated guesses. And DO NOT loop more than 3 times on fixing linter errors on the same file. On the third time, you should stop and ask the USER what to do next. If you've suggested a reasonable code edit that wasn't followed by the apply model, you should try reapplying the edit.
+
+When debugging, only make code changes if you are certain that you can solve the problem. Otherwise, follow debugging best practices: 1. Address the root cause instead of the symptoms. 2. Add descriptive logging statements and error messages to track variable and code state. 3. Add test functions and statements to isolate the problem. 4. Prefer solutions that do not increase structural complexity of the project.
+
+Use test-driven development whenever possible. Look for interface documentation or specifications and make sure tests conform to such specifications. When debugging NEVER cheat by skipping, modifying tests, or creating mock programs. ALWAYS analyze the program under test and fix issues there. Only create new files and implement missing features when you are sure it is the root cause for the failing tests.
+
+# Tool calling
+You have MCP tools at your disposal to solve the coding task. Follow these rules regarding tool calls:
+
+ALWAYS follow the tool call schema exactly as specified and make sure to provide all necessary parameters. The conversation may reference tools that are no longer available. Only calls tools when they are necessary. Call the multi version of tools where available, such as read multiple files, list directory tree, make multiple edits, etc. If the USER's task is general or you already know the answer, just respond without calling tools. Before calling each tool, first explain to the USER why you are calling it. 
+
+Answer the USER's request using the relevant tool(s), if they are available. Check that all the required parameters for each tool call are provided or can reasonably be inferred from context. IF there are no relevant tools or there are missing values for required parameters, ask the USER to supply these values; otherwise proceed with the tool calls. If the USER provides a specific value for a parameter (for example provided in quotes), make sure to use that value EXACTLY. DO NOT make up values for or ask about optional parameters. Carefully analyze descriptive terms in the request as they may indicate required parameter values that should be included even if not explicitly quoted.
+"""
 
 # Create MCP server
 mcp = FastMCP("secure-filesystem-server")
@@ -93,15 +141,29 @@ _conversation_timeout: float = 120.0  # seconds
 _conversation_lock = threading.Lock()
 
 
-def _get_or_create_conversation_id() -> str:
+def _get_or_create_conversation_id(ctx: Optional[Context] = None) -> str:
     """
     Get the current conversation ID or create a new one if needed.
+    Uses context.client_id and request_id if available, otherwise generates timestamp-based ID.
     Thread-safe and handles timeouts.
     """
     global _current_conversation_id, _last_tool_call_time
 
     with _conversation_lock:
         current_time = time.time()
+
+        # If context is provided, try to use client_id and request_id
+        if (
+            ctx
+            and hasattr(ctx, "client_id")
+            and hasattr(ctx, "request_id")
+            and ctx.client_id is not None
+            and ctx.request_id is not None
+        ):
+            _current_conversation_id = f"{ctx.client_id}_{ctx.request_id}"
+            _last_tool_call_time = current_time
+            log.info(f"Using context-based conversation ID: {_current_conversation_id}")
+            return _current_conversation_id
 
         # If no conversation exists or timeout occurred, create new one
         if (
@@ -111,14 +173,16 @@ def _get_or_create_conversation_id() -> str:
         ):
             _current_conversation_id = str(int(current_time))
             _last_tool_call_time = current_time
-            log.info(f"Created new conversation: {_current_conversation_id}")
+            log.info(
+                f"Created new timestamp-based conversation: {_current_conversation_id}"
+            )
 
         # Update last tool call time
         _last_tool_call_time = current_time
         return _current_conversation_id
 
 
-def finish_edit() -> str:
+def _finish_edit() -> str:
     """
     End the current conversation and return its ID.
     The next tool call will start a new conversation.
@@ -134,6 +198,18 @@ def finish_edit() -> str:
         _last_tool_call_time = None
         log.info(f"Finished conversation: {conversation_id}")
         return f"Finished conversation: {conversation_id}"
+
+
+def _resolve_path(path: str) -> str:
+    """
+    Resolve a path relative to the working directory if set.
+    Handles '.' to mean working directory when WORKING_DIRECTORY is set.
+    """
+    if WORKING_DIRECTORY is not None:
+        if path == "." or path.startswith("./") or path.startswith(".\\"):
+            # Replace leading '.' with working directory
+            return os.path.join(WORKING_DIRECTORY, path[1:].lstrip("/\\"))
+    return path
 
 
 # --- History Tracking Decorator ---
@@ -171,7 +247,11 @@ def track_edit_history(func: Callable) -> Callable:
             return f"Error: Missing required arguments for {func.__name__}."
 
         # Get or create conversation ID
-        conversation_id = _get_or_create_conversation_id()
+        if "ctx" in bound_args.arguments:
+            ctx = bound_args.arguments["ctx"]
+            conversation_id = _get_or_create_conversation_id(ctx)
+        else:
+            conversation_id = _get_or_create_conversation_id()
         current_index = get_next_tool_call_index(conversation_id)
         tool_name = func.__name__
         log.info(
@@ -201,13 +281,17 @@ def track_edit_history(func: Callable) -> Callable:
 
         # Prepare history tracking structure
         try:
-            history_root = get_history_root(file_path_str)
+            resolved_file_path = _resolve_path(file_path_str)
+            resolved_source_path = (
+                _resolve_path(source_path_str) if source_path_str else None
+            )
+            history_root = get_history_root(resolved_file_path)
             if not history_root:
-                return f"Error: Cannot track history for path {file_path_str}."
+                return f"Error: Cannot track history for path {resolved_file_path}."
             # Validate paths using the retrieved allowed_dirs
-            validated_path = Path(validate_path(file_path_str, allowed_dirs)).resolve()
+            validated_path = Path(validate_path(resolved_file_path, allowed_dirs)).resolve()
             validated_source_path = (
-                Path(validate_path(source_path_str, allowed_dirs)).resolve()
+                Path(validate_path(resolved_source_path, allowed_dirs)).resolve()
                 if source_path_str
                 else None
             )
@@ -364,7 +448,10 @@ def track_edit_history(func: Callable) -> Callable:
                 "edit_id": edit_id,
                 "conversation_id": conversation_id,
                 "tool_call_index": current_index,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%S.%fZ")[
+                    :21
+                ]
+                + "Z",
                 "operation": operation,
                 "file_path": str(relative_file_path),
                 "source_path": str(relative_source_path)
@@ -403,7 +490,8 @@ def track_edit_history(func: Callable) -> Callable:
 def read_file(path: str) -> str:
     """Read the complete contents of a file. Prefer using `read_multiple_files` if you need to read multiple files."""
     try:
-        validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+        resolved_path = _resolve_path(path)
+        validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
         with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
             return f.read()
     except (ValueError, Exception) as e:
@@ -417,7 +505,8 @@ def read_multiple_files(paths: List[str]) -> str:
     results = []
     for file_path in paths:
         try:
-            validated_path = validate_path(file_path, SERVER_ALLOWED_DIRECTORIES)
+            resolved_path = _resolve_path(file_path)
+            validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
             with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
             results.append(f"--- {file_path} ---\n{content}\n")
@@ -430,7 +519,8 @@ def read_multiple_files(paths: List[str]) -> str:
 @mcp.tool()
 def read_file_by_line(path: str, ranges: List[str]) -> str:
     """Read specific lines or line ranges from a file. Ranges can be specified as single numbers or ranges. Line numbers are 1-based. Example: ["5", "10-20", "100"] will read line 5, lines 10 through 20, and line 100."""
-    validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+    resolved_path = _resolve_path(path)
+    validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
 
     # Parse the ranges
     line_numbers = set()
@@ -480,7 +570,8 @@ def read_file_by_keyword(
 ) -> str:
     """Read lines containing a keyword or matching a regex pattern, with option to specify the number of lines to include before and after each match."""
     try:
-        validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+        resolved_path = _resolve_path(path)
+        validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
         with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
     except (ValueError, Exception) as e:
@@ -580,7 +671,8 @@ def read_function_by_keyword(
         The function definition with context, or a message if not found
     """
     try:
-        validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+        resolved_path = _resolve_path(path)
+        validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
         with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()  # Read all lines at once
     except (ValueError, FileNotFoundError, Exception) as e:
@@ -651,7 +743,8 @@ def read_function_by_keyword(
 def create_directory(path: str) -> str:
     """Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation. If the directory already exists, this operation will succeed silently."""
     try:
-        validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+        resolved_path = _resolve_path(path)
+        validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
         os.makedirs(validated_path, exist_ok=True)
         return f"Successfully created directory {path}"
     except (ValueError, Exception) as e:
@@ -662,7 +755,8 @@ def create_directory(path: str) -> str:
 def list_directory(path: str) -> str:
     """Get a detailed listing of all files and directories in a specified path. This tool is similar to the `ls` command. If you need to know the contents of subdirectories, use `directory_tree` instead."""
     try:
-        validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+        resolved_path = _resolve_path(path)
+        validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
         if not os.path.isdir(validated_path):
             return f"Error: '{path}' is not a directory."
         entries = os.listdir(validated_path)
@@ -703,7 +797,8 @@ def full_directory_tree(
     """
     output_lines = []
     try:
-        validated_start_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+        resolved_path = _resolve_path(path)
+        validated_start_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
         if not os.path.isdir(validated_start_path):
             return f"Error: '{path}' is not a directory."
 
@@ -799,7 +894,8 @@ def directory_tree(
     show_files_ignored_by_git: bool = False,
 ) -> str:
     """Get a recursive listing of files and directories inclding subdirectoies. By default no extra metadata is shown and gitignored files are not included."""
-    validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+    resolved_path = _resolve_path(path)
+    validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
 
     # Check if this path is within a git repository by walking up the directory tree
     def find_git_root(start_path: str) -> Optional[str]:
@@ -909,6 +1005,66 @@ def directory_tree(
 
 
 @mcp.tool()
+def search_directories(path: str, pattern: str, max_depth: Optional[int] = None) -> str:
+    """
+    Search for directories matching a pattern within the specified path.
+
+    Args:
+        path: Starting directory path
+        pattern: Pattern to match directory names against (supports wildcards)
+        max_depth: Maximum depth to search (None for unlimited)
+
+    Returns:
+        List of matching directory paths
+    """
+    results = []
+    try:
+        resolved_path = _resolve_path(path)
+        validated_start_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
+        if not os.path.isdir(validated_start_path):
+            return f"Error: Search path '{path}' is not a directory."
+
+        current_depth = 0
+        for root, dirs, _ in os.walk(
+            validated_start_path, topdown=True, followlinks=False
+        ):
+            # Check if we've reached max depth
+            if max_depth is not None:
+                # Calculate current depth relative to start path
+                rel_path = os.path.relpath(root, validated_start_path)
+                current_depth = len(rel_path.split(os.sep)) if rel_path != "." else 0
+                if current_depth >= max_depth:
+                    dirs.clear()  # Don't descend further
+                    continue
+
+            # Validate the current root before processing
+            try:
+                validate_path(root, SERVER_ALLOWED_DIRECTORIES)
+            except ValueError:
+                log.warning(
+                    f"Skipping directory '{root}' during search as it's outside allowed area."
+                )
+                dirs.clear()  # Don't recurse further
+                continue
+
+            # Check directories in current level
+            for dir_name in dirs:
+                if fnmatch.fnmatch(dir_name, pattern):
+                    full_path = os.path.join(root, dir_name)
+                    try:
+                        # Final validation
+                        validate_path(full_path, SERVER_ALLOWED_DIRECTORIES)
+                        results.append(full_path)
+                    except ValueError:
+                        pass  # Skip if validation fails
+
+        return "\n".join(results) if results else "No matching directories found."
+
+    except (ValueError, Exception) as e:
+        return f"Error searching directories in {path}: {str(e)}"
+
+
+@mcp.tool()
 def search_files(
     path: str, pattern: str, excludePatterns: Optional[List[str]] = None
 ) -> str:
@@ -916,7 +1072,8 @@ def search_files(
     results = []
     excludePatterns = excludePatterns or []
     try:
-        validated_start_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+        resolved_path = _resolve_path(path)
+        validated_start_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
         if not os.path.isdir(validated_start_path):
             return f"Error: Search path '{path}' is not a directory."
 
@@ -967,7 +1124,8 @@ def search_files(
 def get_file_info(path: str) -> str:
     """Retrieve detailed metadata about a file or directory."""
     try:
-        validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
+        resolved_path = _resolve_path(path)
+        validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
         info = get_file_stats(validated_path)  # Use the moved helper
         # Format output nicely
         info_str = f"Info for: {path}\n"
@@ -989,15 +1147,61 @@ def list_allowed_directories() -> str:
     return f"Allowed directories:\n{chr(10).join(SERVER_ALLOWED_DIRECTORIES)}"
 
 
+@mcp.tool()
+def finish_edit() -> str:
+    """Call this tool after all edits are done. This is required by the MCP server."""
+    return _finish_edit()
+
+
+@mcp.tool()
+def set_working_directory(path: str) -> str:
+    """
+    THIS TOOL MUST BE CALLED FIRST, ONCE PER PROJECT AND ONLY ONCE.
+    Set the working directory for file operations. This directory must be within one of the allowed directories.
+    Only files within the working directory can be modified.
+    The response from this tool should be added to the system prompt and should guide the entire conversation.
+    """
+    global WORKING_DIRECTORY
+    try:
+        # First validate the path is within allowed directories
+        resolved_path = _resolve_path(path)
+        validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
+
+        # Check if it's a directory
+        if not os.path.isdir(validated_path):
+            return f"Error: '{path}' is not a directory. ABORT THIS CONVERSATION IMMEDIATELY."
+
+        # Check if we have write permissions
+        if not os.access(validated_path, os.W_OK):
+            return f"Error: No write permission for directory '{path}'. ABORT THIS CONVERSATION IMMEDIATELY."
+
+        # Set the working directory
+        WORKING_DIRECTORY = validated_path
+        return f"{SYSTEM_PROMPT}\n\nWorking directory set to: {validated_path}"
+    except ValueError as e:
+        return f"Error: {str(e)}. ABORT THIS CONVERSATION IMMEDIATELY."
+    except Exception as e:
+        return f"Error setting working directory: {str(e)}. ABORT THIS CONVERSATION IMMEDIATELY."
+
+
+@mcp.tool()
+def get_working_directory() -> str:
+    """Get the current working directory for file operations."""
+    if WORKING_DIRECTORY is None:
+        return "No working directory set"
+    return WORKING_DIRECTORY
+
+
 # === Modifying Tools (Tracked) ===
 
 
 @mcp.tool()
 @track_edit_history
-def write_file(path: str, content: str) -> str:
+def write_file(ctx: Context, path: str, content: str) -> str:
     """Create a new file or completely overwrite an existing file with new content. Use with caution as it will overwrite existing files without warning. Prefer using edit_file_diff if the lines changed account for less than 25% of the file."""
     try:
-        validated_path = validate_path(path, WORKING_DIRECTORY)
+        resolved_path = _resolve_path(path)
+        validated_path = validate_path(resolved_path, WORKING_DIRECTORY)
         # Ensure parent directory exists
         Path(validated_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -1019,6 +1223,7 @@ def write_file(path: str, content: str) -> str:
 @mcp.tool()
 @track_edit_history
 def edit_file_diff(
+    ctx: Context,
     path: str,
     replacements: Dict[str, str] = None,
     inserts: Dict[str, str] = None,
@@ -1056,7 +1261,8 @@ def edit_file_diff(
         )
     """
     try:
-        validated_path = validate_path(path, WORKING_DIRECTORY)
+        resolved_path = _resolve_path(path)
+        validated_path = validate_path(resolved_path, WORKING_DIRECTORY)
         replacements = replacements or {}
         inserts = inserts or {}
         operations = {"replace": 0, "insert": 0, "errors": []}
@@ -1174,12 +1380,14 @@ def edit_file_diff(
 
 @mcp.tool()
 @track_edit_history
-def move_file(source: str, destination: str) -> str:
+def move_file(ctx: Context, source: str, destination: str) -> str:
     """Move/rename a file."""
     try:
         # Decorator validates both source and dest using SERVER_ALLOWED_DIRECTORIES
-        validated_source_path = validate_path(source, WORKING_DIRECTORY)
-        validated_dest_path = validate_path(destination, WORKING_DIRECTORY)
+        resolved_source_path = _resolve_path(source)
+        resolved_dest_path = _resolve_path(destination)
+        validated_source_path = validate_path(resolved_source_path, WORKING_DIRECTORY)
+        validated_dest_path = validate_path(resolved_dest_path, WORKING_DIRECTORY)
         if os.path.exists(validated_dest_path):
             return f"Error: Destination path {destination} already exists."
         Path(validated_dest_path).parent.mkdir(parents=True, exist_ok=True)
@@ -1191,10 +1399,11 @@ def move_file(source: str, destination: str) -> str:
 
 @mcp.tool()
 @track_edit_history
-def delete_file(path: str) -> str:
+def delete_file(ctx: Context, path: str) -> str:
     """Delete a file."""
     try:
-        validated_path = validate_path(path, WORKING_DIRECTORY)
+        resolved_path = _resolve_path(path)
+        validated_path = validate_path(resolved_path, WORKING_DIRECTORY)
         # Existence/type checks happen within decorator now before op
         if os.path.isdir(validated_path):
             return f"Error: Path {path} is a directory."
@@ -1203,48 +1412,6 @@ def delete_file(path: str) -> str:
         return f"Successfully deleted {path}"
     except (ValueError, FileNotFoundError, Exception) as e:
         return f"Error deleting file: {str(e)}"
-
-
-@mcp.tool()
-def finish_edit() -> str:
-    """Call this tool after all edits are done. This is required by the MCP server."""
-    return finish_edit()
-
-
-@mcp.tool()
-def set_working_directory(path: str) -> str:
-    """
-    Set the working directory for file operations. This directory must be within one of the allowed directories.
-    Only files within the working directory can be modified.
-    """
-    global WORKING_DIRECTORY
-    try:
-        # First validate the path is within allowed directories
-        validated_path = validate_path(path, SERVER_ALLOWED_DIRECTORIES)
-
-        # Check if it's a directory
-        if not os.path.isdir(validated_path):
-            return f"Error: '{path}' is not a directory."
-
-        # Check if we have write permissions
-        if not os.access(validated_path, os.W_OK):
-            return f"Error: No write permission for directory '{path}'."
-
-        # Set the working directory
-        WORKING_DIRECTORY = validated_path
-        return f"Working directory set to: {validated_path}"
-    except ValueError as e:
-        return f"Error: {str(e)}"
-    except Exception as e:
-        return f"Error setting working directory: {str(e)}"
-
-
-@mcp.tool()
-def get_working_directory() -> str:
-    """Get the current working directory for file operations."""
-    if WORKING_DIRECTORY is None:
-        return "No working directory set"
-    return WORKING_DIRECTORY
 
 
 if __name__ == "__main__":
