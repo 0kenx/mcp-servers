@@ -3,11 +3,12 @@ import sys
 import json
 import subprocess
 import tempfile
-import time, datetime
+import time
 import signal
 import asyncio
 import psutil
 import shutil
+from datetime import datetime
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, List, Dict, Any, Union, Tuple, Set
@@ -140,6 +141,7 @@ class Session:
 
 # Global state
 active_sessions: Dict[str, Session] = {}
+last_session_id: int = 0
 blocked_commands: Set[str] = set(BLACKLISTED_COMMANDS)
 
 
@@ -284,7 +286,8 @@ async def execute_command(
         return "Error: This command has been blacklisted"
 
     # Create unique session ID
-    session_id = str(len(active_sessions) + 1)
+    last_session_id += 1
+    session_id = str(last_session_id)
 
     # Start the process
     process = await create_async_process(command)
@@ -301,13 +304,34 @@ async def execute_command(
     )
     active_sessions[session_id] = session
 
-    # Wait for initial output with timeout
+    # Create tasks for reading stdout and stderr
+    async def read_stream(stream, buffer: List[str]):
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+            buffer.append(line.decode().rstrip("\n"))
+
+    stdout_buffer = []
+    stderr_buffer = []
+    stdout_task = asyncio.create_task(read_stream(process.stdout, stdout_buffer))
+    stderr_task = asyncio.create_task(read_stream(process.stderr, stderr_buffer))
+
     try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+        # Wait for process to complete or timeout
+        await asyncio.wait_for(process.wait(), timeout=timeout)
+
+        # Wait for output readers to complete
+        await stdout_task
+        await stderr_task
+
+        session.stdout_buffer = "\n".join(stdout_buffer)
+        session.stderr_buffer = "\n".join(stderr_buffer)
+
         return format_output(
             {
-                "stdout": stdout.decode() if stdout else "",
-                "stderr": stderr.decode() if stderr else "",
+                "stdout": session.stdout_buffer,
+                "stderr": session.stderr_buffer,
                 "returncode": process.returncode,
                 "execution_time": (datetime.now() - session.start_time).total_seconds(),
                 "timed_out": False,
@@ -316,13 +340,13 @@ async def execute_command(
             OutputType(output_type.lower()),
         )
     except asyncio.TimeoutError:
-        # Get partial output before timeout
-        if process.stdout:
-            stdout_data = await process.stdout.read()
-            session.stdout_buffer = stdout_data.decode() if stdout_data else ""
-        if process.stderr:
-            stderr_data = await process.stderr.read()
-            session.stderr_buffer = stderr_data.decode() if stderr_data else ""
+        # Cancel output readers
+        stdout_task.cancel()
+        stderr_task.cancel()
+
+        # Store current output in session
+        session.stdout_buffer = "\n".join(stdout_buffer)
+        session.stderr_buffer = "\n".join(stderr_buffer)
 
         return format_output(
             {
