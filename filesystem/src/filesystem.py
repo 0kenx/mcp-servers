@@ -1222,6 +1222,7 @@ def get_working_directory() -> str:
 @mcp.tool()
 def changes_since_last_commit(path: str = ".") -> str:
     """
+    ALWAYS USE THIS TOOL TO CHECK FOR CHANGES BEFORE EDITING FILES.
     Show changes in the working directory since the last commit.
     Combines git status and git diff to show both tracked and untracked changes.
 
