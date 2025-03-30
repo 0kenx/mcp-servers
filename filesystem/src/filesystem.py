@@ -17,9 +17,9 @@ import json
 
 from mcp_edit_utils import (
     normalize_path,
-    expand_home,  # Keep path utils if used directly elsewhere
+    expand_home,
     get_file_stats,
-    get_metadata,  # File info helpers
+    get_metadata,
     get_history_root,
     sanitize_path_for_filename,
     acquire_lock,
@@ -29,12 +29,12 @@ from mcp_edit_utils import (
     read_log_file,
     write_log_file,
     HistoryError,
-    log,  # Use the shared logger
-    get_next_tool_call_index,  # Use the shared counter
+    log,
+    get_next_tool_call_index,
     validate_path,
     LOGS_DIR,
     DIFFS_DIR,
-    CHECKPOINTS_DIR,  # Use constants
+    CHECKPOINTS_DIR,
 )
 
 SYSTEM_PROMPT = """
@@ -85,7 +85,6 @@ ALWAYS follow the tool call schema exactly as specified and make sure to provide
 Answer the USER's request using the relevant tool(s), if they are available. Check that all the required parameters for each tool call are provided or can reasonably be inferred from context. IF there are no relevant tools or there are missing values for required parameters, ask the USER to supply these values; otherwise proceed with the tool calls. If the USER provides a specific value for a parameter (for example provided in quotes), make sure to use that value EXACTLY. DO NOT make up values for or ask about optional parameters. Carefully analyze descriptive terms in the request as they may indicate required parameter values that should be included even if not explicitly quoted.
 """
 
-# Create MCP server
 mcp = FastMCP("secure-filesystem-server")
 
 # Command line argument parsing
@@ -217,7 +216,7 @@ def _resolve_path(path: str) -> str:
     return path
 
 
-# --- History Tracking Decorator ---
+# History Tracking Decorator
 def track_edit_history(func: Callable) -> Callable:
     """
     Decorator for MCP tools that modify files to track their history.
@@ -236,7 +235,6 @@ def track_edit_history(func: Callable) -> Callable:
         wrapper_args = list(args)
         wrapper_kwargs = kwargs.copy()
 
-        # Use inspect.signature
         try:
             sig = inspect.signature(func)
         except ValueError as e:
