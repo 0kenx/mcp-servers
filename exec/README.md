@@ -1,17 +1,17 @@
 # MCP Exec Server
 
-A Managed Command Processor (MCP) for executing shell commands, Python scripts, and JavaScript scripts securely. This MCP provides a flexible way for LLMs to interact with the command line and execute code in various languages.
+An MCP server for executing shell commands, Python scripts, and JavaScript scripts securely. This MCP provides a flexible way for LLMs to interact with the command line and execute code in various languages.
 
 ## Features
 
 - Execute arbitrary terminal commands with optional timeout
 - Execute shell, Python, and JavaScript scripts provided by the LLM
-- Capture and redirect output streams (stdout, stderr) with pipe options (>1, >2, >3)
+- Capture and redirect output streams (stdout, stderr)
 - Install tools and packages on demand
 - Auto-detect the appropriate package manager for tools
 - List all installed tools and packages
 - Configure the environment with predefined tool sets
-- **NEW**: Multi-language development environments (Rust, Go, Python, JS/TS, Solidity)
+- Multi-language development environments (Rust, Go, Python, JS/TS, Solidity)
 
 ## Available Tools
 
