@@ -798,7 +798,28 @@ def find_entries_by_conversation(entries: List[Dict[str, Any]], conv_id_prefix: 
         
     log.debug(f"Found {len(matching)} entries for conversation ID matching: {conv_id_prefix}")
     # Sort by timestamp (oldest first) for proper ordering of operations
-    matching.sort(key=lambda x: x.get("timestamp", 0))
+    def sort_key(entry):
+        """Return a sortable key from the entry timestamp."""
+        timestamp = entry.get("timestamp", 0)
+        if not timestamp:
+            return 0
+
+        try:
+            if isinstance(timestamp, str):
+                if 'T' in timestamp and 'Z' in timestamp:
+                    # Parse ISO-like timestamp: "2025-03-31T154939.993Z"
+                    # Convert to a comparable string format: "20250331154939.993"
+                    ts = datetime.strptime(timestamp[:-1], '%Y-%m-%dT%H:%M:%S.%f')
+                    ts = ts.replace(tzinfo=timezone.utc)
+                    epoch_time = ts.timestamp()
+                    return epoch_time
+                else:
+                    return float(timestamp)
+            else:
+                return float(timestamp)
+        except (ValueError, TypeError):
+            return 0
+    matching.sort(key=sort_key)
     return matching
     
 def update_entry_status(
