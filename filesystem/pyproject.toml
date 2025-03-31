@@ -16,3 +16,7 @@ dependencies = [
 dev = [
     "ruff>=0.11.2",
 ]
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
