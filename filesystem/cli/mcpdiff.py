@@ -1275,7 +1275,7 @@ def handle_status(
         # Header
         print("-" * 110)
         print(
-            f"{'EDIT_ID':<12} {'TIMESTAMP':<22} {'STATUS':<8} {'OP':<7} {'CONV_ID':<12} {'FILE_PATH'}"
+            f"{COLOR_CYAN}{'EDIT_ID':<12} {'TIMESTAMP':<22} {'STATUS':<8} {'OP':<7} {'CONV_ID':<12} {'FILE_PATH'}{COLOR_RESET}"
         )
         print("-" * 110)
         # Data Rows
@@ -1291,18 +1291,40 @@ def handle_status(
             except Exception:
                 file_rel_display = entry.get("file_path", "?")  # Fallback
 
+            # Color-code the status
+            status = entry.get("status", "?")
+            if status == "pending":
+                status_color = COLOR_YELLOW
+            elif status == "accepted":
+                status_color = COLOR_GREEN
+            elif status == "rejected":
+                status_color = COLOR_RED
+            else:
+                status_color = COLOR_RESET
+
+            # Color-code the operation
+            op = entry.get("operation", "?")
+            if op in ["create", "edit", "replace"]:
+                op_color = COLOR_GREEN
+            elif op == "delete":
+                op_color = COLOR_RED
+            elif op == "move":
+                op_color = COLOR_BLUE
+            else:
+                op_color = COLOR_RESET
+
             print(
-                f"{entry.get('edit_id', '?')[:10]:<12} "  # Show prefix
-                f"{entry.get('timestamp', '?'):<22} "
-                f"{entry.get('status', '?'):<8} "
-                f"{entry.get('operation', '?'):<7} "
-                f"{entry.get('conversation_id', '?')[:10]:<12} "  # Show prefix
-                f"{file_rel_display}"
+                f"{COLOR_CYAN}{entry.get('edit_id', '?')[:10]:<12}{COLOR_RESET} "  # Edit ID in cyan
+                f"{entry.get('timestamp', '?'):<22} "  # Timestamp uncolored
+                f"{status_color}{status:<8}{COLOR_RESET} "  # Status with dynamic color
+                f"{op_color}{op:<7}{COLOR_RESET} "  # Operation with dynamic color
+                f"{COLOR_CYAN}{entry.get('conversation_id', '?')[:10]:<12}{COLOR_RESET} "  # Conv ID in cyan
+                f"{file_rel_display}"  # File path uncolored
             )
             count += 1
         print("-" * 110)
     else:
-        print("No matching history entries found.")
+        print(f"{COLOR_YELLOW}No matching history entries found.{COLOR_RESET}")
 
 
 def print_diff_with_color(diff_content: str):

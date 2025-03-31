@@ -29,16 +29,61 @@ local function get_win_dims()
   return float_width, float_height, row, col
 end
 
+-- Add this helper function at the top with other local functions
+local function convert_ansi_to_html(str)
+  -- ANSI color code to highlight group mapping
+  local ansi_to_hl = {
+    -- Regular colors
+    ['30'] = 'AnsiBlack',
+    ['31'] = 'AnsiRed',
+    ['32'] = 'AnsiGreen',
+    ['33'] = 'AnsiYellow',
+    ['34'] = 'AnsiBlue',
+    ['35'] = 'AnsiMagenta',
+    ['36'] = 'AnsiCyan',
+    ['37'] = 'AnsiWhite',
+    -- Bright colors
+    ['90'] = 'AnsiBrightBlack',
+    ['91'] = 'AnsiBrightRed',
+    ['92'] = 'AnsiBrightGreen',
+    ['93'] = 'AnsiBrightYellow',
+    ['94'] = 'AnsiBrightBlue',
+    ['95'] = 'AnsiBrightMagenta',
+    ['96'] = 'AnsiBrightCyan',
+    ['97'] = 'AnsiBrightWhite',
+  }
+
+  -- Define highlight groups if they don't exist
+  for _, hl_group in pairs(ansi_to_hl) do
+    if vim.fn.hlexists(hl_group) == 0 then
+      local color = hl_group:gsub('Ansi', ''):gsub('Bright', '')
+      local is_bright = hl_group:match('Bright') ~= nil
+      vim.api.nvim_set_hl(0, hl_group, {
+        fg = string.lower(color),
+        bold = is_bright,
+      })
+    end
+  end
+
+  -- Convert ANSI escape sequences to Neovim syntax highlighting
+  local result = str:gsub('\27%[([%d;]+)m(.-)\27%[0m', function(code, text)
+    local hl_group = ansi_to_hl[code]
+    if hl_group then
+      return string.format('%%%s%%%s%%*', hl_group, text)
+    end
+    return text
+  end)
+
+  return result
+end
+
 -- Helper function to show output in a floating window
 local function show_output_in_float(title, lines)
   local float_width, float_height, row, col = get_win_dims()
 
-  local buf = api.nvim_create_buf(false, true) -- Create a scratch buffer
+  -- Create terminal buffer
+  local buf = api.nvim_create_buf(false, true)
   api.nvim_buf_set_option(buf, "bufhidden", "wipe")
-  api.nvim_buf_set_option(buf, "swapfile", false)
-  api.nvim_buf_set_option(buf, "buftype", "nofile")
-  api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  api.nvim_buf_set_option(buf, "modifiable", false) -- Make read-only
 
   local win_opts = {
     relative = "editor",
@@ -53,6 +98,29 @@ local function show_output_in_float(title, lines)
   }
 
   local win = api.nvim_open_win(buf, true, win_opts)
+
+  -- Set window options
+  if win and api.nvim_win_is_valid(win) then
+    vim.wo[win].wrap = true
+  end
+
+  -- Write content to a temporary file
+  local tmp_file = vim.fn.tempname()
+  local tmp_handle = io.open(tmp_file, 'w')
+  if tmp_handle then
+    for _, line in ipairs(lines) do
+      tmp_handle:write(line .. '\n')
+    end
+    tmp_handle:close()
+
+    -- Use less to display the content with ANSI colors
+    vim.fn.termopen(string.format('less -R %s', vim.fn.shellescape(tmp_file)), {
+      on_exit = function()
+        -- Clean up temp file
+        vim.fn.delete(tmp_file)
+      end
+    })
+  end
 
   -- Close float on 'q' or '<Esc>'
   api.nvim_buf_set_keymap(
