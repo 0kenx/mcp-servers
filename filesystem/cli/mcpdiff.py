@@ -1692,7 +1692,7 @@ def handle_review(
             
             # Prompt for action
             while True:
-                choice = input(f"\n{COLOR_RESET}Action? ({COLOR_GREEN}[a]{COLOR_RESET}ccept {COLOR_RED}[r]{COLOR_RESET}eject {COLOR_CYAN}[s]{COLOR_RESET}kip {COLOR_BLUE}[q]{COLOR_RESET}uit):{COLOR_RESET}").lower()
+                choice = input(f"\n{COLOR_RESET}Action? ({COLOR_GREEN}[a]{COLOR_RESET}ccept {COLOR_RED}[r]{COLOR_RESET}eject {COLOR_BLUE}[s]{COLOR_RESET}kip {COLOR_YELLOW}[q]{COLOR_RESET}uit):{COLOR_RESET}").lower()
                 
                 if choice in ['a', 'accept']:
                     # Accept the edit
