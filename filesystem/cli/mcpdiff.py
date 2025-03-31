@@ -754,12 +754,12 @@ def find_entry_by_id(entries: List[Dict[str, Any]], id_prefix: str) -> Optional[
             return exact_matches[0]
             
         # Display all matching entries and let the user select one
-        print(f"{COLOR_YELLOW}Ambiguous ID prefix '{id_prefix}' matches multiple entries:{COLOR_RESET}")
-        print(f"{COLOR_CYAN}{'Time':19} | {'Edit ID':8} | {'Conv ID':8} | {'Op':10} | {'Status':10} | {'File Path'}{COLOR_RESET}")
+        print(f"{COLOR_RED}Ambiguous ID prefix '{id_prefix}' matches multiple entries:{COLOR_RESET}")
+        print(f"{COLOR_CYAN}{'No. Time':23}  {'Edit ID':8}  {'Conv ID':8}  {'Operation':9}  {'Status':8}  {'File Path'}{COLOR_RESET}")
         print("-" * 100)
         
         for i, entry in enumerate(matching):
-            print(f"{i+1}. {format_entry_summary(entry)}")
+            print(f"{i+1:2d}. {format_entry_summary(entry)}")
             
         # Ask the user to choose an entry
         try:
@@ -972,7 +972,7 @@ def format_entry_summary(entry: Dict[str, Any], detailed: bool = False) -> str:
     
     # Apply colors to operations
     if op == "edit":
-        op_colored = f"{COLOR_CYAN}{op}{COLOR_RESET}"
+        op_colored = f"{COLOR_BLUE}{op}{COLOR_RESET}"
     elif op == "create":
         op_colored = f"{COLOR_GREEN}{op}{COLOR_RESET}"
     elif op == "replace":
@@ -980,7 +980,8 @@ def format_entry_summary(entry: Dict[str, Any], detailed: bool = False) -> str:
     elif op == "delete":
         op_colored = f"{COLOR_RED}{op}{COLOR_RESET}"
     elif op == "move" or op == "rename":
-        op_colored = f"{COLOR_BLUE}{op}{COLOR_RESET}"
+        op_colored = f"{COLOR_CYAN}{op}{COLOR_RESET}"
+        file_path = f"{entry.get('source_path', '')} -> {file_path}"
     else:
         op_colored = op
         
@@ -988,12 +989,12 @@ def format_entry_summary(entry: Dict[str, Any], detailed: bool = False) -> str:
     op_length = len(op)
     status_length = len(status)
     
-    # Fixed width columns for alignment: Time | Edit ID | Conv ID | OP | Status | File path
+    # Fixed width columns for alignment: Time  Edit ID  Conv ID  Operation  Status  File path
     # Pad the operation field to ensure consistent column width
     op_padding = max(9 - op_length, 0)  # Ensure at least 10 chars for op column
     status_padding = max(8 - status_length, 0)  # Ensure at least 10 chars for status column
     
-    summary = f"{time_str:19} | {id_short:8} | {conv_id_short:8} | {op_colored}{' ' * op_padding} | {status_colored}{' ' * status_padding} | {file_path}"
+    summary = f"{time_str:19}  {id_short:8}  {conv_id_short:8}  {op_colored}{' ' * op_padding}  {status_colored}{' ' * status_padding}  {file_path}"
     
     if detailed:
         # Add additional details for detailed view
@@ -1217,7 +1218,7 @@ def handle_status(
         return
     
     # Print header
-    print(f"{COLOR_CYAN}{'Time':19} | {'Edit ID':8} | {'Conv ID':8} | {'Operation':9} | {'Status':8} | {'File Path'}{COLOR_RESET}")
+    print(f"{COLOR_CYAN}{'Time':19}  {'Edit ID':8}  {'Conv ID':8}  {'Operation':9}  {'Status':8}  {'File Path'}{COLOR_RESET}")
     print("-" * 100)
     
     # Print entries
