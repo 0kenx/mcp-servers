@@ -755,11 +755,11 @@ def find_entry_by_id(entries: List[Dict[str, Any]], id_prefix: str) -> Optional[
             
         # Display all matching entries and let the user select one
         print(f"{COLOR_RED}Ambiguous ID prefix '{id_prefix}' matches multiple entries:{COLOR_RESET}")
-        print(f"{COLOR_CYAN}{'No. Time':23}  {'Edit ID':8}  {'Conv ID':8}  {'Operation':9}  {'Status':8}  {'File Path'}{COLOR_RESET}")
+        print(f"{COLOR_CYAN}{'No.  Time':24}  {'Edit ID':8}  {'Conv ID':8}  {'Operation':9}  {'Status':8}  {'File Path'}{COLOR_RESET}")
         print("-" * 100)
         
         for i, entry in enumerate(matching):
-            print(f"{i+1:2d}. {format_entry_summary(entry)}")
+            print(f"{COLOR_CYAN}[{i+1:2d}]{COLOR_RESET} {format_entry_summary(entry)}")
             
         # Ask the user to choose an entry
         try:
@@ -1002,12 +1002,8 @@ def format_entry_summary(entry: Dict[str, Any], detailed: bool = False) -> str:
         source_path = entry.get("source_path", "")
         tool_call_index = entry.get("tool_call_index", "")
         
-        summary += f"\n  Tool: {tool}"
-        if source_path:
-            summary += f"\n  Source: {source_path}"
-        if tool_call_index:
-            summary += f"\n  Call Index: {tool_call_index}"
-            
+        summary += f"\nTool: {tool}\n"
+
     return summary
     
 def apply_or_revert_edit(
@@ -1271,7 +1267,6 @@ def handle_show(
             
             # Show the diff
             diff_content = get_diff_for_entry(entry, history_root)
-            print(f"\n{COLOR_CYAN}Diff:{COLOR_RESET}")
             print_diff_with_color(diff_content)
             return
     except AmbiguousIDError:
@@ -1294,7 +1289,6 @@ def handle_show(
         
         # Show the diff
         diff_content = get_diff_for_entry(entry, history_root)
-        print(f"\n{COLOR_CYAN}Diff:{COLOR_RESET}")
         print_diff_with_color(diff_content)
         
         # Add separator between entries
@@ -1694,12 +1688,11 @@ def handle_review(
             
             # Show the diff
             diff_content = get_diff_for_entry(entry, history_root)
-            print(f"\n{COLOR_CYAN}Diff:{COLOR_RESET}")
             print_diff_with_color(diff_content)
             
             # Prompt for action
             while True:
-                choice = input(f"\n{COLOR_YELLOW}[{COLOR_GREEN}a{COLOR_YELLOW}]ccept, [{COLOR_RED}r{COLOR_YELLOW}]eject, [{COLOR_CYAN}s{COLOR_YELLOW}]kip, [{COLOR_BLUE}q{COLOR_YELLOW}]uit review: {COLOR_RESET}").lower()
+                choice = input(f"\n{COLOR_RESET}Action? ({COLOR_GREEN}[a]{COLOR_RESET}ccept {COLOR_RED}[r]{COLOR_RESET}eject {COLOR_CYAN}[s]{COLOR_RESET}kip {COLOR_BLUE}[q]{COLOR_RESET}uit):{COLOR_RESET}").lower()
                 
                 if choice in ['a', 'accept']:
                     # Accept the edit
