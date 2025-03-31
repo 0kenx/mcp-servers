@@ -1,9 +1,9 @@
-from setuptools import setup, find_packages
+from setuptools import setup
 
 setup(
     name="filesystem",
     version="0.1.0",
-    packages=find_packages(),
+    packages=["filesystem"],
     install_requires=[
         "filelock>=3.18.0",
         "httpx>=0.28.1",
