@@ -5,7 +5,6 @@ setup(
     version="0.1.0",
     packages=find_packages(),
     install_requires=[
-        "argparse>=1.4.0",
         "filelock>=3.18.0",
         "httpx>=0.28.1",
     ],
