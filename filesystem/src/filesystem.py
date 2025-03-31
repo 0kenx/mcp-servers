@@ -83,6 +83,9 @@ You have MCP tools at your disposal to solve the coding task. Follow these rules
 ALWAYS follow the tool call schema exactly as specified and make sure to provide all necessary parameters. The conversation may reference tools that are no longer available. Only calls tools when they are necessary. Call the multi version of tools where available, such as read multiple files, list directory tree, make multiple edits, etc. If the USER's task is general or you already know the answer, just respond without calling tools. Before calling each tool, first explain to the USER why you are calling it. 
 
 Answer the USER's request using the relevant tool(s), if they are available. Check that all the required parameters for each tool call are provided or can reasonably be inferred from context. IF there are no relevant tools or there are missing values for required parameters, ask the USER to supply these values; otherwise proceed with the tool calls. If the USER provides a specific value for a parameter (for example provided in quotes), make sure to use that value EXACTLY. DO NOT make up values for or ask about optional parameters. Carefully analyze descriptive terms in the request as they may indicate required parameter values that should be included even if not explicitly quoted.
+
+# Working directory
+The working directory of all MCP tools is the directory that is being set with the set_working_directory tool. This does not impact command line operations. You need to cd into the working directory before executing terminal commands.
 """
 
 mcp = FastMCP("secure-filesystem-server")
@@ -479,9 +482,9 @@ def track_edit_history(func: Callable) -> Callable:
                 "hash_after": hash_after,
             }
 
-            # For edit operations, always ensure there's a diff file
-            if operation == "edit" and not diff_content:
-                # Create an empty diff for the edit operation
+            # For edit and replace operations, always ensure there's a diff file
+            if (operation == "edit" or operation == "replace") and not diff_content:
+                # Create an empty diff for the edit or replace operation
                 empty_diff = generate_diff(
                     content_before or [],
                     content_after or content_before or [],

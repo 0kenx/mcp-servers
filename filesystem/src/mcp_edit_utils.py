@@ -484,14 +484,23 @@ def generate_diff(
 ) -> str:
     """Generates a unified diff string."""
 
-    # Ensure lines end with newline for difflib if they don't (except maybe last line)
+    # Ensure lines end with newline for difflib if they don't
     def ensure_nl(lines):
-        return [(l if l.endswith("\n") else l + "\n") for l in lines]
+        result = []
+        for line in lines:
+            if not line.endswith("\n"):
+                line = line + "\n"
+            result.append(line)
+        return result
 
+    # Properly normalize input lines
+    before_lines = ensure_nl(content_before_lines)
+    after_lines = ensure_nl(content_after_lines)
+    
     # difflib expects lines WITH newlines
     diff_iter = difflib.unified_diff(
-        content_before_lines,  # Assume lines read by readlines() have them
-        content_after_lines,
+        before_lines,
+        after_lines,
         fromfile=f"a/{path_a}",
         tofile=f"b/{path_b}",
         lineterm="\n",

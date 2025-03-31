@@ -1,4 +1,3 @@
-
 # **MCP Edit History & Diff Specification**
 
 ## 1. Overview
@@ -175,5 +174,31 @@ This core logic, triggered by `mcpdiff reject`, reconstructs the correct state o
 *   **Concurrency:** Assumes a single server process interacting with a given workspace's history. Multiple concurrent server processes writing to the same history without higher-level coordination could potentially corrupt logs despite file locks.
 *   **Complex Reverts:** Reverting `move` or `delete` operations, especially when subsequent edits target the moved/deleted path, is complex during the re-apply phase and needs careful testing.
 *   **Patch Failures:** Although the re-apply strategy minimizes context issues *within* a conversation, the underlying `patch` command could theoretically still fail even without external edits (e.g., if a diff applies poorly). The system currently treats this as an internal error requiring investigation.
+
+---
+
+## 9. Edit Acceptance/Rejection Rules
+
+The following rules govern the acceptance and rejection of edits:
+
+1. **Status Management:**
+   * Any pending edit can either be accepted or rejected
+   * The status can be switched between accepted and rejected at any time
+
+2. **Hash Verification:**
+   * Before accepting or rejecting an edit, the system checks if the current file hash matches the hash recorded in the last edit of the file
+   * If there's a hash mismatch, the user is shown a diff between the version of the last edit and the current version
+   * The user can choose to abort the operation or continue, discarding all changes made after the last edit
+
+3. **File State Reconstruction:**
+   * The system reconstructs the current state of a file by starting from the nearest available snapshot
+   * It applies all accepted and pending changes to this snapshot
+   * For rejected edits, the system compensates for line number shifts but does not modify the diff files themselves
+
+4. **Hash Recording:**
+   * After processing an edit, the system calculates the final hash of the file
+   * This hash is recorded with the operation in the log file
+
+These rules ensure that file modifications are tracked accurately and that users can precisely control which changes are applied to their files, while maintaining consistent file state.
 
 ---
