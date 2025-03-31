@@ -170,10 +170,11 @@ def _get_or_create_conversation_id(ctx: Optional[Context] = None) -> str:
             or _last_tool_call_time is None
             or current_time - _last_tool_call_time > _conversation_timeout
         ):
-            _current_conversation_id = str(int(current_time))
+            # Use hex representation of timestamp instead of integer
+            _current_conversation_id = format(int(current_time), 'x')  # Convert to hex without '0x' prefix
             _last_tool_call_time = current_time
             log.info(
-                f"Created new timestamp-based conversation: {_current_conversation_id}"
+                f"Created new hex timestamp-based conversation: {_current_conversation_id}"
             )
 
         # Update last tool call time
@@ -434,6 +435,7 @@ def track_edit_history(func: Callable) -> Callable:
                     hash_after = None
 
             # --- Generate Diff ---
+            diff_content = ""  # Initialize with empty string to avoid None case
             if content_before is not None and content_after is not None:
                 try:
                     diff_content = generate_diff(
@@ -472,6 +474,18 @@ def track_edit_history(func: Callable) -> Callable:
                 "hash_after": hash_after,
             }
 
+            # For edit operations, always ensure there's a diff file
+            if operation == "edit" and not diff_content:
+                # Create an empty diff for the edit operation
+                empty_diff = generate_diff(
+                    content_before or [],
+                    content_after or content_before or [],
+                    str(relative_file_path),
+                    str(relative_file_path),
+                )
+                diff_file_path.write_text(empty_diff)
+                log_entry["diff_file"] = str(relative_diff_path)
+
             current_log_entries.append(log_entry)
             write_log_file(log_file_path, current_log_entries)
 
@@ -492,76 +506,98 @@ def track_edit_history(func: Callable) -> Callable:
 
 
 @mcp.tool()
-def read_file(path: str) -> str:
-    """Read the complete contents of a file. Prefer using `read_multiple_files` if you need to read multiple files."""
+def read_file(path: str, ranges: Optional[List[str]] = None) -> str:
+    """
+    Read specific lines or the first 500 lines of a file.
+
+    Args:
+        path: The path to the file.
+        ranges: Optional list of line ranges (1-based). Examples: ["5", "10-20", "100"].
+                If None, reads the first 500 lines.
+
+    Returns:
+        The requested file content with a summary header.
+    """
+    DEFAULT_MAX_LINES = 500
     try:
         resolved_path = _resolve_path(path)
         validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
+
         with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
-            return f.read()
-    except (ValueError, Exception) as e:
+            lines = f.readlines()
+        total_lines = len(lines)
+
+        selected_lines_data = []
+        header = ""
+
+        if ranges:
+            # Parse the ranges
+            line_numbers = set()
+            try:
+                for r in ranges:
+                    if "-" in r:
+                        start, end = map(int, r.split("-"))
+                        if start < 1 or end < start:
+                            return f"Invalid range '{r}': start must be >= 1 and end >= start."
+                        line_numbers.update(range(start, end + 1))
+                    else:
+                        line_num = int(r)
+                        if line_num < 1:
+                            return f"Invalid line number '{r}': must be >= 1."
+                        line_numbers.add(line_num)
+            except ValueError:
+                 return f"Invalid range format in '{r}'. Use numbers or 'start-end'."
+
+
+            if not line_numbers:
+                return f"No valid line numbers specified in ranges for {path}."
+
+            # Filter lines by the requested line numbers (1-indexed)
+            selected_lines_data = [
+                (i + 1, line) for i, line in enumerate(lines) if i + 1 in line_numbers
+            ]
+
+            if not selected_lines_data:
+                return f"No matching lines found in specified ranges for {path}."
+
+            # Determine range description for header
+            sorted_nums = sorted(line_numbers)
+            range_desc = f"lines {', '.join(map(str, sorted_nums))}" # Simplified description
+            header = f"[TOTAL {total_lines} lines, showing {range_desc}]"
+
+        else:
+            # Default: Read first DEFAULT_MAX_LINES
+            end_line = min(total_lines, DEFAULT_MAX_LINES)
+            selected_lines_data = list(enumerate(lines[:end_line], 1)) # Use enumerate for 1-based index
+            header = f"[TOTAL {total_lines} lines, showing lines 1-{end_line}]"
+
+        # Format the output with line numbers
+        formatted_lines = "\n".join(
+            f"{line_num}: {line.rstrip()}" for line_num, line in selected_lines_data
+        )
+
+        return f"{header}\n{formatted_lines}"
+
+    except (ValueError, FileNotFoundError, Exception) as e:
         log.warning(f"read_file failed for {path}: {e}")
-        return f"Error reading file: {str(e)}"
+        return f"Error reading file {path}: {str(e)}"
 
 
 @mcp.tool()
 def read_multiple_files(paths: List[str]) -> str:
-    """Read the contents of multiple files simultaneously."""
+    """Read the first 500 lines of multiple files simultaneously."""
     results = []
     for file_path in paths:
         try:
-            resolved_path = _resolve_path(file_path)
-            validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
-            with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
+            # Call the refactored read_file with default settings (first 500 lines)
+            content = read_file(file_path)
             results.append(f"--- {file_path} ---\n{content}\n")
-        except (ValueError, Exception) as e:
+        except Exception as e: # Catch potential errors from the called read_file
             log.warning(f"read_multiple_files failed for sub-path {file_path}: {e}")
-            results.append(f"--- {file_path} ---\nError: {str(e)}\n")
+            # Use the error message returned by read_file if possible
+            error_msg = str(e) if isinstance(e, str) else f"Error processing file: {str(e)}"
+            results.append(f"--- {file_path} ---\n{error_msg}\n")
     return "\n".join(results)
-
-
-@mcp.tool()
-def read_file_by_line(path: str, ranges: List[str]) -> str:
-    """Read specific lines or line ranges from a file. Ranges can be specified as single numbers or ranges. Line numbers are 1-based. Example: ["5", "10-20", "100"] will read line 5, lines 10 through 20, and line 100."""
-    resolved_path = _resolve_path(path)
-    validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
-
-    # Parse the ranges
-    line_numbers = set()
-    for r in ranges:
-        if "-" in r:
-            start, end = map(int, r.split("-"))
-            if start < 1 or end < start:
-                return f"Invalid range '{r}': start must be >= 1 and end >= start."
-            line_numbers.update(range(start, end + 1))
-        else:
-            if int(r) < 1:
-                return f"Invalid line number '{r}': must be >= 1."
-            line_numbers.add(int(r))
-
-    if not line_numbers:
-        return "No valid line numbers or ranges specified."
-
-    # Read the file line by line, keeping only requested lines
-    try:
-        with open(validated_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-    except (ValueError, FileNotFoundError, Exception) as e:
-        return f"Error reading file by line: {str(e)}"
-
-    # Filter lines by the requested line numbers (1-indexed)
-    selected_lines = [
-        (i + 1, line) for i, line in enumerate(lines) if i + 1 in line_numbers
-    ]
-
-    if not selected_lines:
-        return "No matching lines found."
-
-    # Format the output with line numbers
-    return "\n".join(
-        f"{line_num}: {line.rstrip()}" for line_num, line in selected_lines
-    )
 
 
 @mcp.tool()
@@ -1181,7 +1217,7 @@ def finish_edit() -> str:
 @mcp.tool()
 def set_working_directory(path: str) -> str:
     """
-    THIS TOOL MUST BE CALLED FIRST, ONCE PER PROJECT AND ONLY ONCE.
+    THIS TOOL MUST BE CALLED FIRST, once and only once per conversation. If you're continuing a previous conversation, do not call this tool again.
     Set the working directory for file operations. This directory must be within one of the allowed directories.
     Only files within the working directory can be modified.
     The response from this tool should be added to the system prompt and should guide the entire conversation.
@@ -1220,7 +1256,7 @@ def get_working_directory() -> str:
 @mcp.tool()
 def changes_since_last_commit(path: str = ".") -> str:
     """
-    ALWAYS USE THIS TOOL TO CHECK FOR CHANGES BEFORE EDITING FILES.
+    ALWAYS CALL THIS TOOL TO CHECK FOR CHANGES BEFORE EDITING FILES.
     Show changes in the working directory since the last commit.
     Combines git status and git diff to show both tracked and untracked changes.
 
@@ -1319,13 +1355,19 @@ def changes_since_last_commit(path: str = ".") -> str:
                 if untracked:
                     for file in untracked:
                         try:
-                            with open(
-                                file, "r", encoding="utf-8", errors="ignore"
-                            ) as f:
-                                content = f.read()
-                            untracked_diff += (
-                                f"\n=== Untracked file: {file} ===\n{content}\n"
-                            )
+                            # Check if it's a file before attempting to read
+                            if os.path.isfile(file):
+                                with open(
+                                    file, "r", encoding="utf-8", errors="ignore"
+                                ) as f:
+                                    content = f.read()
+                                untracked_diff += (
+                                    f"\n=== Untracked file: {file} ===\n{content}\n"
+                                )
+                            else:
+                                untracked_diff += (
+                                    f"\n=== Untracked directory: {file} ===\n"
+                                )
                         except Exception as e:
                             untracked_diff += (
                                 f"\n=== Error reading untracked file {file}: {e} ===\n"
@@ -1370,26 +1412,31 @@ def write_file(ctx: Context, path: str, content: str) -> str:
         # Ensure parent directory exists
         Path(validated_path).parent.mkdir(parents=True, exist_ok=True)
 
-        # Handle JSON content
-        try:
-            # First try to parse as JSON string
-            json_obj = json.loads(content)
-            content = json.dumps(json_obj, indent=2)
-        except json.JSONDecodeError:
-            # If that fails, try to clean up the content
-            # Remove any leading/trailing whitespace and quotes
-            cleaned_content = content.strip().strip("\"'")
-            # Unescape escaped quotes
-            cleaned_content = cleaned_content.replace('\\"', '"')
+        # Handle JSON content - check if content is already a dict
+        if isinstance(content, dict):
+            content_to_write = json.dumps(content, indent=2)
+        elif isinstance(content, str):
             try:
-                json_obj = json.loads(cleaned_content)
-                content = json.dumps(json_obj, indent=2)
+                # Try to parse the string as JSON
+                json_obj = json.loads(content)
+                content_to_write = json.dumps(json_obj, indent=2)
             except json.JSONDecodeError:
-                # If both attempts fail, write the content as-is
-                pass
+                # If parsing fails, try cleaning up the string
+                cleaned_content = content.strip().strip("\"'")
+                cleaned_content = cleaned_content.replace('\\"', '"')
+                try:
+                    json_obj = json.loads(cleaned_content)
+                    content_to_write = json.dumps(json_obj, indent=2)
+                except json.JSONDecodeError:
+                    # If all attempts fail, write the original string content
+                    content_to_write = content
+        else:
+            # Handle unexpected content types (e.g., list, int)
+            log.warning(f"Unexpected content type {type(content)} for write_file, attempting str conversion.")
+            content_to_write = str(content)
 
         with open(validated_path, "w", encoding="utf-8") as f:
-            f.write(content)
+            f.write(content_to_write)
         return f"Successfully wrote to {path}"
     except Exception as e:
         return f"Error writing file: {str(e)}"
@@ -1449,28 +1496,28 @@ def edit_file_diff(
 
         # --- Process Replacements ---
         for old_text, new_text in replacements.items():
-            if not isinstance(old_text, str) or not isinstance(new_text, str):
+            if not isinstance(old_text, str):
                 continue
             if not old_text:
                 operations["errors"].append("Err: Empty replace key")
                 continue
 
-            # Try to parse and format JSON if it's valid JSON
-            try:
-                json_obj = json.loads(new_text)
-                new_text = json.dumps(json_obj, indent=2)
-            except json.JSONDecodeError:
-                # If that fails, try to clean up the content
-                # Remove any leading/trailing whitespace and quotes
-                cleaned_content = new_text.strip().strip("\"'")
-                # Unescape escaped quotes
-                cleaned_content = cleaned_content.replace('\\"', '"')
+            # Try to parse and format JSON if new_text is str or dict
+            content_to_replace_with = new_text
+            if isinstance(new_text, dict):
+                content_to_replace_with = json.dumps(new_text, indent=2)
+            elif isinstance(new_text, str):
                 try:
-                    json_obj = json.loads(cleaned_content)
-                    new_text = json.dumps(json_obj, indent=2)
+                    json_obj = json.loads(new_text)
+                    content_to_replace_with = json.dumps(json_obj, indent=2)
                 except json.JSONDecodeError:
-                    # If both attempts fail, write the content as-is
-                    pass
+                    cleaned_content = new_text.strip().strip("\\"\'")
+                    cleaned_content = cleaned_content.replace('\\\\"', '"')
+                    try:
+                        json_obj = json.loads(cleaned_content)
+                        content_to_replace_with = json.dumps(json_obj, indent=2)
+                    except json.JSONDecodeError:
+                        pass
 
             count = new_content.count(old_text)
             if count == 0:
@@ -1479,33 +1526,33 @@ def edit_file_diff(
                 )
                 continue
             replace_count = -1 if replace_all else 1
-            new_content = new_content.replace(old_text, new_text, replace_count)
+            new_content = new_content.replace(old_text, content_to_replace_with, replace_count)
             operations["replace"] += count if replace_all else (1 if count > 0 else 0)
 
         # --- Process Insertions ---
         for anchor_text, insert_text in inserts.items():
-            if not isinstance(anchor_text, str) or not isinstance(insert_text, str):
+            if not isinstance(anchor_text, str):
                 continue
 
-            # Try to parse and format JSON if it's valid JSON
-            try:
-                json_obj = json.loads(insert_text)
-                insert_text = json.dumps(json_obj, indent=2)
-            except json.JSONDecodeError:
-                # If that fails, try to clean up the content
-                # Remove any leading/trailing whitespace and quotes
-                cleaned_content = new_text.strip().strip("\"'")
-                # Unescape escaped quotes
-                cleaned_content = cleaned_content.replace('\\"', '"')
+            # Try to parse and format JSON if insert_text is str or dict
+            content_to_insert = insert_text
+            if isinstance(insert_text, dict):
+                content_to_insert = json.dumps(insert_text, indent=2)
+            elif isinstance(insert_text, str):
                 try:
-                    json_obj = json.loads(cleaned_content)
-                    new_text = json.dumps(json_obj, indent=2)
+                    json_obj = json.loads(insert_text)
+                    content_to_insert = json.dumps(json_obj, indent=2)
                 except json.JSONDecodeError:
-                    # If both attempts fail, write the content as-is
-                    pass
+                    cleaned_content = insert_text.strip().strip("\\"\'")
+                    cleaned_content = cleaned_content.replace('\\\\"', '"')
+                    try:
+                        json_obj = json.loads(cleaned_content)
+                        content_to_insert = json.dumps(json_obj, indent=2)
+                    except json.JSONDecodeError:
+                        pass
 
             if anchor_text == "":
-                new_content = insert_text + new_content
+                new_content = content_to_insert + new_content
                 operations["insert"] += 1
                 continue
             count = new_content.count(anchor_text)
@@ -1517,7 +1564,7 @@ def edit_file_diff(
             if replace_all:
                 parts = new_content.split(anchor_text)
                 new_content = parts[0] + "".join(
-                    [anchor_text + insert_text + part for part in parts[1:]]
+                    [anchor_text + content_to_insert + part for part in parts[1:]]
                 )
                 operations["insert"] += len(parts) - 1
             else:
@@ -1525,7 +1572,7 @@ def edit_file_diff(
                 if pos != -1:
                     new_content = (
                         new_content[: pos + len(anchor_text)]
-                        + insert_text
+                        + content_to_insert
                         + new_content[pos + len(anchor_text) :]
                     )
                     operations["insert"] += 1
