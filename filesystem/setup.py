@@ -8,12 +8,10 @@ setup(
         "argparse>=1.4.0",
         "filelock>=3.18.0",
         "httpx>=0.28.1",
-        # Remove logging as it's part of standard library
     ],
     author="0kenx",
     description="MCP Servers Filesystem",
-    long_description=open("README.md").read(),
-    long_description_content_type="text/markdown",
+    long_description="MCP Servers Filesystem",  # Fallback if README.md doesn't exist
     url="https://github.com/0kenx/mcp-servers",
     classifiers=[
         "Programming Language :: Python :: 3",
