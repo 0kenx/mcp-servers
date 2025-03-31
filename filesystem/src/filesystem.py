@@ -213,7 +213,12 @@ def _resolve_path(path: str) -> str:
             or not os.path.isabs(path)  # Handle bare filenames
         ):
             # Replace leading '.' with working directory or prepend working directory to relative path
-            return os.path.join(WORKING_DIRECTORY, path.lstrip("./\\"))
+            # Special case: handle ".something" as "./.something" not "./something"
+            if path.startswith(".") and len(path) > 1 and path[1] != '/' and path[1] != '\\':
+                # This is a path like ".tests" or ".config" - treat as "./.tests" or "./.config"
+                return os.path.join(WORKING_DIRECTORY, "." + path[1:])
+            else:
+                return os.path.join(WORKING_DIRECTORY, path.lstrip("./\\"))
     return path
 
 
@@ -1511,8 +1516,8 @@ def edit_file_diff(
                     json_obj = json.loads(new_text)
                     content_to_replace_with = json.dumps(json_obj, indent=2)
                 except json.JSONDecodeError:
-                    cleaned_content = new_text.strip().strip("\\"\'")
-                    cleaned_content = cleaned_content.replace('\\\\"', '"')
+                    cleaned_content = new_text.strip().strip("\"'")
+                    cleaned_content = cleaned_content.replace('\\"', '"')
                     try:
                         json_obj = json.loads(cleaned_content)
                         content_to_replace_with = json.dumps(json_obj, indent=2)
@@ -1543,8 +1548,8 @@ def edit_file_diff(
                     json_obj = json.loads(insert_text)
                     content_to_insert = json.dumps(json_obj, indent=2)
                 except json.JSONDecodeError:
-                    cleaned_content = insert_text.strip().strip("\\"\'")
-                    cleaned_content = cleaned_content.replace('\\\\"', '"')
+                    cleaned_content = insert_text.strip().strip("\"'")
+                    cleaned_content = cleaned_content.replace('\\"', '"')
                     try:
                         json_obj = json.loads(cleaned_content)
                         content_to_insert = json.dumps(json_obj, indent=2)

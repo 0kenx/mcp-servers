@@ -16,7 +16,7 @@ import shutil
 import time
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from typing import List, Dict, Any, Optional, Tuple, Set
+from typing import List, Dict, Any, Optional, Tuple, Set, Union
 
 # --- Configuration Constants ---
 HISTORY_DIR_NAME = "edit_history"
@@ -215,7 +215,7 @@ class FileLock:
             # Directory exists but no lock file - clean up
             try:
                 log.debug(f"Found stale lock directory without lock file: {self.lock_dir}")
-                self.lock_dir.rmdir()
+                self._force_cleanup()
                 return True
             except OSError:
                 log.warning(f"Failed to remove stale lock directory: {self.lock_dir}")
@@ -260,17 +260,40 @@ class FileLock:
     def _force_cleanup(self):
         """Force cleanup of lock file and directory"""
         try:
+            # First try using standard file operations
             if self.lock_file_path.exists():
-                self.lock_file_path.unlink()
-                log.debug(f"Removed stale lock file: {self.lock_file_path}")
+                try:
+                    self.lock_file_path.unlink()
+                    log.debug(f"Removed stale lock file: {self.lock_file_path}")
+                except (OSError, PermissionError) as e:
+                    log.warning(f"Could not remove lock file {self.lock_file_path}: {e}")
+                    # Try more aggressive cleanup with rm command if available
+                    try:
+                        subprocess.run(["rm", "-f", str(self.lock_file_path)], check=False)
+                        log.debug(f"Forcibly removed lock file using rm: {self.lock_file_path}")
+                    except Exception as e2:
+                        log.warning(f"Failed forcible removal of lock file: {e2}")
+                        
             if self.lock_dir.exists():
-                self.lock_dir.rmdir()
-                log.debug(f"Removed stale lock directory: {self.lock_dir}")
-        except OSError as e:
+                try:
+                    self.lock_dir.rmdir()
+                    log.debug(f"Removed stale lock directory: {self.lock_dir}")
+                except (OSError, PermissionError) as e:
+                    log.warning(f"Could not remove lock directory {self.lock_dir}: {e}")
+                    # Try more aggressive cleanup with rm command if available
+                    try:
+                        subprocess.run(["rm", "-rf", str(self.lock_dir)], check=False)
+                        log.debug(f"Forcibly removed lock directory using rm -rf: {self.lock_dir}")
+                    except Exception as e2:
+                        log.warning(f"Failed forcible removal of lock directory: {e2}")
+        except Exception as e:
             log.warning(f"Failed to force cleanup lock: {e}")
 
-    def acquire(self, timeout=LOCK_TIMEOUT):
+    def acquire(self, timeout=None):
         """Acquire the lock with timeout."""
+        if timeout is None:
+            timeout = LOCK_TIMEOUT  # Use global timeout if none specified
+        
         start_time = time.time()
         
         # First check for and clean up stale locks
@@ -384,31 +407,41 @@ class FileLock:
 
 
 # --- Log File Handling (from mcp_edit_utils.py) ---
-def read_log_file(log_file_path: Path) -> List[Dict[str, Any]]:
+def read_log_file(log_file_path: Path, lock_timeout=None) -> List[Dict[str, Any]]:
     """Reads a JSON Lines log file safely."""
     entries = []
     if not log_file_path.is_file():
+        log.debug(f"Log file does not exist: {log_file_path}")
         return entries
     lock = FileLock(str(log_file_path))  # Use lock for reading consistency
     try:
-        with lock:
-            with open(log_file_path, "r", encoding="utf-8") as f:
-                for i, line in enumerate(f):
-                    line = line.strip()
-                    if line:
-                        try:
-                            entries.append(json.loads(line))
-                        except json.JSONDecodeError:
-                            log.warning(
-                                f"Skipping invalid JSON line {i + 1} in {log_file_path}: {line[:100]}..."
-                            )
-            return entries
+        lock.acquire(timeout=lock_timeout)  # Use provided timeout
+        with open(log_file_path, "r", encoding="utf-8") as f:
+            log_content = f.read()
+            log.debug(f"Raw log file content ({len(log_content)} bytes): {log_content[:200]}...")
+            
+            for i, line in enumerate(log_content.splitlines()):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    log.debug(f"Processing line {i+1}: {line[:100]}...")
+                    entry = json.loads(line)
+                    entries.append(entry)
+                except json.JSONDecodeError as e:
+                    log.warning(f"Invalid JSON on line {i + 1} in {log_file_path}: {e}")
+                    log.warning(f"Problematic line: {line[:200]}...")
+        lock.release()
+        log.debug(f"Successfully read {len(entries)} entries from {log_file_path}")
+        return entries
     except (IOError, TimeoutError) as e:
         log.error(f"Error reading log file {log_file_path}: {e}")
+        if lock.is_locked:
+            lock.release()
         raise HistoryError(f"Could not read log file: {log_file_path}") from e
 
 
-def write_log_file(log_file_path: Path, entries: List[Dict[str, Any]]):
+def write_log_file(log_file_path: Path, entries: List[Dict[str, Any]], lock_timeout=None):
     """Writes a list of entries to a JSON Lines log file atomically."""
     # Sort entries by index before writing to maintain order if modified
     entries.sort(key=lambda x: x.get("tool_call_index", float("inf")))
@@ -418,15 +451,16 @@ def write_log_file(log_file_path: Path, entries: List[Dict[str, Any]]):
     )
     lock = FileLock(str(log_file_path))
     try:
-        with lock:  # Acquire lock for the log file itself during write
-            log_file_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(temp_path, "w", encoding="utf-8") as f:
-                for entry in entries:
-                    json.dump(entry, f, separators=(",", ":"))
-                    f.write("\n")
-            # Atomic rename/replace (should work on Unix)
-            os.replace(temp_path, log_file_path)
-            log.debug(f"Successfully wrote log file: {log_file_path}")
+        lock.acquire(timeout=lock_timeout)  # Use provided timeout
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(temp_path, "w", encoding="utf-8") as f:
+            for entry in entries:
+                json.dump(entry, f, separators=(",", ":"))
+                f.write("\n")
+        # Atomic rename/replace (should work on Unix)
+        os.replace(temp_path, log_file_path)
+        log.debug(f"Successfully wrote log file: {log_file_path}")
+        lock.release()
     except (IOError, TimeoutError) as e:
         log.error(f"Error writing log file {log_file_path}: {e}")
         if temp_path.exists():
@@ -434,6 +468,8 @@ def write_log_file(log_file_path: Path, entries: List[Dict[str, Any]]):
                 os.remove(temp_path)
             except OSError:
                 pass
+        if lock.is_locked:
+            lock.release()
         raise HistoryError(f"Could not write log file: {log_file_path}") from e
     except Exception as e:
         if temp_path.exists():
@@ -441,1428 +477,1033 @@ def write_log_file(log_file_path: Path, entries: List[Dict[str, Any]]):
                 os.remove(temp_path)
             except OSError:
                 pass
+        if lock.is_locked:
+            lock.release()
         log.exception(f"Unexpected error writing log file {log_file_path}: {e}")
         raise HistoryError(f"Unexpected error writing log file: {log_file_path}") from e
 
 
-# --- Patch Application (from mcp_edit_utils.py) ---
-def apply_patch(
-    diff_content: str,
-    target_file_rel_path: str,  # Path relative to workspace root
-    workspace_root: Path,
-    reverse: bool = False,
-) -> bool:
-    """Applies a diff using the patch command. Runs from workspace root."""
-    target_abs_path = workspace_root / target_file_rel_path
-
-    # Security check for target path
-    if not verify_path_is_safe(target_abs_path, workspace_root):
-        log.error(f"Security: Cannot patch file outside workspace: {target_abs_path}")
-        return False
-
-    patch_cmd = shutil.which("patch")
-    if not patch_cmd:
-        log.error(
-            "`patch` command not found. Please install patch (usually in diffutils package)."
-        )
-        raise HistoryError("`patch` command not found.")
-
-    cmd_args = [patch_cmd, "--no-backup-if-mismatch", "-p1"]
-    if reverse:
-        cmd_args.append("-R")  # Apply in reverse
-
-    # Important: Provide the target file to patch via standard input as well if possible,
-    # or ensure the diff headers `--- a/path` and `+++ b/path` are correct relative to CWD.
-    # Running from workspace_root and using -p1 assumes paths in diff are relative to root.
-
-    # Ensure target directory exists before patching
-    target_abs_path = workspace_root / target_file_rel_path
-    target_abs_path.parent.mkdir(parents=True, exist_ok=True)
-
-    log.debug(
-        f"Applying patch {'(Reverse)' if reverse else ''} to '{target_file_rel_path}' within '{workspace_root}'"
-    )
-    # log.debug(f"Patch command: {' '.join(cmd_args)}") # Debug command
-    # log.debug(f"Patch input:\n---\n{diff_content[:500]}...\n---") # Log beginning of diff
-
-    try:
-        # Use Popen for better control over stdin/stdout/stderr
-        process = subprocess.Popen(
-            cmd_args,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=workspace_root,  # Run from workspace root for -p1 to work correctly
-            encoding="utf-8",  # Specify encoding
-        )
-        # Write diff content to stdin and close it
-        stdout, stderr = process.communicate(
-            input=diff_content, timeout=20
-        )  # Increased timeout slightly
-        returncode = process.returncode
-
-        if returncode == 0:
-            log.info(
-                f"Patch {'(Reverse)' if reverse else ''} applied successfully to '{target_file_rel_path}'."
-            )
-            if stdout:
-                log.debug(f"Patch STDOUT:\n{stdout}")
-            if stderr:
-                log.debug(
-                    f"Patch STDERR:\n{stderr}"
-                )  # Often patch prints info to stderr even on success
-            return True
-        # Patch returns 1 if some hunks failed, 2 for serious trouble.
-        elif returncode == 1:
-            log.warning(
-                f"Patch command reported fuzz or failed hunks for '{target_file_rel_path}' {'(Reverse)' if reverse else ''} (RC={returncode})"
-            )
-            log.warning(f"Patch STDOUT:\n{stdout}")
-            log.warning(f"Patch STDERR:\n{stderr}")
-            # Consider this a failure for robust replay
-            return False
-        else:  # returncode >= 2
-            log.error(
-                f"Patch command failed seriously for '{target_file_rel_path}' {'(Reverse)' if reverse else ''} (RC={returncode})"
-            )
-            log.error(f"Patch STDOUT:\n{stdout}")
-            log.error(f"Patch STDERR:\n{stderr}")  # Crucial for diagnosing failures
-            return False
-    except subprocess.TimeoutExpired:
-        log.error(
-            f"Patch command timed out for '{target_file_rel_path}'. Process killed."
-        )
-        process.kill()
+def cleanup_stale_locks(history_root: Path) -> int:
+    """Clean up any stale lock files and directories under the history directory.
+    Returns the number of locks cleaned up."""
+    
+    cleaned_count = 0
+    
+    # Find all .lockdir directories
+    for lockdir in history_root.glob("**/*.lockdir"):
         try:
-            # Try to get output after kill, might be empty
-            stdout, stderr = process.communicate()
-            log.error(f"Patch STDOUT (before timeout):\n{stdout}")
-            log.error(f"Patch STDERR (before timeout):\n{stderr}")
-        except Exception:
-            log.error("Failed to get output after patch timeout.")
-        return False
-    except FileNotFoundError:  # Should be caught by shutil.which, but as fallback
-        log.error("`patch` command not found during execution.")
-        raise HistoryError("`patch` command not found.")
-    except Exception as e:
-        log.exception(
-            f"Unexpected error applying patch to '{target_file_rel_path}': {e}"
-        )
-        return False
-
-
-# --- Core Re-apply Logic (New/Enhanced) ---
-
-
-def reapply_conversation_state(
-    conversation_id: str, history_root: Path, workspace_root: Path
-) -> bool:
-    """
-    Reconstructs the state of all files affected by a conversation
-    by re-applying accepted/pending edits from their checkpoints.
-    This is typically called after one or more edits are marked 'rejected'.
-    """
-    if not is_path_within_directory(history_root, workspace_root):
-        log.error(
-            f"Security: History directory '{history_root}' must be within workspace '{workspace_root}'"
-        )
-        return False
-
-    log.info(
-        f"Re-applying state for conversation '{conversation_id}' in workspace '{workspace_root}'"
-    )
-    log_file_path = history_root / LOGS_DIR / f"{conversation_id}.log"
-
-    # --- Load and Group Log Entries by File History ---
-    try:
-        all_conv_entries = read_log_file(log_file_path)
-        if not all_conv_entries:
-            log.warning(
-                f"No log entries found for conversation {conversation_id}. Nothing to re-apply."
-            )
-            return True  # No error, just nothing to do
-    except HistoryError as e:
-        log.error(f"Failed to read log file for re-apply: {e}")
-        return False
-
-    # Group entries by the initial file path they affected in this conversation
-    file_histories: Dict[str, List[Dict[str, Any]]] = {}
-    final_paths: Dict[str, str] = {}
-    checkpointed_paths: Set[str] = set()
-
-    # Sort all entries first to process in order
-    all_conv_entries.sort(key=lambda x: x.get("tool_call_index", 0))
-
-    # For tracking the original path affected by each edit
-    path_trace: Dict[str, str] = {}
-
-    # --- Build File Histories ---
-    # Trace the history of each path affected by the conversation
-    for entry in all_conv_entries:
-        # Skip entries referring to files we can't find or have no paths
-        entry_file_path = entry.get("file_path")
-        entry_source_path = entry.get("source_path")
-        if not entry_file_path:
-            log.warning(
-                f"No file_path in entry {entry.get('edit_id')}, skipping. This should not happen."
-            )
-            continue
-
-        # Convert paths to absolute using workspace as base
-        target_abs_str = (
-            get_workspace_path(entry_file_path, workspace_root)
-            if not os.path.isabs(entry_file_path)
-            else entry_file_path
-        )
-        source_abs_str = (
-            get_workspace_path(entry_source_path, workspace_root)
-            if entry_source_path and not os.path.isabs(entry_source_path)
-            else entry_source_path
-        )
-
-        # Get the operation from the entry
-        op = entry.get("operation", "unknown")
-        if op == "unknown":
-            log.warning(
-                f"Unknown operation in entry {entry.get('edit_id')}, skipping. This should not happen."
-            )
-            continue
-
-        if op == "move":
-            if source_abs_str is None:
-                log.error(
-                    f"Invalid 'move' entry {entry['edit_id']}: missing or invalid source_path."
-                )
-                continue  # Skip invalid entry
-            # Find the original path this source file corresponds to
-            original_path_abs = path_trace.get(source_abs_str, source_abs_str)
-            # Update trace: the new target now points back to the same original path
-            path_trace[target_abs_str] = original_path_abs
-            # Remove the old source from the trace if it exists
-            if source_abs_str in path_trace:
-                del path_trace[source_abs_str]
-            final_paths[original_path_abs] = target_abs_str  # Update final path mapping
-        else:
-            # Find the original path this target file corresponds to
-            original_path_abs = path_trace.get(target_abs_str, target_abs_str)
-            # Ensure final_paths is initialized/updated
-            final_paths[original_path_abs] = target_abs_str
-
-        # Add the entry to the history for its original path
-        if original_path_abs not in file_histories:
-            file_histories[original_path_abs] = []
-        # Store entry with resolved paths for easier use later
-        entry["_resolved_target_abs"] = target_abs_str
-        entry["_resolved_source_abs"] = source_abs_str
-        file_histories[original_path_abs].append(entry)
-
-        # Record if a checkpoint was made (using original path as key)
-        if entry.get("checkpoint_file"):
-            checkpointed_paths.add(original_path_abs)
-
-    # --- Process Each File History ---
-    overall_success = True
-    # Track which final paths we've processed to avoid duplicates
-    processed_final_paths = set()
-
-    # Iterate through each path affected by the conversation
-    for original_path_abs_str, edits in file_histories.items():
-        # Skip if we've already processed the final path (can happen with multiple moves)
-        final_target_abs_str = final_paths.get(original_path_abs_str, original_path_abs_str)
-        if final_target_abs_str in processed_final_paths:
-            log.debug(
-                f"Skipping duplicate processing of final path '{final_target_abs_str}'"
-            )
-            continue
-        processed_final_paths.add(final_target_abs_str)
-
-        # Get relative paths for display
-        try:
-            original_path_rel = get_relative_path(
-                Path(original_path_abs_str), workspace_root
-            )
-            final_target_rel = get_relative_path(Path(final_target_abs_str), workspace_root)
-        except Exception as e:
-            log.error(f"Error determining relative paths: {e}")
-            overall_success = False
-            continue  # Skip if paths are problematic
-
-        log.info(f"Processing history for original path '{original_path_rel}' (final: '{final_target_rel}')")
-
-        # Lock the target file during processing
-        target_lock = None
-        try:
-            target_lock = FileLock(final_target_abs_str)
-            target_lock.acquire()
-            log.debug(f"Lock acquired for {final_target_abs_str}")
-
-            # Get checkpoint path for this history
-            checkpoint_rel_path_str = None
-            first_relevant_edit = edits[0]
-            checkpoint_rel_path_str = first_relevant_edit.get("checkpoint_file")
-
-            # Look up hash recorded when checkpoint was taken
-            initial_hash_from_log = first_relevant_edit.get("hash_before")
-            if not initial_hash_from_log and checkpoint_rel_path_str:
-                log.warning(
-                    f"No hash recorded with checkpoint '{checkpoint_rel_path_str}'. This is unexpected."
-                )
-
-            # Add special handling for rejected 'create' operations
-            first_op_is_rejected_create = (
-                first_relevant_edit["operation"] == "create"
-                and first_relevant_edit.get("status") == "rejected"
-                and not original_path_abs_str in checkpointed_paths  # Add this check
-            )
-
-            # Determine the absolute path *at the time the checkpoint was relevant* (start of sequence)
-            # This is the source of a move if the first op is move, otherwise the target.
-            checkpoint_origin_path_abs_str = (
-                first_relevant_edit.get("_resolved_source_abs")
-                if first_relevant_edit["operation"] == "move"
-                else first_relevant_edit.get("_resolved_target_abs")
-            )
-
-            if not checkpoint_origin_path_abs_str:
-                log.error(
-                    f"Could not determine checkpoint origin path for {original_path_rel} in {conversation_id}"
-                )
-                overall_success = False
-                continue  # Cannot proceed without knowing where to restore/check
-
-            checkpoint_path: Optional[Path] = None
-            if checkpoint_rel_path_str:
-                checkpoint_path = history_root / checkpoint_rel_path_str
-
-            # Check if checkpoint is required but missing
-            checkpoint_available = checkpoint_path and checkpoint_path.exists()
-            final_target_abs = Path(final_target_abs_str)
-
-            # Variables to track state during replay
-            file_exists_in_state = False  # Does the file exist during current replay step?
-            current_file_path_abs = None  # Current filename/path during replay
-            current_expected_hash = None  # Expected hash after applying the current step
-
-            # --- Initialize Starting State ---
-            if first_op_is_rejected_create:
-                # If first op is a rejected create, start with no file
-                log.info(
-                    f"Skipping state initialization for rejected create of '{final_target_rel}'"
-                )
-                current_file_path_abs = Path(final_target_abs_str)
-                file_exists_in_state = False
-                current_expected_hash = None
-            # If checkpoint available, use it
-            elif checkpoint_available:
-                log.info(
-                    f"Restoring checkpoint '{checkpoint_path.name}' to '{get_relative_path(Path(checkpoint_origin_path_abs_str), workspace_root)}'"
-                )
+            lock_file = lockdir / "pid.lock"
+            
+            # Check if the lock file exists
+            if not lock_file.exists():
+                # Empty lock directory - clean up
+                log.debug(f"Cleaning up orphaned lock directory: {lockdir}")
                 try:
-                    # Convert string to Path
-                    checkpoint_origin_path = Path(checkpoint_origin_path_abs_str)
-                    checkpoint_origin_path.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(checkpoint_path, checkpoint_origin_path)
-                    current_file_path_abs = (
-                        checkpoint_origin_path  # File now exists at the origin path
-                    )
-                    file_exists_in_state = True
-                    current_expected_hash = calculate_hash(str(checkpoint_origin_path))
-                    # Verify checkpoint hash if available in log
-                    if (
-                        initial_hash_from_log
-                        and current_expected_hash != initial_hash_from_log
-                    ):
-                        log.warning(
-                            f"Restored checkpoint hash mismatch for '{checkpoint_origin_path}'. Expected {initial_hash_from_log[:8]}, got {current_expected_hash[:8]}. Overriding expected hash."
-                        )
-                        current_expected_hash = (
-                            initial_hash_from_log  # Trust the log's record for sequence
-                        )
-                    elif not initial_hash_from_log:
-                        log.warning(
-                            f"No initial hash recorded alongside checkpoint '{checkpoint_path.name}'. Cannot verify integrity."
-                        )
-                except (FileNotFoundError, IOError, OSError) as e:
-                    log.error(f"Failed to restore checkpoint: {e}")
-                    raise HistoryError(f"Failed to restore checkpoint: {e}") from e
-            elif first_relevant_edit["operation"] == "create" and not checkpoint_rel_path_str:
-                # Handle creation: No checkpoint but file was created (normal case)
-                current_file_path_abs = Path(final_target_abs_str)
-                log.info(
-                    f"Starting with empty state for '{final_target_rel}' (no checkpoint, create operation)"
-                )
-                file_exists_in_state = False
-                current_expected_hash = None
-            else:
-                # No checkpoint, not a create. Assume file exists at the path expected by the first op.
-                current_file_path_abs = Path(checkpoint_origin_path_abs_str)
-                if not current_file_path_abs.exists():
-                    log.error(
-                        f"File '{current_file_path_abs}' expected to exist (no checkpoint, not create) but not found."
-                    )
-                    raise HistoryError(
-                        f"Missing pre-existing file for {original_path_rel}"
-                    )
-                log.info(
-                    f"Starting state from existing file '{get_relative_path(current_file_path_abs, workspace_root)}' (no checkpoint, not create)."
-                )
-                file_exists_in_state = True
-                current_expected_hash = calculate_hash(str(current_file_path_abs))
-                # Verify against first op's hash_before
-                if (
-                    initial_hash_from_log
-                    and current_expected_hash != initial_hash_from_log
-                ):
-                    log.error(
-                        f"External modification detected for '{current_file_path_abs}' before first recorded op. Expected {initial_hash_from_log[:8]}, found {current_expected_hash[:8]}."
-                    )
-                    raise ExternalModificationError(
-                        f"External modification detected for {original_path_rel} before conversation start."
-                    )
-                elif not initial_hash_from_log:
-                    log.warning(
-                        f"No hash_before recorded for first operation on existing file '{current_file_path_abs}'. Cannot verify initial state."
-                    )
-
-            # --- Iterate and Apply/Skip Edits ---
-            log.info(f"Applying/Skipping edits for '{original_path_rel}'...")
-            for entry_index, entry in enumerate(edits):
-                edit_id = entry["edit_id"]
-                op = entry["operation"]
-                status = entry[
-                    "status"
-                ]  # This reflects the LATEST status after user actions
-                hash_before_entry = entry["hash_before"]
-                hash_after_entry = entry["hash_after"]
-                # Get resolved paths stored earlier
-                entry_target_abs = Path(entry["_resolved_target_abs"])
-                entry_target_rel = get_relative_path(entry_target_abs, workspace_root)
-                entry_source_abs = (
-                    Path(entry["_resolved_source_abs"])
-                    if entry["_resolved_source_abs"]
-                    else None
-                )
-                entry_source_rel = (
-                    get_relative_path(entry_source_abs, workspace_root)
-                    if entry_source_abs
-                    else None
-                )
-                diff_file_rel_path = entry.get("diff_file")  # Relative to history_root
-
-                log.debug(
-                    f"  Processing {edit_id[-8:]} (Idx:{entry.get('tool_call_index')}) Op={op}, Status={status}, Target='{entry_target_rel}', Exists={file_exists_in_state}, ExpectedHash={current_expected_hash[:8] if current_expected_hash else 'None'}"
-                )
-
-                # --- Pre-condition Check (Hash Verification) ---
-                actual_current_hash = (
-                    calculate_hash(str(current_file_path_abs))
-                    if file_exists_in_state and current_file_path_abs.is_file()
-                    else None
-                )
-
-                # Check if any previous edit for this file was rejected
-                previous_rejected = False
-                for prev_entry in edits[:entry_index]:
-                    if prev_entry.get("status") == "rejected":
-                        previous_rejected = True
-                        break
-
-                if file_exists_in_state and op not in ["move", "delete"]:
-                    # Skip hash check for move/delete as source path may no longer exist
-                    # Also skip hash check after a previous rejected edit (which may have
-                    # changed file content/hash)
-                    if (
-                        actual_current_hash != current_expected_hash
-                        and current_expected_hash is not None
-                        and actual_current_hash is not None
-                        and not previous_rejected  # Skip hash check if previous edit was rejected
-                    ):
-                        log.error(
-                            f"Unexpected file state before {op} operation {edit_id[-8:]}. "
-                            f"Expected hash: {current_expected_hash[:8]}, "
-                            f"Actual hash: {actual_current_hash[:8]}. "
-                            f"The file may have been modified externally or history is inconsistent."
-                        )
-                        # Continue but note overall failure
-                        overall_success = False
-                        # Update our expectation to match reality for subsequent operations
-                        current_expected_hash = actual_current_hash
-
-                # --- Apply or Skip Based on Status ---
-                if status in ["pending", "accepted"]:
-                    log.debug(f"    Applying {op} for edit {edit_id[-8:]}...")
-                    if op in ["edit", "replace", "create"]:
-                        if not diff_file_rel_path:
-                            raise HistoryError(
-                                f"Missing diff path for {op} edit {edit_id[-8:]}"
-                            )
-                        diff_file_abs = history_root / diff_file_rel_path
-                        if not diff_file_abs.is_file():  # Check if it's a file
-                            raise HistoryError(
-                                f"Diff artifact '{diff_file_abs}' not found or not a file for edit {edit_id[-8:]}"
-                            )
-                        try:
-                            diff_content = diff_file_abs.read_text(encoding="utf-8")
-                        except IOError as e:
-                            raise HistoryError(
-                                f"Cannot read diff file for {edit_id[-8:]}: {e}"
-                            ) from e
-
-                        # Ensure parent dir exists for the target
-                        entry_target_abs.parent.mkdir(parents=True, exist_ok=True)
-                        # Apply patch using relative path from workspace root
-                        if not apply_patch(
-                            diff_content,
-                            entry_target_rel,
-                            workspace_root,
-                            reverse=False,
-                        ):
-                            log.error(
-                                f"Patch application failed for {edit_id[-8:]}. Aborting replay for this file."
-                            )
-                            raise HistoryError(
-                                f"Patch application failed for {edit_id[-8:]}"
-                            )
-                        # After successful patch: file exists, path is target path
-                        file_exists_in_state = True
-                        current_file_path_abs = entry_target_abs
-                        # Update hash expectation after successful patch
-                        current_expected_hash = (
-                            hash_after_entry or calculate_hash(str(entry_target_abs))
-                        )
-                    elif op == "move":
-                        if not entry_source_abs or not entry_target_abs:
-                            log.error(
-                                f"Move operation {edit_id[-8:]} missing source or target path."
-                            )
-                            raise HistoryError(
-                                f"Move operation {edit_id[-8:]} missing source or target path."
-                            )
-                        # Check if source exists where expected during replay
-                        if (
-                            current_file_path_abs is not None
-                            and entry_source_abs != current_file_path_abs
-                        ):
-                            log.warning(
-                                f"Move source '{entry_source_rel}' doesn't match current path '{get_relative_path(current_file_path_abs, workspace_root)}'"
-                            )
-                        # Ensure the source file exists
-                        if not file_exists_in_state:
-                            log.error(
-                                f"Move operation {edit_id[-8:]} source file doesn't exist in replay."
-                            )
-                            raise HistoryError(
-                                f"Move operation {edit_id[-8:]} source file doesn't exist in replay."
-                            )
-                        # Ensure parent directory exists
-                        entry_target_abs.parent.mkdir(parents=True, exist_ok=True)
-                        # Handle destination file existence
-                        if entry_target_abs.exists():
-                            log.warning(
-                                f"    Destination '{entry_target_rel}' exists. Overwriting during move replay for {edit_id[-8:]}."
-                            )
-                            try:
-                                entry_target_abs.unlink()
-                            except Exception as e:
-                                log.error(
-                                    f"Failed to remove existing destination during move: {e}"
-                                )
-                                raise HistoryError(
-                                    f"Failed move operation for {edit_id[-8:]}: {e}"
-                                ) from e
-                        # Perform the move
-                        try:
-                            if current_file_path_abs and current_file_path_abs.is_file():
-                                shutil.move(str(current_file_path_abs), str(entry_target_abs))
-                                log.debug(
-                                    f"    Moved '{get_relative_path(current_file_path_abs, workspace_root)}' to '{entry_target_rel}'"
-                                )
-                            else:
-                                log.error(
-                                    f"Invalid current state for move: {current_file_path_abs}"
-                                )
-                                raise HistoryError(
-                                    f"Failed move operation for {edit_id[-8:]}: Invalid current state"
-                                )
-                        except (shutil.Error, OSError) as e:
-                            log.error(f"Move operation failed: {e}")
-                            raise HistoryError(
-                                f"Failed move operation for {edit_id[-8:]}"
-                            ) from e
-                        # Update state after successful move
-                        file_exists_in_state = True
-                        current_file_path_abs = entry_target_abs
-                        # Hash shouldn't change for move, but still verify if log recorded a different after hash
-                        if hash_after_entry and hash_after_entry != current_expected_hash:
-                            log.warning(
-                                f"Hash changed during move op {edit_id[-8:]}? Before: {current_expected_hash[:8]}, After: {hash_after_entry[:8]}"
-                            )
-                            current_expected_hash = hash_after_entry
-                    elif op == "delete":
-                        # Check if file exists as expected
-                        if not file_exists_in_state:
-                            log.warning(
-                                f"Delete operation {edit_id[-8:]} target doesn't exist in replay (already deleted?)"
-                            )
-                        elif (
-                            current_file_path_abs is not None
-                            and entry_target_abs != current_file_path_abs
-                        ):
-                            log.warning(
-                                f"Delete target '{entry_target_rel}' doesn't match current path '{get_relative_path(current_file_path_abs, workspace_root)}'"
-                            )
-                        # Perform the delete
-                        try:
-                            if entry_target_abs.is_file():
-                                entry_target_abs.unlink()
-                                log.debug(f"    Deleted '{entry_target_rel}'")
-                            else:
-                                log.warning(
-                                    f"Delete target '{entry_target_rel}' already gone in replay."
-                                )
-                        except (FileNotFoundError, OSError) as e:
-                            log.error(f"Delete operation failed: {e}")
-                            raise HistoryError(
-                                f"Failed delete operation for {edit_id[-8:]}"
-                            ) from e
-                        # Update state after successful delete
-                        file_exists_in_state = False
-                        current_file_path_abs = entry_target_abs  # Keep track of path even though deleted
-                        current_expected_hash = None  # No hash for deleted file
-                    else:
-                        log.warning(f"Unknown operation '{op}' in edit {edit_id[-8:]}. Skipping.")
-                elif status == "rejected":
-                    log.debug(f"    Skipping (rejected) {op} for edit {edit_id[-8:]}...")
-                    # For rejected ops, we don't apply the change, but we still need to update state
-                    # tracking vars to maintain our expectation of where files should be
-                    if op == "create":
-                        # For rejected create: file should not exist
-                        file_exists_in_state = False
-                        current_file_path_abs = entry_target_abs  # Keep path for tracking
-                        current_expected_hash = None  # No hash for non-existent file
-                    elif op == "delete":
-                        # For rejected delete: file should still exist where it was
-                        # No change to tracking vars needed
+                    lockdir.rmdir()
+                    cleaned_count += 1
+                except OSError:
+                    try:
+                        # Try with rm -rf if available
+                        subprocess.run(["rm", "-rf", str(lockdir)], check=False)
+                        cleaned_count += 1
+                    except Exception:
                         pass
-                    elif op == "move":
-                        # For rejected move: file should still be at source, not at target
-                        if entry_source_abs:
-                            # Keep current path at source
-                            current_file_path_abs = entry_source_abs
-                        else:
-                            log.warning(
-                                f"Rejected move {edit_id[-8:]} missing source path. Can't track properly."
-                            )
-                        # Hash shouldn't change for rejected move
-                    elif op in ["edit", "replace"]:
-                        # For rejected edit: file content should be what it was before
-                        # For edits, the "after" state in the log entry is the one we're rejecting
-                        # So hash should remain at hash_before
-                        if hash_before_entry and current_expected_hash != hash_before_entry:
-                            log.debug(
-                                f"    After rejecting edit {edit_id[-8:]}, hash should be {hash_before_entry[:8]}"
-                            )
-                            current_expected_hash = hash_before_entry
-                    else:
-                        log.warning(f"Unknown rejected op '{op}' in edit {edit_id[-8:]}. Skipping.")
+                continue
+                
+            # Try to read PID from lock file
+            try:
+                pid_str = lock_file.read_text().strip()
+                if not pid_str:
+                    # Empty PID - clean up
+                    log.debug(f"Cleaning up lock with empty PID: {lockdir}")
+                    lock_file.unlink(missing_ok=True)
+                    lockdir.rmdir()
+                    cleaned_count += 1
+                    continue
+                    
+                # Check if process exists
+                pid = int(pid_str)
+                try:
+                    os.kill(pid, 0)  # Signal 0 doesn't kill but checks if process exists
+                    # Process exists, lock may be valid
+                    log.debug(f"Process with PID {pid} exists for lock {lockdir}, leaving alone")
+                except OSError:
+                    # Process doesn't exist - clean up
+                    log.debug(f"Cleaning up stale lock for PID {pid}: {lockdir}")
+                    lock_file.unlink(missing_ok=True)
+                    lockdir.rmdir()
+                    cleaned_count += 1
+            except (ValueError, IOError, OSError) as e:
+                # Error reading or parsing PID - clean up
+                log.debug(f"Error checking lock {lockdir}, cleaning up: {e}")
+                try:
+                    lock_file.unlink(missing_ok=True)
+                    lockdir.rmdir()
+                    cleaned_count += 1
+                except OSError:
+                    try:
+                        # Try with rm -rf if available
+                        subprocess.run(["rm", "-rf", str(lockdir)], check=False)
+                        cleaned_count += 1
+                    except Exception:
+                        pass
+        except Exception as e:
+            log.warning(f"Failed to check/clean lock {lockdir}: {e}")
+            
+    return cleaned_count
+
+
+# --- Utility Functions for Commands ---
+def find_all_entries(history_root: Path, lock_timeout: int = LOCK_TIMEOUT) -> List[Dict[str, Any]]:
+    """Find all edit history entries from log files."""
+    all_entries = []
+    
+    # Find all log files in the logs directory
+    logs_dir = history_root / LOGS_DIR
+    if not logs_dir.is_dir():
+        return []
+    
+    log_files = list(logs_dir.glob("*.log"))
+    log.debug(f"Found {len(log_files)} log files in {logs_dir}")
+    
+    for log_file in log_files:
+        try:
+            log.debug(f"Reading log file: {log_file}")
+            entries = read_log_file(log_file, lock_timeout=lock_timeout)
+            log.debug(f"Found {len(entries)} entries in {log_file}")
+            all_entries.extend(entries)
+        except Exception as e:
+            log.warning(f"Error reading log file {log_file}: {e}")
+            
+    # Sort entries by timestamp (newest first)
+    def sort_key(entry):
+        """Return a sortable key from the entry timestamp."""
+        timestamp = entry.get("timestamp", 0)
+        if not timestamp:
+            return 0
+            
+        try:
+            if isinstance(timestamp, str):
+                if 'T' in timestamp and 'Z' in timestamp:
+                    # Parse ISO-like timestamp: "2025-03-31T154939.993Z"
+                    # Convert to a comparable string format: "20250331154939.993"
+                    date_part, time_part = timestamp.split('T')
+                    time_part = time_part.rstrip('Z')
+                    date_str = date_part.replace('-', '')
+                    return date_str + time_part
                 else:
-                    log.warning(
-                        f"    Unknown status '{status}' for edit {edit_id[-8:]}. Skipping."
-                    )
-
-            # --- Verify Final State ---
-            # Only check if a final file should exist based on last operation status
-            final_should_exist = file_exists_in_state
-            final_actual_exists = final_target_abs.is_file()
-            final_actual_hash = calculate_hash(str(final_target_abs)) if final_actual_exists else None
-
-            if final_should_exist != final_actual_exists:
-                log.error(
-                    f"Final state mismatch for '{get_relative_path(final_target_abs, workspace_root)}'. "
-                    f"Should exist: {final_should_exist}, Actually exists: {final_actual_exists}"
-                )
-                overall_success = False
-            elif final_actual_exists:
-                # Only compare hashes if file exists (and should exist)
-                if final_actual_hash != current_expected_hash:
-                    # Allow None == None (e.g. final state should be deleted)
-                    if not (final_actual_hash is None and current_expected_hash is None):
-                        log.error(
-                            f"Final state verification FAILED for '{get_relative_path(current_file_path_abs, workspace_root)}'. "
-                            f"Failed to process log file {log_file} due to lock/read error: {e_lock}"
-                        )
-            fail_count += len(edit_ids_to_update)  # Count all as failures for this file
-        finally:
-            if log_lock:
-                log_lock.release()  # Ensure release
-
-    print(f"Successfully updated status for {success_count} edit(s).")
-    if fail_count > 0:
-        print(
-            f"{COLOR_YELLOW}Failed to update status for {fail_count} edit(s). Check logs.{COLOR_RESET}",
-            file=sys.stderr,
-        )
-
-    # --- Trigger Re-apply ONLY for REJECT ---
-    if not accept_mode and target_conv_ids:
-        overall_reapply_success = True
-        print("Re-applying state based on updated statuses...")
-        # Use list to ensure consistent processing order if needed
-        sorted_conv_ids = sorted(list(target_conv_ids))
-        for conv_id in sorted_conv_ids:
-            print(f"Processing conversation: {conv_id}")
-            if not reapply_conversation_state(conv_id, history_root, workspace_root):
-                overall_reapply_success = False
-                print(
-                    f"{COLOR_RED}Errors occurred while re-applying state for conversation {conv_id}. Check logs.{COLOR_RESET}",
-                    file=sys.stderr,
-                )
-                # Continue to next conversation
-
-        if overall_reapply_success:
-            print("File state reconstruction completed successfully.")
-        else:
-            print(
-                f"{COLOR_YELLOW}File state reconstruction finished with errors. Manual review may be required.{COLOR_RESET}",
-                file=sys.stderr,
-            )
-    elif not accept_mode:
-        print("No target conversations identified for re-apply.")
-
-
-def update_entry_status(log_file_path: Path, edit_id_prefix: str, new_status: str) -> bool:
-    """
-    Updates the status of one or more log entries that match the edit_id prefix.
-    Returns True if all matching entries were updated successfully, False otherwise.
-    """
-    if not log_file_path.is_file():
-        log.error(f"Log file does not exist: {log_file_path}")
-        return False
-    
-    # Read the log file
+                    return float(timestamp)
+            else:
+                return float(timestamp)
+        except (ValueError, TypeError):
+            return 0
+                
     try:
-        entries = read_log_file(log_file_path)
-    except HistoryError as e:
-        log.error(f"Error reading log file {log_file_path}: {e}")
-        return False
+        all_entries.sort(key=sort_key, reverse=True)
+    except Exception as e:
+        log.warning(f"Error sorting entries by timestamp: {e}")
+        # Fall back to unsorted if we can't sort by timestamp
+        
+    log.debug(f"Total entries found: {len(all_entries)}")
+    return all_entries
     
-    # Find entries matching the edit_id prefix
-    found = False
-    for entry in entries:
-        if entry.get("edit_id", "").startswith(edit_id_prefix):
-            log.debug(f"Updating status of edit {entry['edit_id']} from {entry.get('status', 'unknown')} to {new_status}")
-            entry["status"] = new_status
-            found = True
+def filter_entries(
+    entries: List[Dict[str, Any]],
+    conv_id: Optional[str] = None,
+    file_path: Optional[str] = None,
+    status: Optional[str] = None,
+    time_filter: Optional[str] = None,
+    op_type: Optional[str] = None,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """Filter entries based on criteria."""
+    filtered = entries.copy()
     
-    if not found:
-        log.error(f"No entries found matching edit_id prefix '{edit_id_prefix}' in {log_file_path}")
-        return False
+    # Filter by conversation ID (prefix or suffix match)
+    if conv_id:
+        filtered = [
+            entry for entry in filtered 
+            if entry.get("conversation_id") and 
+            (entry["conversation_id"].startswith(conv_id) or entry["conversation_id"].endswith(conv_id))
+        ]
+        
+    # Filter by file path substring
+    if file_path:
+        filtered = [
+            entry for entry in filtered
+            if entry.get("file_path") and file_path in entry["file_path"]
+        ]
+        
+    # Filter by status
+    if status:
+        filtered = [
+            entry for entry in filtered
+            if entry.get("status") == status
+        ]
+        
+    # Filter by operation type
+    if op_type:
+        filtered = [
+            entry for entry in filtered
+            if entry.get("operation") == op_type
+        ]
+        
+    # Filter by time (e.g., 30s, 5m, 1h, 3d1h)
+    if time_filter:
+        current_time = datetime.now(timezone.utc).timestamp()
+        seconds = parse_time_filter(time_filter)
+        if seconds:
+            filtered = [
+                entry for entry in filtered
+                if entry.get("timestamp") and current_time - entry["timestamp"] <= seconds
+            ]
+            
+    # Apply limit
+    return filtered[:limit]
     
-    # Write updated entries back to the log file
+def parse_time_filter(time_str: str) -> Optional[int]:
+    """Parse a time filter string like 30s, 5m, 1h, 3d1h into seconds."""
+    pattern = r'(\d+)([smhd])'
+    matches = re.findall(pattern, time_str)
+    
+    if not matches:
+        log.warning(f"Invalid time filter format: {time_str}")
+        return None
+        
+    seconds = 0
+    for value, unit in matches:
+        value = int(value)
+        if unit == 's':
+            seconds += value
+        elif unit == 'm':
+            seconds += value * 60
+        elif unit == 'h':
+            seconds += value * 3600
+        elif unit == 'd':
+            seconds += value * 86400
+            
+    return seconds
+    
+def format_timestamp(timestamp: Union[float, str]) -> str:
+    """Format a timestamp in a human-readable way."""
     try:
-        write_log_file(log_file_path, entries)
+        # Convert string timestamp to float if needed
+        if isinstance(timestamp, str):
+            if 'T' in timestamp and 'Z' in timestamp:
+                # Parse ISO-like timestamp format: "2025-03-31T154939.993Z"
+                date_part, time_part = timestamp.split('T')
+                time_part = time_part.rstrip('Z')
+                year, month, day = int(date_part[:4]), int(date_part[5:7]), int(date_part[8:10])
+                
+                # Handle time part with potential decimal seconds
+                if '.' in time_part:
+                    hour_min_sec, ms = time_part.split('.')
+                else:
+                    hour_min_sec, ms = time_part, '0'
+                    
+                hour = int(hour_min_sec[:2])
+                minute = int(hour_min_sec[2:4])
+                second = int(hour_min_sec[4:6]) if len(hour_min_sec) >= 6 else 0
+                
+                dt = datetime(year, month, day, hour, minute, second)
+                return dt.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                # Try to convert to float if it's not in our special format
+                timestamp = float(timestamp)
+                dt = datetime.fromtimestamp(timestamp, timezone.utc).astimezone()
+                now = datetime.now(timezone.utc).astimezone()
+                diff = now - dt
+                
+                if diff.days == 0:
+                    if diff.seconds < 60:
+                        return "just now"
+                    elif diff.seconds < 3600:
+                        minutes = diff.seconds // 60
+                        return f"{minutes}m ago"
+                    else:
+                        hours = diff.seconds // 3600
+                        return f"{hours}h ago"
+                elif diff.days == 1:
+                    return "yesterday"
+                elif diff.days < 7:
+                    return f"{diff.days}d ago"
+                else:
+                    return dt.strftime("%Y-%m-%d")
+    except (ValueError, TypeError, OSError):
+        # Handle any conversion errors gracefully
+        if isinstance(timestamp, str) and timestamp:
+            # If it's a string that we couldn't convert, return it as is
+            return timestamp
+        return "unknown time"
+        
+def find_entry_by_id(entries: List[Dict[str, Any]], id_prefix: str) -> Optional[Dict[str, Any]]:
+    """Find an entry by its ID prefix."""
+    matching = [
+        entry for entry in entries
+        if entry.get("edit_id") and entry["edit_id"].startswith(id_prefix)
+    ]
+    
+    if not matching:
+        return None
+    if len(matching) > 1:
+        # Check if any match exactly
+        exact_matches = [entry for entry in matching if entry["edit_id"] == id_prefix]
+        if len(exact_matches) == 1:
+            return exact_matches[0]
+        raise AmbiguousIDError(f"Ambiguous ID prefix '{id_prefix}' matches multiple entries")
+    
+    return matching[0]
+    
+def find_entries_by_conversation(entries: List[Dict[str, Any]], conv_id_prefix: str) -> List[Dict[str, Any]]:
+    """Find all entries for a conversation by ID prefix or suffix."""
+    log.debug(f"Searching for entries with conversation ID matching: {conv_id_prefix}")
+    # First try prefix match
+    matching = [
+        entry for entry in entries
+        if entry.get("conversation_id") and entry["conversation_id"].startswith(conv_id_prefix)
+    ]
+    
+    # If no prefix matches, try suffix match
+    if not matching:
+        log.debug(f"No prefix matches found, trying suffix match for: {conv_id_prefix}")
+        matching = [
+            entry for entry in entries
+            if entry.get("conversation_id") and entry["conversation_id"].endswith(conv_id_prefix)
+        ]
+        
+    log.debug(f"Found {len(matching)} entries for conversation ID matching: {conv_id_prefix}")
+    # Sort by timestamp (oldest first) for proper ordering of operations
+    matching.sort(key=lambda x: x.get("timestamp", 0))
+    return matching
+    
+def update_entry_status(
+    entry: Dict[str, Any], 
+    status: str,
+    history_root: Path,
+    lock_timeout: int = LOCK_TIMEOUT
+) -> bool:
+    """Update the status of an entry in its log file."""
+    if not entry or "edit_id" not in entry or "log_file" not in entry:
+        log.error("Invalid entry data, missing edit_id or log_file")
+        return False
+        
+    log_file_path = history_root / LOGS_DIR / entry["log_file"]
+    if not log_file_path.exists():
+        log.error(f"Log file not found: {log_file_path}")
+        return False
+        
+    try:
+        # Read all entries from the log file
+        entries = read_log_file(log_file_path, lock_timeout=lock_timeout)
+        
+        # Find and update the specific entry
+        updated = False
+        for e in entries:
+            if e.get("edit_id") == entry["edit_id"]:
+                e["status"] = status
+                e["updated_at"] = datetime.now(timezone.utc).timestamp()
+                updated = True
+                break
+                
+        if not updated:
+            log.error(f"Entry {entry['edit_id']} not found in log file {log_file_path}")
+            return False
+            
+        # Write back all entries
+        write_log_file(log_file_path, entries, lock_timeout=lock_timeout)
+        log.debug(f"Updated entry {entry['edit_id']} status to {status}")
         return True
-    except HistoryError as e:
-        log.error(f"Error writing updated log file {log_file_path}: {e}")
+        
+    except Exception as e:
+        log.error(f"Error updating entry status: {e}")
+        return False
+        
+def get_diff_for_entry(entry: Dict[str, Any], history_root: Path) -> Optional[str]:
+    """Get the diff content for an entry."""
+    # Special case for MOVE operations, which often don't have a diff file
+    if entry.get("operation", "").upper() == "MOVE":
+        source = entry.get("source_path", "unknown")
+        destination = entry.get("file_path", "unknown")
+        return f"MOVE: {source} -> {destination}"
+        
+    if not entry or "edit_id" not in entry:
+        log.debug(f"Missing edit_id in entry: {entry}")
+        return None
+    
+    # Try direct path with edit_id first (most reliable)
+    if "conversation_id" in entry:
+        direct_path = history_root / DIFFS_DIR / entry["conversation_id"] / f"{entry['edit_id']}.diff"
+        if direct_path.exists():
+            try:
+                with open(direct_path, "r", encoding="utf-8") as f:
+                    return f.read()
+            except Exception as e:
+                log.error(f"Error reading direct diff file {direct_path}: {e}")
+    
+    # If no diff_file field, we've already tried the best option above
+    if "diff_file" not in entry:
+        log.debug(f"Missing diff_file in entry: {entry}")
+        # Additional fallback - try searching for the diff file by edit_id
+        for diff_dir in (history_root / DIFFS_DIR).glob("*"):
+            if diff_dir.is_dir():
+                potential_path = diff_dir / f"{entry['edit_id']}.diff"
+                if potential_path.exists():
+                    try:
+                        with open(potential_path, "r", encoding="utf-8") as f:
+                            return f.read()
+                    except Exception as e:
+                        log.error(f"Error reading found diff file {potential_path}: {e}")
+                        
+        return None
+        
+    # If we have the diff_file path in the entry, try several possible arrangements
+    
+    # 1. Try path with conversation_id directory
+    if "conversation_id" in entry:
+        conv_path = history_root / DIFFS_DIR / entry["conversation_id"] / entry["diff_file"]
+        if conv_path.exists():
+            try:
+                with open(conv_path, "r", encoding="utf-8") as f:
+                    return f.read()
+            except Exception as e:
+                log.error(f"Error reading conv_path diff file {conv_path}: {e}")
+    
+    # 2. Try direct path using diff_file
+    direct_path = history_root / DIFFS_DIR / entry["diff_file"]
+    if direct_path.exists():
+        try:
+            with open(direct_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception as e:
+            log.error(f"Error reading direct diff file {direct_path}: {e}")
+    
+    # 3. One last attempt - try assuming diff_file is the same as edit_id
+    if "conversation_id" in entry:
+        edit_id_path = history_root / DIFFS_DIR / entry["conversation_id"] / f"{entry['edit_id']}.diff"
+        if edit_id_path.exists():
+            try:
+                with open(edit_id_path, "r", encoding="utf-8") as f:
+                    return f.read()
+            except Exception as e:
+                log.error(f"Error reading edit_id diff file {edit_id_path}: {e}")
+                
+    log.debug(f"Could not find diff file for entry {entry.get('edit_id')}, tried multiple paths")
+    return None
+
+def print_diff_with_color(diff_content: str) -> None:
+    """Print a diff with color highlighting."""
+    if not diff_content:
+        print("No diff content available.")
+        return
+        
+    for line in diff_content.splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            print(f"{COLOR_GREEN}{line}{COLOR_RESET}")
+        elif line.startswith("-") and not line.startswith("---"):
+            print(f"{COLOR_RED}{line}{COLOR_RESET}")
+        elif line.startswith("@@"):
+            print(f"{COLOR_CYAN}{line}{COLOR_RESET}")
+        elif line.startswith("diff ") or line.startswith("--- ") or line.startswith("+++ "):
+            print(f"{COLOR_BLUE}{line}{COLOR_RESET}")
+        else:
+            print(line)
+            
+def format_entry_summary(entry: Dict[str, Any], detailed: bool = False) -> str:
+    """Format an entry for display in summaries."""
+    if not entry:
+        return "Invalid entry"
+        
+    # Use edit_id for ID field if present
+    id_short = entry.get("edit_id", "")[:10] if entry.get("edit_id") else "no-id"
+    conv_id = entry.get("conversation_id", "")
+    conv_id_short = conv_id[:10] if conv_id else "N/A"
+    op = entry.get("operation", "unknown").upper()
+    file_path = entry.get("file_path", "unknown")
+    status = entry.get("status", "unknown").upper()
+    timestamp = entry.get("timestamp", 0)
+    time_str = format_timestamp(timestamp) if timestamp else "unknown"
+    
+    if status == "PENDING":
+        status_colored = f"{COLOR_YELLOW}{status}{COLOR_RESET}"
+    elif status == "ACCEPTED":
+        status_colored = f"{COLOR_GREEN}{status}{COLOR_RESET}"
+    elif status == "REJECTED":
+        status_colored = f"{COLOR_RED}{status}{COLOR_RESET}"
+    else:
+        status_colored = status
+        
+    if op == "EDIT":
+        op_colored = f"{COLOR_CYAN}{op}{COLOR_RESET}"
+    elif op == "CREATE":
+        op_colored = f"{COLOR_GREEN}{op}{COLOR_RESET}"
+    elif op == "DELETE":
+        op_colored = f"{COLOR_RED}{op}{COLOR_RESET}"
+    elif op == "MOVE" or op == "RENAME":
+        op_colored = f"{COLOR_BLUE}{op}{COLOR_RESET}"
+    else:
+        op_colored = op
+        
+    summary = f"{id_short} | {conv_id_short} | {op_colored} | {file_path} | {status_colored} | {time_str}"
+    
+    if detailed:
+        # Add additional details for detailed view
+        tool = entry.get("tool", "")
+        message = entry.get("message", "")
+        summary += f"\n  Tool: {tool}"
+        if message:
+            summary += f"\n  Message: {message}"
+            
+    return summary
+    
+def apply_or_revert_edit(
+    entry: Dict[str, Any], 
+    workspace_root: Path,
+    history_root: Path,
+    is_revert: bool = False
+) -> bool:
+    """Apply or revert an edit based on its diff."""
+    if not entry or "id" not in entry or "diff_file" not in entry:
+        log.error("Invalid entry data, missing id or diff_file")
+        return False
+        
+    diff_file_path = history_root / DIFFS_DIR / entry["diff_file"]
+    if not diff_file_path.exists():
+        log.error(f"Diff file not found: {diff_file_path}")
+        return False
+        
+    operation = entry.get("operation", "").lower()
+    file_path_str = entry.get("file_path", "")
+    
+    if not file_path_str:
+        log.error(f"Missing file_path in entry {entry['id']}")
+        return False
+        
+    file_path = workspace_root / file_path_str
+    
+    try:
+        # For reverts, we need to handle operations differently
+        if is_revert:
+            if operation == "create":
+                # Revert a create operation by deleting the file
+                if file_path.exists():
+                    file_path.unlink()
+                    log.debug(f"Reverted create: deleted {file_path}")
+                return True
+            elif operation == "delete":
+                # Revert a delete operation by restoring from checkpoint
+                checkpoint_file = entry.get("checkpoint_file")
+                if not checkpoint_file:
+                    log.error(f"Missing checkpoint_file for delete operation in entry {entry['id']}")
+                    return False
+                    
+                checkpoint_path = history_root / CHECKPOINTS_DIR / checkpoint_file
+                if not checkpoint_path.exists():
+                    log.error(f"Checkpoint file not found: {checkpoint_path}")
+                    return False
+                    
+                # Ensure target directory exists
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Copy checkpoint back to original location
+                shutil.copy2(checkpoint_path, file_path)
+                log.debug(f"Reverted delete: restored {file_path} from checkpoint")
+                return True
+            elif operation == "move":
+                # Revert a move operation by moving back
+                source = entry.get("source_path", "")
+                destination = entry.get("destination_path", "")
+                
+                if not source or not destination:
+                    log.error(f"Missing source_path or destination_path for move operation in entry {entry['id']}")
+                    return False
+                    
+                source_path = workspace_root / source
+                dest_path = workspace_root / destination
+                
+                if dest_path.exists() and not source_path.exists():
+                    source_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(dest_path, source_path)
+                    log.debug(f"Reverted move: moved {dest_path} back to {source_path}")
+                return True
+        else:  # Apply (not revert)
+            if operation == "create":
+                # Ensure the file exists
+                if not file_path.exists():
+                    log.error(f"File to apply create does not exist: {file_path}")
+                    return False
+                return True
+            elif operation == "delete":
+                # Ensure the file doesn't exist
+                if file_path.exists():
+                    log.error(f"File to apply delete still exists: {file_path}")
+                    return False
+                return True
+            elif operation == "move":
+                destination = entry.get("destination_path", "")
+                if not destination:
+                    log.error(f"Missing destination_path for move operation in entry {entry['id']}")
+                    return False
+                    
+                dest_path = workspace_root / destination
+                if not dest_path.exists():
+                    log.error(f"Destination file for move does not exist: {dest_path}")
+                    return False
+                return True
+                
+        # For edits and other operations where we need to apply a patch
+        if operation == "edit" or is_revert:
+            # Use git apply to apply/revert the diff
+            git_command = ["git", "apply"]
+            
+            if is_revert:
+                git_command.append("-R")  # Reverse the patch for revert
+                
+            git_command.extend(["-v", "--unsafe-paths", "--directory", str(workspace_root), str(diff_file_path)])
+            
+            log.debug(f"Running: {' '.join(git_command)}")
+            result = subprocess.run(
+                git_command, 
+                capture_output=True, 
+                text=True, 
+                cwd=str(workspace_root)
+            )
+            
+            if result.returncode != 0:
+                log.error(f"Error {'reverting' if is_revert else 'applying'} diff: {result.stderr}")
+                return False
+                
+            log.debug(f"Successfully {'reverted' if is_revert else 'applied'} diff for {entry['id']}")
+            return True
+            
+        return True
+        
+    except Exception as e:
+        log.error(f"Error {'reverting' if is_revert else 'applying'} edit {entry['id']}: {e}")
         return False
 
-
-def handle_accept_or_reject(
-    args: argparse.Namespace, workspace_root: Path, history_root: Path, accept_mode: bool
-) -> None:
-    """Shared implementation for accept and reject commands."""
-    action_name = "accept" if accept_mode else "reject"
-    log.info(f"Starting {action_name} operation...")
-    
-    # Determine target: edit ID or conversation ID
-    target_edit_id = getattr(args, "edit_id", None)
-    target_conv_id = getattr(args, "conv", None)
-    
-    if not target_edit_id and not target_conv_id:
-        print(f"Error: Must specify either --edit-id or --conv for {action_name} command.")
-        return
-    
-    log_dir = history_root / LOGS_DIR
-    if not log_dir.is_dir():
-        print("No history logs found.")
-        return
-    
-    # Track success and failures
-    success_count = 0
-    fail_count = 0
-    
-    # Track which conversations need re-apply (for reject)
-    target_conv_ids = set()
-    
-    # Process by edit_id if specified
-    if target_edit_id:
-        log.info(f"Looking for edits matching ID prefix: {target_edit_id}")
-        found_matches = False
-        
-        # Check all log files for matching edit_id
-        log_files = list(log_dir.glob("*.log"))
-        for log_file in log_files:
-            log_lock = None
-            try:
-                log_lock = FileLock(str(log_file))
-                with log_lock:
-                    # Read log file and find matching entries
-                    try:
-                        entries = read_log_file(log_file)
-                    except HistoryError as e:
-                        log.error(f"Failed to read log file {log_file}: {e}")
-                        fail_count += 1
-                        continue
-                    
-                    # Check all entries for matching edit_id
-                    for entry in entries:
-                        edit_id = entry.get("edit_id", "")
-                        # Match if edit_id starts with target
-                        if edit_id.startswith(target_edit_id):
-                            found_matches = True
-                            # Track conversation ID for re-apply if rejecting
-                            if not accept_mode:
-                                conv_id = entry.get("conversation_id")
-                                if conv_id:
-                                    target_conv_ids.add(conv_id)
-                            
-                            # Only update if different from current status
-                            current_status = entry.get("status", "unknown")
-                            new_status = "accepted" if accept_mode else "rejected"
-                            if current_status != new_status:
-                                entry["status"] = new_status
-                                log.info(f"Marking edit {edit_id} as {new_status}")
-                                try:
-                                    write_log_file(log_file, entries)
-                                    success_count += 1
-                                    print(f"Updated edit {edit_id} status to {new_status}")
-                                except HistoryError as e:
-                                    log.error(f"Failed to write log file {log_file}: {e}")
-                                    fail_count += 1
-                            else:
-                                log.info(f"Edit {edit_id} already has status {current_status}, skipping")
-                                print(f"Edit {edit_id} already has status {current_status}, skipping")
-                                success_count += 1  # Count as success since it's already in the desired state
-                            
-                            # We've handled this entry, can break out of this log file's entries
-                            break
-            except (TimeoutError, Exception) as e_lock:
-                log.error(f"Failed to process log file {log_file} due to lock/read error: {e_lock}")
-                fail_count += 1
-            finally:
-                if log_lock:
-                    log_lock.release()
-        
-        if not found_matches:
-            print(f"No edits found matching ID prefix: {target_edit_id}")
-            return
-    
-    # Process by conversation ID if specified
-    elif target_conv_id:
-        log.info(f"Looking for edits in conversation matching: {target_conv_id}")
-        found_matches = False
-        
-        # Check all log files for matching conversation_id
-        log_files = list(log_dir.glob("*.log"))
-        for log_file in log_files:
-            log_lock = None
-            edit_ids_to_update = []
-            try:
-                log_lock = FileLock(str(log_file))
-                with log_lock:
-                    # Read log file and find matching entries
-                    try:
-                        entries = read_log_file(log_file)
-                    except HistoryError as e:
-                        log.error(f"Failed to read log file {log_file}: {e}")
-                        fail_count += 1
-                        continue
-                    
-                    # First pass: identify entries to update and track their conversation IDs
-                    updates_needed = False
-                    for entry in entries:
-                        conv_id = entry.get("conversation_id", "")
-                        # Match conversation ID (start with, end with, or contain)
-                        if (conv_id.startswith(target_conv_id) or 
-                            conv_id.endswith(target_conv_id) or 
-                            target_conv_id.lower() in conv_id.lower()):
-                            found_matches = True
-                            
-                            # Skip if already in the desired state
-                            current_status = entry.get("status", "unknown")
-                            new_status = "accepted" if accept_mode else "rejected"
-                            
-                            # For accept, update only pending edits
-                            # For reject, update both pending and accepted edits
-                            if (accept_mode and current_status == "pending") or \
-                               (not accept_mode and current_status in ["pending", "accepted"]):
-                                if current_status != new_status:
-                                    edit_ids_to_update.append(entry.get("edit_id"))
-                                    updates_needed = True
-                            
-                            # Always track conversation ID for reject
-                            if not accept_mode and conv_id:
-                                target_conv_ids.add(conv_id)
-                    
-                    # Second pass: update all matching entries in this log file
-                    if updates_needed:
-                        for entry in entries:
-                            if entry.get("edit_id") in edit_ids_to_update:
-                                new_status = "accepted" if accept_mode else "rejected"
-                                entry["status"] = new_status
-                                log.debug(f"Marking edit {entry.get('edit_id')} as {new_status}")
-                        
-                        try:
-                            write_log_file(log_file, entries)
-                            success_count += len(edit_ids_to_update)
-                            for edit_id in edit_ids_to_update:
-                                print(f"Updated edit {edit_id} status to {'accepted' if accept_mode else 'rejected'}")
-                        except HistoryError as e:
-                            log.error(f"Failed to write log file {log_file}: {e}")
-                            fail_count += len(edit_ids_to_update)
-            except (TimeoutError, Exception) as e_lock:
-                log.error(f"Failed to process log file {log_file} due to lock/read error: {e_lock}")
-                fail_count += len(edit_ids_to_update)  # Count all as failures for this file
-            finally:
-                if log_lock:
-                    log_lock.release()  # Ensure release
-
-    print(f"Successfully updated status for {success_count} edit(s).")
-    if fail_count > 0:
-        print(
-            f"{COLOR_YELLOW}Failed to update status for {fail_count} edit(s). Check logs.{COLOR_RESET}",
-            file=sys.stderr,
-        )
-
-    # --- Trigger Re-apply ONLY for REJECT ---
-    if not accept_mode and target_conv_ids:
-        overall_reapply_success = True
-        print("Re-applying state based on updated statuses...")
-        # Use list to ensure consistent processing order if needed
-        sorted_conv_ids = sorted(list(target_conv_ids))
-        for conv_id in sorted_conv_ids:
-            print(f"Processing conversation: {conv_id}")
-            if not reapply_conversation_state(conv_id, history_root, workspace_root):
-                overall_reapply_success = False
-                print(
-                    f"{COLOR_RED}Errors occurred while re-applying state for conversation {conv_id}. Check logs.{COLOR_RESET}",
-                    file=sys.stderr,
-                )
-                # Continue to next conversation
-
-        if overall_reapply_success:
-            print("File state reconstruction completed successfully.")
-        else:
-            print(
-                f"{COLOR_YELLOW}File state reconstruction finished with errors. Manual review may be required.{COLOR_RESET}",
-                file=sys.stderr,
-            )
-    elif not accept_mode:
-        print("No target conversations identified for re-apply.")
-
-
-def handle_accept(
+def handle_status(
     args: argparse.Namespace, workspace_root: Path, history_root: Path
 ) -> None:
-    handle_accept_or_reject(args, workspace_root, history_root, accept_mode=True)
-
-
-def handle_reject(
-    args: argparse.Namespace, workspace_root: Path, history_root: Path
-) -> None:
-    handle_accept_or_reject(args, workspace_root, history_root, accept_mode=False)
+    """Handle the status command to show recent history entries."""
+    log.debug("Processing status command")
+    
+    # Find all entries
+    all_entries = find_all_entries(history_root)
+    
+    if not all_entries:
+        print(f"{COLOR_YELLOW}No edit history entries found.{COLOR_RESET}")
+        return
+        
+    # Apply filters
+    filtered_entries = filter_entries(
+        all_entries,
+        conv_id=args.conv,
+        file_path=args.file,
+        status=args.status,
+        time_filter=args.time,
+        op_type=args.op,
+        limit=args.limit
+    )
+    
+    if not filtered_entries:
+        print(f"{COLOR_YELLOW}No entries match the specified filters.{COLOR_RESET}")
+        print(f"Workspace root: {workspace_root}")
+        print(f"History root: {history_root}")
+        print(f"{COLOR_CYAN}Filter criteria:{COLOR_RESET}")
+        if args.conv:
+            print(f"  Conversation ID containing: {args.conv}")
+        if args.file:
+            print(f"  File path containing: {args.file}")
+        if args.status:
+            print(f"  Status: {args.status}")
+        if args.time:
+            print(f"  Time filter: {args.time}")
+        if args.op:
+            print(f"  Operation type: {args.op}")
+        print(f"  Limit: {args.limit}")
+        return
+    
+    # Print header
+    print(f"{COLOR_CYAN}{'ID':10} | {'CONV ID':10} | {'OP':6} | {'FILE PATH':40} | {'STATUS':8} | {'TIME'}{COLOR_RESET}")
+    print("-" * 100)
+    
+    # Print entries
+    for entry in filtered_entries:
+        print(format_entry_summary(entry))
+        
+    # Print summary
+    print(f"\nShowing {len(filtered_entries)} of {len(all_entries)} entries")
+    
+    # Show filter info
+    if args.conv or args.file or args.status or args.time or args.op:
+        print(f"\n{COLOR_CYAN}Applied filters:{COLOR_RESET}")
+        if args.conv:
+            print(f"  Conversation ID containing: {args.conv}")
+        if args.file:
+            print(f"  File path containing: {args.file}")
+        if args.status:
+            print(f"  Status: {args.status}")
+        if args.time:
+            print(f"  Time filter: {args.time}")
+        if args.op:
+            print(f"  Operation type: {args.op}")
 
 
 def handle_show(
     args: argparse.Namespace, workspace_root: Path, history_root: Path
 ) -> None:
-    """Handle the show command to display diffs for an edit or conversation."""
-    log.info("Starting show operation...")
-    
-    # Get the identifier (edit_id or conversation_id) from args
+    """Handle the show command to display diffs."""
     identifier = args.identifier
     if not identifier:
-        print("Error: Must specify an edit ID or conversation ID.")
+        print(f"{COLOR_RED}Error: No identifier provided.{COLOR_RESET}")
         return
+        
+    log.debug(f"Processing show command for identifier: {identifier}")
     
-    log_dir = history_root / LOGS_DIR
-    if not log_dir.is_dir():
-        print("No history logs found.")
+    # Find all entries
+    all_entries = find_all_entries(history_root)
+    
+    if not all_entries:
+        print(f"{COLOR_YELLOW}No edit history entries found.{COLOR_RESET}")
         return
-    
-    # Variables to track what we find
-    found_entries = []
-    
-    # Check all log files for matching entries
-    log_files = sorted(log_dir.glob("*.log"), key=os.path.getmtime, reverse=True)
-    for log_file in log_files:
-        try:
-            # Read the log file
-            entries = read_log_file(log_file)
+        
+    # Try to find a specific entry by ID first
+    try:
+        entry = find_entry_by_id(all_entries, identifier)
+        if entry:
+            # Found a specific entry
+            print(f"\n{COLOR_CYAN}Details for edit {entry.get('edit_id', 'unknown')}{COLOR_RESET}")
+            print(format_entry_summary(entry, detailed=True))
             
-            # Look for matches in two ways:
-            # 1. If identifier matches start of an edit_id, it's a specific edit request
-            # 2. If identifier matches part of a conversation_id, show all edits in that conversation
-            
-            edit_match = False
-            for entry in entries:
-                edit_id = entry.get("edit_id", "")
-                conv_id = entry.get("conversation_id", "")
-                
-                # Check if this is an edit_id match
-                if edit_id.startswith(identifier):
-                    edit_match = True
-                    found_entries.append((entry, log_file))
-                    break  # Only need the first matching edit
-                
-                # Check if this is a conversation_id match
-                if not edit_match and (
-                    conv_id.startswith(identifier) or 
-                    conv_id.endswith(identifier) or
-                    identifier.lower() in conv_id.lower()
-                ):
-                    found_entries.append((entry, log_file))
+            # Show the diff
+            diff_content = get_diff_for_entry(entry, history_root)
+            print(f"\n{COLOR_CYAN}Diff:{COLOR_RESET}")
+            print_diff_with_color(diff_content)
+            return
+    except AmbiguousIDError:
+        # Fall through to conversation search
+        pass
         
-        except Exception as e:
-            print(f"{COLOR_YELLOW}Warning: Could not read log file {log_file.name}: {e}{COLOR_RESET}", file=sys.stderr)
-            continue
+    # If no specific entry found or ambiguous, try as conversation ID
+    conversation_entries = find_entries_by_conversation(all_entries, identifier)
     
-    if not found_entries:
-        print(f"No entries found matching identifier: {identifier}")
+    if not conversation_entries:
+        print(f"{COLOR_RED}No entries found matching identifier: {identifier}{COLOR_RESET}")
         return
-    
-    # Sort entries by timestamp if multiple found (e.g., for conversation)
-    found_entries.sort(key=lambda x: x[0].get("timestamp", "0"))
-    
-    # Display the diffs for all found entries
-    count = len(found_entries)
-    is_conversation = count > 1
-    
-    if is_conversation:
-        print(f"Found {count} edits matching conversation {identifier}:\n")
-    else:
-        print(f"Found edit matching ID {identifier}:\n")
-    
-    for i, (entry, log_file) in enumerate(found_entries):
-        print("=" * 70)
-        if is_conversation:
-            print(f"Edit {i+1}/{count}:")
         
-        # Display edit info
-        print(f"Edit ID:         {entry['edit_id']}")
-        print(f"Conversation ID: {entry['conversation_id']}")
-        print(f"Timestamp:       {entry.get('timestamp', 'N/A')}")
+    print(f"\n{COLOR_CYAN}Showing {len(conversation_entries)} edits for conversation {conversation_entries[0].get('conversation_id', 'unknown')}{COLOR_RESET}")
+    
+    # Show details and diffs for each entry
+    for i, entry in enumerate(conversation_entries):
+        print(f"\n{COLOR_CYAN}Edit {i+1}/{len(conversation_entries)} - {entry.get('edit_id', 'unknown')}{COLOR_RESET}")
+        print(format_entry_summary(entry, detailed=True))
+        
+        # Show the diff
+        diff_content = get_diff_for_entry(entry, history_root)
+        print(f"\n{COLOR_CYAN}Diff:{COLOR_RESET}")
+        print_diff_with_color(diff_content)
+        
+        # Add separator between entries
+        if i < len(conversation_entries) - 1:
+            print("\n" + "=" * 80)
+
+
+def handle_accept(
+    args: argparse.Namespace, workspace_root: Path, history_root: Path
+) -> None:
+    """Handle the accept command to accept edits."""
+    log.debug("Processing accept command")
+    
+    # Find all entries
+    all_entries = find_all_entries(history_root)
+    
+    if not all_entries:
+        print(f"{COLOR_YELLOW}No edit history entries found.{COLOR_RESET}")
+        return
+        
+    successful = 0
+    failed = 0
+    
+    if args.edit_id:
+        # Accept a specific edit
         try:
-            file_rel = get_relative_path(Path(entry["file_path"]).resolve(), workspace_root)
-        except Exception:
-            file_rel = entry.get("file_path", "N/A")
-        print(f"File:            {file_rel}")
-        print(f"Operation:       {entry.get('operation', 'N/A')}")
-        print(f"Status:          {entry.get('status', 'N/A')}")
-        print("-" * 70)
+            entry = find_entry_by_id(all_entries, args.edit_id)
+            if not entry:
+                print(f"{COLOR_RED}No entry found with ID prefix: {args.edit_id}{COLOR_RESET}")
+                return
+                
+            # Check if already accepted
+            if entry.get("status") == "accepted":
+                print(f"{COLOR_YELLOW}Edit {entry.get('edit_id')} is already accepted.{COLOR_RESET}")
+                return
+                
+            # Ensure edit is applied
+            if entry.get("status") != "pending":
+                print(f"{COLOR_YELLOW}Warning: Edit {entry.get('edit_id')} has status: {entry.get('status')}{COLOR_RESET}")
+                
+            # Apply the edit if needed
+            if entry.get("status") == "rejected":
+                print(f"Re-applying previously rejected edit...")
+                if not apply_or_revert_edit(entry, workspace_root, history_root, is_revert=False):
+                    print(f"{COLOR_RED}Failed to apply edit {entry.get('edit_id')}{COLOR_RESET}")
+                    return
+            
+            # Make sure log_file is populated if missing
+            if "log_file" not in entry and "conversation_id" in entry:
+                entry["log_file"] = f"{entry['conversation_id']}.log"
+            
+            # Update status
+            if update_entry_status(entry, "accepted", history_root):
+                print(f"{COLOR_GREEN}Successfully accepted edit: {entry.get('edit_id')}{COLOR_RESET}")
+                successful += 1
+            else:
+                print(f"{COLOR_RED}Failed to update status for edit: {entry.get('edit_id')}{COLOR_RESET}")
+                failed += 1
+                
+        except AmbiguousIDError as e:
+            print(f"{COLOR_RED}Error: {e}{COLOR_RESET}")
+            return
+            
+    elif args.conv:
+        # Accept all pending edits for a conversation
+        conversation_entries = find_entries_by_conversation(all_entries, args.conv)
         
-        # Show diff if available
-        diff_rel_path = entry.get("diff_file")
-        if diff_rel_path:
-            diff_abs_path = history_root / diff_rel_path
-            if diff_abs_path.is_file():
-                try:
-                    diff_content = diff_abs_path.read_text(encoding="utf-8")
-                    print_diff_with_color(diff_content)
-                except Exception as e:
-                    print(f"{COLOR_RED}Error reading diff file {diff_abs_path}: {e}{COLOR_RESET}", file=sys.stderr)
+        if not conversation_entries:
+            print(f"{COLOR_RED}No entries found for conversation with ID: {args.conv}{COLOR_RESET}")
+            return
+            
+        # Filter to only pending edits
+        pending_entries = [e for e in conversation_entries if e.get("status") == "pending"]
+        
+        if not pending_entries:
+            print(f"{COLOR_YELLOW}No pending edits found for conversation with ID: {args.conv}{COLOR_RESET}")
+            return
+            
+        print(f"Found {len(pending_entries)} pending edits for conversation {conversation_entries[0].get('conversation_id')}.")
+        print(f"Accepting all pending edits...")
+        
+        # Process each pending edit
+        for entry in pending_entries:
+            # Make sure log_file is populated if missing
+            if "log_file" not in entry and "conversation_id" in entry:
+                entry["log_file"] = f"{entry['conversation_id']}.log"
+                
+            # Update status
+            if update_entry_status(entry, "accepted", history_root):
+                print(f"{COLOR_GREEN}Successfully accepted edit: {entry.get('edit_id')}{COLOR_RESET}")
+                successful += 1
             else:
-                print(f"{COLOR_YELLOW}Diff file not found: {diff_rel_path}{COLOR_RESET}")
-        else:
-            if entry.get("operation") in ["edit", "replace", "create"]:
-                print(f"{COLOR_YELLOW}No diff file associated with this '{entry.get('operation')}' operation.{COLOR_RESET}")
-            else:
-                print(f"({entry.get('operation')} operation - no diff expected)")
+                print(f"{COLOR_RED}Failed to update status for edit: {entry.get('edit_id')}{COLOR_RESET}")
+                failed += 1
+                
+    # Print summary
+    if successful > 0 or failed > 0:
+        print(f"\nAccept operation completed: {successful} successful, {failed} failed")
+
+
+def handle_reject(
+    args: argparse.Namespace, workspace_root: Path, history_root: Path
+) -> None:
+    """Handle the reject command to reject edits."""
+    log.debug("Processing reject command")
     
-    print("\n" + "=" * 70)
-    if is_conversation:
-        print(f"End of {count} edits for conversation {identifier}")
-    else:
-        print(f"End of edit {identifier}")
+    # Find all entries
+    all_entries = find_all_entries(history_root)
+    
+    if not all_entries:
+        print(f"{COLOR_YELLOW}No edit history entries found.{COLOR_RESET}")
+        return
+        
+    successful = 0
+    failed = 0
+    
+    if args.edit_id:
+        # Reject a specific edit
+        try:
+            entry = find_entry_by_id(all_entries, args.edit_id)
+            if not entry:
+                print(f"{COLOR_RED}No entry found with ID prefix: {args.edit_id}{COLOR_RESET}")
+                return
+                
+            # Check if already rejected
+            if entry.get("status") == "rejected":
+                print(f"{COLOR_YELLOW}Edit {entry.get('edit_id')} is already rejected.{COLOR_RESET}")
+                return
+                
+            # Revert the edit if it was applied (pending or accepted)
+            if entry.get("status") in ["pending", "accepted"]:
+                print(f"Reverting edit...")
+                if not apply_or_revert_edit(entry, workspace_root, history_root, is_revert=True):
+                    print(f"{COLOR_RED}Failed to revert edit {entry.get('edit_id')}{COLOR_RESET}")
+                    return
+            
+            # Make sure log_file is populated if missing
+            if "log_file" not in entry and "conversation_id" in entry:
+                entry["log_file"] = f"{entry['conversation_id']}.log"
+                
+            # Update status
+            if update_entry_status(entry, "rejected", history_root):
+                print(f"{COLOR_GREEN}Successfully rejected edit: {entry.get('edit_id')}{COLOR_RESET}")
+                successful += 1
+            else:
+                print(f"{COLOR_RED}Failed to update status for edit: {entry.get('edit_id')}{COLOR_RESET}")
+                failed += 1
+                
+        except AmbiguousIDError as e:
+            print(f"{COLOR_RED}Error: {e}{COLOR_RESET}")
+            return
+            
+    elif args.conv:
+        # Reject all pending/accepted edits for a conversation
+        conversation_entries = find_entries_by_conversation(all_entries, args.conv)
+        
+        if not conversation_entries:
+            print(f"{COLOR_RED}No entries found for conversation with ID: {args.conv}{COLOR_RESET}")
+            return
+            
+        # Filter to only pending or accepted edits
+        applicable_entries = [e for e in conversation_entries if e.get("status") in ["pending", "accepted"]]
+        
+        if not applicable_entries:
+            print(f"{COLOR_YELLOW}No pending or accepted edits found for conversation with ID: {args.conv}{COLOR_RESET}")
+            return
+            
+        print(f"Found {len(applicable_entries)} applicable edits for conversation {conversation_entries[0].get('conversation_id')}.")
+        print(f"Rejecting all applicable edits...")
+        
+        # Process in reverse order to avoid conflicts
+        for entry in reversed(applicable_entries):
+            # Revert the edit
+            reverted = apply_or_revert_edit(entry, workspace_root, history_root, is_revert=True)
+            if not reverted:
+                print(f"{COLOR_RED}Failed to revert edit: {entry.get('edit_id')}{COLOR_RESET}")
+                failed += 1
+                continue
+                
+            # Make sure log_file is populated if missing
+            if "log_file" not in entry and "conversation_id" in entry:
+                entry["log_file"] = f"{entry['conversation_id']}.log"
+                
+            # Update status
+            if update_entry_status(entry, "rejected", history_root):
+                print(f"{COLOR_GREEN}Successfully rejected edit: {entry.get('edit_id')}{COLOR_RESET}")
+                successful += 1
+            else:
+                print(f"{COLOR_RED}Failed to update status for edit: {entry.get('edit_id')}{COLOR_RESET}")
+                failed += 1
+                
+    # Print summary
+    if successful > 0 or failed > 0:
+        print(f"\nReject operation completed: {successful} successful, {failed} failed")
 
 
 def handle_review(
     args: argparse.Namespace, workspace_root: Path, history_root: Path
 ) -> None:
-    """Handle the interactive review command."""
-    log.info("Starting interactive review...")
-
-    log_dir = history_root / LOGS_DIR
-    if not log_dir.is_dir():
-        print("No history logs found.")
-        return
-
-    # Gather all pending edits
-    pending_entries = []
-    target_conv_prefix = args.conv if args.conv else None
-
-    log_files = sorted(log_dir.glob("*.log"), key=os.path.getmtime, reverse=True)
-    processed_log_files = set()  # Track files already read
-
-    for log_file in log_files:
-        if log_file in processed_log_files:
-            continue
-        try:
-            # Read log file (uses locking)
-            entries = read_log_file(log_file)
-            processed_log_files.add(
-                log_file
-            )  # Mark as read even if no pending found later
-            for entry in entries:
-                if entry.get("status") == "pending":
-                    conv_match = True
-                    if target_conv_prefix:
-                        conv_id = entry.get("conversation_id", "")
-                        conv_match = conv_id.startswith(target_conv_prefix) or conv_id.endswith(target_conv_prefix)
-                    if conv_match:
-                        # Add log file path to entry for easier update later
-                        entry_with_meta = {"log_file": log_file, **entry}
-                        pending_entries.append(entry_with_meta)
-        except HistoryError as e:
-            print(
-                f"{COLOR_YELLOW}Warning: Could not read log file {log_file.name}: {e}{COLOR_RESET}",
-                file=sys.stderr,
-            )
-            continue
-        except Exception as e:
-            print(
-                f"{COLOR_RED}Error processing log file {log_file.name}: {e}{COLOR_RESET}",
-                file=sys.stderr,
-            )
-            continue
-
-    if not pending_entries:
-        print(
-            "No pending edits found to review"
-            + (
-                f" for conversation prefix '{target_conv_prefix}'."
-                if target_conv_prefix
-                else "."
-            )
-        )
-        return
-
-    # Sort by timestamp
-    pending_entries.sort(key=lambda x: x.get("timestamp", "0"))
-    total_pending = len(pending_entries)
-    print(f"Found {total_pending} pending edit(s).")
-
-    # --- Interactive Loop ---
-    quit_review = False
-    for i, entry in enumerate(pending_entries):
-        if quit_review:
-            break
-
-        print("\n" + "=" * 70)
-        print(f"Reviewing Edit {i + 1}/{total_pending}")
-        print(f"Edit ID:         {entry['edit_id']}")
-        print(f"Conversation ID: {entry['conversation_id']}")
-        print(f"Timestamp:       {entry.get('timestamp', 'N/A')}")
-        try:
-            file_rel = get_relative_path(
-                Path(entry["file_path"]).resolve(), workspace_root
-            )
-        except Exception:
-            file_rel = entry.get("file_path", "N/A")
-        print(f"File:            {file_rel}")
-        print(f"Operation:       {entry.get('operation', 'N/A')}")
-        print("-" * 70)
-
-        # Show Diff
-        diff_rel_path = entry.get("diff_file")
-        if diff_rel_path:
-            diff_abs_path = history_root / diff_rel_path
-            if diff_abs_path.is_file():
-                try:
-                    diff_content = diff_abs_path.read_text(encoding="utf-8")
-                    print_diff_with_color(diff_content)
-                except Exception as e:
-                    print(
-                        f"{COLOR_RED}Error reading diff file {diff_abs_path}: {e}{COLOR_RESET}",
-                        file=sys.stderr,
-                    )
-            else:
-                print(
-                    f"{COLOR_YELLOW}Diff file not found: {diff_rel_path}{COLOR_RESET}"
-                )
-        else:
-            if entry.get("operation") in ["edit", "replace", "create"]:
-                print(
-                    f"{COLOR_YELLOW}No diff file associated with this '{entry.get('operation')}' operation.{COLOR_RESET}"
-                )
-            else:
-                print(f"({entry.get('operation')} operation - no diff expected)")
-
-        # Prompt User
-        while True:
-            print("-" * 70)
-            prompt = f"Action? ({COLOR_GREEN}[a]{COLOR_RESET}ccept / {COLOR_RED}[r]{COLOR_RESET}eject / {COLOR_BLUE}[s]{COLOR_RESET}kip / {COLOR_YELLOW}[q]{COLOR_RESET}uit): "
-            try:
-                action = input(prompt).lower().strip()
-            except EOFError:  # Handle Ctrl+D as quit
-                action = "q"
-                print("q")  # Echo 'q' for clarity
-
-            if action in ["a", "accept"]:
-                print("Accepting...")
-                log_file_to_update = entry["log_file"]
-                edit_id_to_update = entry["edit_id"]
-                log_lock = FileLock(str(log_file_to_update))
-                try:
-                    with log_lock:
-                        if update_entry_status(
-                            log_file_to_update, edit_id_to_update, "accepted"
-                        ):
-                            print("Marked as accepted.")
-                        else:
-                            print(
-                                f"{COLOR_RED}Failed to mark as accepted. Check logs.{COLOR_RESET}"
-                            )
-                except (TimeoutError, Exception) as e_lock:
-                    print(
-                        f"{COLOR_RED}Failed to acquire lock or update log {log_file_to_update}: {e_lock}{COLOR_RESET}"
-                    )
-                finally:
-                    if log_lock:
-                        log_lock.release()
-                break  # Move to next edit
-            elif action in ["r", "reject"]:
-                print("Rejecting...")
-                log_file_to_update = entry["log_file"]
-                edit_id_to_update = entry["edit_id"]
-                conversation_id = entry["conversation_id"]
-                log_lock = FileLock(str(log_file_to_update))
-                try:
-                    with log_lock:
-                        if update_entry_status(
-                            log_file_to_update, edit_id_to_update, "rejected"
-                        ):
-                            print("Marked as rejected.")
-                        else:
-                            print(
-                                f"{COLOR_RED}Failed to mark as rejected. Check logs.{COLOR_RESET}"
-                            )
-                            break  # Skip re-apply if update failed
-                except (TimeoutError, Exception) as e_lock:
-                    print(
-                        f"{COLOR_RED}Failed to acquire lock or update log {log_file_to_update}: {e_lock}{COLOR_RESET}"
-                    )
-                    break  # Skip re-apply if update failed
-                finally:
-                    if log_lock:
-                        log_lock.release()
-
-                # Trigger re-apply for the conversation
-                print("Re-applying state for conversation...")
-                if reapply_conversation_state(conversation_id, history_root, workspace_root):
-                    print("State re-applied successfully.")
-                else:
-                    print(
-                        f"{COLOR_RED}Errors occurred during state reconstruction. Manual review advised.{COLOR_RESET}"
-                    )
-                break  # Move to next edit
-            elif action in ["s", "skip"]:
-                print("Skipping to next edit.")
-                break  # Move to next edit without changes
-            elif action in ["q", "quit"]:
-                print("Quitting review.")
-                quit_review = True
-                break  # Exit inner loop, outer loop will terminate
-            else:
-                print("Invalid input. Please enter 'a', 'r', 's', or 'q'.")
-
-    if not quit_review:
-        print("\nReview complete.")
-
-
-def print_diff_with_color(diff_content: str) -> None:
-    """Print a diff with colored output for additions, deletions, etc."""
-    if not diff_content:
-        print(f"{COLOR_YELLOW}(Empty diff){COLOR_RESET}")
-        return
+    """Handle the review command to interactively review edits."""
+    log.debug("Processing review command")
     
-    for line in diff_content.splitlines():
-        if line.startswith('+') and not line.startswith('+++'):
-            print(f"{COLOR_GREEN}{line}{COLOR_RESET}")
-        elif line.startswith('-') and not line.startswith('---'):
-            print(f"{COLOR_RED}{line}{COLOR_RESET}")
-        elif line.startswith('@@ '):
-            print(f"{COLOR_CYAN}{line}{COLOR_RESET}")
-        elif line.startswith('diff ') or line.startswith('index ') or \
-             line.startswith('--- ') or line.startswith('+++ '):
-            print(f"{COLOR_BLUE}{line}{COLOR_RESET}")
-        else:
-            print(line)
+    # Find all entries
+    all_entries = find_all_entries(history_root)
+    
+    if not all_entries:
+        print(f"{COLOR_YELLOW}No edit history entries found.{COLOR_RESET}")
+        return
+        
+    # Filter to only pending edits
+    pending_entries = [e for e in all_entries if e.get("status") == "pending"]
+    
+    if not pending_entries:
+        print(f"{COLOR_YELLOW}No pending edits found to review.{COLOR_RESET}")
+        return
+        
+    # Further filter by conversation if specified
+    if args.conv:
+        pending_entries = [
+            e for e in pending_entries
+            if e.get("conversation_id") and (
+                e["conversation_id"].startswith(args.conv) or 
+                e["conversation_id"].endswith(args.conv)
+            )
+        ]
+        
+        if not pending_entries:
+            print(f"{COLOR_YELLOW}No pending edits found for conversation with ID: {args.conv}{COLOR_RESET}")
+            return
+            
+    print(f"Found {len(pending_entries)} pending edits to review.")
+    
+    # Group by conversation for better organization
+    by_conversation = {}
+    for entry in pending_entries:
+        conv_id = entry.get("conversation_id", "unknown")
+        if conv_id not in by_conversation:
+            by_conversation[conv_id] = []
+        by_conversation[conv_id].append(entry)
+        
+    # Process each conversation
+    for conv_id, entries in by_conversation.items():
+        print(f"\n{COLOR_CYAN}Reviewing {len(entries)} edits for conversation {conv_id}{COLOR_RESET}")
+        
+        # Process each entry in the conversation
+        for i, entry in enumerate(entries):
+            print(f"\n{COLOR_CYAN}Edit {i+1}/{len(entries)} - {entry.get('id', 'unknown')}{COLOR_RESET}")
+            print(format_entry_summary(entry, detailed=True))
+            
+            # Show the diff
+            diff_content = get_diff_for_entry(entry, history_root)
+            print(f"\n{COLOR_CYAN}Diff:{COLOR_RESET}")
+            print_diff_with_color(diff_content)
+            
+            # Prompt for action
+            while True:
+                choice = input(f"\n{COLOR_YELLOW}[a]ccept, [r]eject, [s]kip, [q]uit review: {COLOR_RESET}").lower()
+                
+                if choice in ['a', 'accept']:
+                    # Accept the edit
+                    if update_entry_status(entry, "accepted", history_root):
+                        print(f"{COLOR_GREEN}Edit accepted.{COLOR_RESET}")
+                    else:
+                        print(f"{COLOR_RED}Failed to accept edit.{COLOR_RESET}")
+                    break
+                elif choice in ['r', 'reject']:
+                    # Revert and reject the edit
+                    reverted = apply_or_revert_edit(entry, workspace_root, history_root, is_revert=True)
+                    if not reverted:
+                        print(f"{COLOR_RED}Failed to revert edit.{COLOR_RESET}")
+                        continue
+                        
+                    if update_entry_status(entry, "rejected", history_root):
+                        print(f"{COLOR_GREEN}Edit rejected and reverted.{COLOR_RESET}")
+                    else:
+                        print(f"{COLOR_RED}Failed to reject edit (but it was reverted).{COLOR_RESET}")
+                    break
+                elif choice in ['s', 'skip']:
+                    print(f"{COLOR_YELLOW}Edit skipped.{COLOR_RESET}")
+                    break
+                elif choice in ['q', 'quit']:
+                    print(f"{COLOR_YELLOW}Review session ended.{COLOR_RESET}")
+                    return
+                else:
+                    print(f"{COLOR_RED}Invalid choice. Please try again.{COLOR_RESET}")
+                    
+    print(f"\n{COLOR_GREEN}Review completed. All pending edits processed.{COLOR_RESET}")
 
 
-def handle_status(
+def handle_cleanup(
     args: argparse.Namespace, workspace_root: Path, history_root: Path
 ) -> None:
-    """Handle the status command to show edit history status."""
-    log.info("Getting edit history status...")
-
-    log_dir = history_root / LOGS_DIR
-    if not log_dir.is_dir():
-        print("No history logs found.")
-        return
-
-    # Parse time filter if provided
-    time_filter_seconds = 0
-    if args.time:
-        try:
-            time_str = args.time.lower()
-            # Parse format like "3d1h30m15s" into seconds
-            total_seconds = 0
-            current_num = ""
-            for char in time_str:
-                if char.isdigit():
-                    current_num += char
-                elif char == 'd' and current_num:
-                    total_seconds += int(current_num) * 86400  # days to seconds
-                    current_num = ""
-                elif char == 'h' and current_num:
-                    total_seconds += int(current_num) * 3600  # hours to seconds
-                    current_num = ""
-                elif char == 'm' and current_num:
-                    total_seconds += int(current_num) * 60  # minutes to seconds
-                    current_num = ""
-                elif char == 's' and current_num:
-                    total_seconds += int(current_num)  # seconds
-                    current_num = ""
-            # If there's a number without a unit, assume seconds
-            if current_num:
-                total_seconds += int(current_num)
-            time_filter_seconds = total_seconds
-        except ValueError as e:
-            print(f"{COLOR_YELLOW}Warning: Invalid time filter format: {e}. Ignoring time filter.{COLOR_RESET}")
+    """Handle the cleanup command to remove stale locks."""
+    log.info("Starting cleanup of stale locks...")
     
-    # Calculate cutoff time if time filter is active
-    cutoff_time = None
-    if time_filter_seconds > 0:
-        cutoff_time = datetime.now(timezone.utc) - timedelta(seconds=time_filter_seconds)
+    count = cleanup_stale_locks(history_root)
     
-    # Get all log files, sort by modification time (newest first)
-    log_files = sorted(log_dir.glob("*.log"), key=os.path.getmtime, reverse=True)
-    
-    # Extract and collect entries
-    all_entries = []
-    for log_file in log_files:
-        try:
-            entries = read_log_file(log_file)
-            for entry in entries:
-                # Apply filters
-                include_entry = True
-                
-                # Filter by conversation ID if specified
-                if args.conv and include_entry:
-                    conv_id = entry.get("conversation_id", "")
-                    include_entry = args.conv.lower() in conv_id.lower() or conv_id.startswith(args.conv) or conv_id.endswith(args.conv)
-                
-                # Filter by file path if specified
-                if args.file and include_entry:
-                    file_path = entry.get("file_path", "")
-                    include_entry = args.file.lower() in file_path.lower()
-                
-                # Filter by status if specified
-                if args.status and include_entry:
-                    entry_status = entry.get("status", "")
-                    include_entry = entry_status == args.status
-                
-                # Filter by operation if specified
-                if args.op and include_entry:
-                    operation = entry.get("operation", "")
-                    include_entry = operation.lower() == args.op.lower()
-                
-                # Filter by time if specified
-                if cutoff_time and include_entry:
-                    entry_time_str = entry.get("timestamp", "")
-                    try:
-                        # Parse ISO format timestamp
-                        entry_time = datetime.fromisoformat(entry_time_str.replace('Z', '+00:00'))
-                        include_entry = entry_time > cutoff_time
-                    except ValueError:
-                        # If timestamp can't be parsed, include anyway
-                        log.warning(f"Could not parse timestamp: {entry_time_str}")
-                
-                if include_entry:
-                    # Add log file path to entry for reference
-                    entry["_log_file"] = log_file
-                    all_entries.append(entry)
-        
-        except Exception as e:
-            print(f"{COLOR_YELLOW}Warning: Could not read log file {log_file.name}: {e}{COLOR_RESET}", file=sys.stderr)
-            continue
-    
-    # Sort entries by timestamp (oldest first)
-    all_entries.sort(key=lambda x: x.get("timestamp", "0"), reverse=False)
-    
-    # Limit number of entries to display
-    entries_to_show = all_entries[:args.limit]
-    
-    if not entries_to_show:
-        print("No matching edit history entries found.")
-        return
-    
-    # Display entries
-    print(f"Found {len(all_entries)} edits{f' (showing {min(args.limit, len(all_entries))})' if len(all_entries) > args.limit else ''}:\n")
-    print(f"{'ID':<11} {'Operation':<10} {'Status':<10} {'File':<30} {'Conv ID':<12} {'Time':<19}")
-    print("-" * 98)
-    
-    for entry in entries_to_show:
-        # Format each field
-        edit_id = entry.get("edit_id", "")[:8]
-        operation = entry.get("operation", "N/A")
-        status = entry.get("status", "N/A")
-        # Format status with color
-        if status == "pending":
-            status_str = f"{COLOR_YELLOW}{status}{COLOR_RESET}"
-        elif status == "accepted":
-            status_str = f"{COLOR_GREEN}{status}{COLOR_RESET}"
-        elif status == "rejected":
-            status_str = f"{COLOR_RED}{status}{COLOR_RESET}"
-        else:
-            status_str = status
-        
-        # Get relative file path for display
-        try:
-            file_path = entry.get("file_path", "N/A")
-            if file_path != "N/A":
-                file_rel = get_relative_path(Path(file_path).resolve(), workspace_root)
-                # Truncate if too long
-                if len(file_rel) > 30:
-                    file_rel = "..." + file_rel[-27:]
-            else:
-                file_rel = "N/A"
-        except Exception:
-            file_rel = entry.get("file_path", "N/A")
-            if len(file_rel) > 30:
-                file_rel = "..." + file_rel[-27:]
-        
-        conv_id = entry.get("conversation_id", "N/A")
-        if len(conv_id) > 10:
-            conv_id = conv_id[:8] + ".."
-        
-        # Format timestamp
-        timestamp = entry.get("timestamp", "N/A")
-        if timestamp != "N/A":
-            try:
-                # Parse ISO format and make it more readable
-                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                timestamp = dt.strftime('%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                pass  # Keep original if parsing fails
-        
-        print(f"{edit_id:<11} {operation:<10} {status_str:<19} {file_rel:<30} {conv_id:<12} {timestamp}")
-    
-    print("\nUse 'mcpdiff show <edit_id>' or 'mcpdiff show <conv_id>' to see details.")
+    if count > 0:
+        print(f"Cleaned up {count} stale lock(s).")
+    else:
+        print("No stale locks found to clean up.")
 
 
-# --- Main Argparse Setup ---
 def main():
     parser = argparse.ArgumentParser(
         description="MCP Diff Tool: Review and manage LLM file edits.",
@@ -1882,6 +1523,7 @@ Examples:
   mcpdiff r -c <conv_id_prefix>      # Shorthand for reject conversation
   mcpdiff review                     # Interactively review pending edits
   mcpdiff v                          # Shorthand for review
+  mcpdiff cleanup                    # Clean up stale locks
 """,
     )
     parser.add_argument(
@@ -1891,6 +1533,17 @@ Examples:
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable debug logging."
+    )
+    parser.add_argument(
+        "--timeout", 
+        type=int, 
+        default=LOCK_TIMEOUT,
+        help=f"Timeout in seconds for acquiring locks (default: {LOCK_TIMEOUT})."
+    )
+    parser.add_argument(
+        "--force-cleanup",
+        action="store_true",
+        help="Force cleanup of stale locks before running any command."
     )
 
     subparsers = parser.add_subparsers(
@@ -1968,6 +1621,12 @@ Examples:
     )
     parser_review.set_defaults(func=handle_review)
     
+    # cleanup
+    parser_cleanup = subparsers.add_parser(
+        "cleanup", aliases=["clean"], help="Clean up stale locks."
+    )
+    parser_cleanup.set_defaults(func=handle_cleanup)
+    
     # help
     parser_help = subparsers.add_parser(
         "help", aliases=["h"], help="Show help information."
@@ -1991,6 +1650,10 @@ Examples:
         log.setLevel(logging.INFO)
         # Keep root logger at WARNING or INFO to avoid overly verbose output from libraries
         logging.getLogger().setLevel(logging.WARNING)
+
+    # Get lock timeout from arguments - use the value directly, not modifying the global
+    lock_timeout = args.timeout
+    log.debug(f"Using lock timeout: {lock_timeout}s")
 
     # --- Find Workspace and History Root ---
     try:
@@ -2017,6 +1680,13 @@ Examples:
 
         log.debug(f"Using workspace root: {workspace_root}")
         log.debug(f"Using history root: {history_root}")
+        
+        # Force cleanup of stale locks if requested
+        if args.force_cleanup or args.command == "cleanup":
+            log.debug("Performing cleanup of stale locks")
+            cleaned = cleanup_stale_locks(history_root)
+            if cleaned > 0:
+                log.info(f"Cleaned up {cleaned} stale lock(s) before main operation")
 
     except Exception as e:
         print(f"{COLOR_RED}Error finding workspace: {e}{COLOR_RESET}", file=sys.stderr)
