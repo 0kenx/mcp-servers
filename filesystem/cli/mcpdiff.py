@@ -130,6 +130,52 @@ def get_relative_path(absolute_path: Path, workspace_root: Path) -> str:
         return str(absolute_path)
 
 
+def is_path_within_directory(path: Path, directory: Path) -> bool:
+    """
+    Check if a path is within a directory (or is the directory itself).
+    Both paths must be absolute and resolved.
+    """
+    try:
+        # Resolve any symlinks and normalize paths
+        path = path.resolve()
+        directory = directory.resolve()
+
+        # Check if path is the directory or is under it
+        return str(path).startswith(str(directory))
+    except Exception:
+        return False
+
+
+def verify_path_is_safe(path: Path, workspace_root: Path) -> bool:
+    """
+    Verify that a path is safe to modify:
+    - Must be absolute
+    - Must be within workspace_root
+    - Must not contain symlinks that point outside workspace_root
+    """
+    try:
+        # Convert to absolute path if not already
+        abs_path = path if path.is_absolute() else (workspace_root / path).resolve()
+
+        # Check each component for symlinks that might escape
+        current = abs_path
+        while current != current.parent:  # Stop at root
+            if current.is_symlink():
+                # If any component is a symlink, verify its target is within workspace
+                if not is_path_within_directory(current.resolve(), workspace_root):
+                    log.error(
+                        f"Security: Symlink '{current}' points outside workspace: {current.resolve()}"
+                    )
+                    return False
+            current = current.parent
+
+        # Final check that resolved path is within workspace
+        return is_path_within_directory(abs_path, workspace_root)
+    except Exception as e:
+        log.error(f"Security: Path verification failed for '{path}': {e}")
+        return False
+
+
 # --- Filesystem Info Helpers (Simplified for CLI) ---
 def calculate_hash(file_path: str) -> Optional[str]:
     """Calculates the SHA256 hash of a file's content."""
@@ -314,6 +360,13 @@ def apply_patch(
     reverse: bool = False,
 ) -> bool:
     """Applies a diff using the patch command. Runs from workspace root."""
+    target_abs_path = workspace_root / target_file_rel_path
+
+    # Security check for target path
+    if not verify_path_is_safe(target_abs_path, workspace_root):
+        log.error(f"Security: Cannot patch file outside workspace: {target_abs_path}")
+        return False
+
     patch_cmd = shutil.which("patch")
     if not patch_cmd:
         log.error(
@@ -416,6 +469,12 @@ def reapply_conversation_state(
     by re-applying accepted/pending edits from their checkpoints.
     This is typically called after one or more edits are marked 'rejected'.
     """
+    if not is_path_within_directory(history_root, workspace_root):
+        log.error(
+            f"Security: History directory '{history_root}' must be within workspace '{workspace_root}'"
+        )
+        return False
+
     log.info(
         f"Re-applying state for conversation '{conversation_id}' in workspace '{workspace_root}'"
     )
@@ -515,6 +574,14 @@ def reapply_conversation_state(
         )
         final_target_abs = Path(final_target_abs_str)
 
+        # Security check for target path
+        if not verify_path_is_safe(final_target_abs, workspace_root):
+            log.error(
+                f"Security: Cannot modify file outside workspace: {final_target_abs}"
+            )
+            overall_success = False
+            continue
+
         # Get relative path for logging/display purposes
         try:
             final_target_rel = get_relative_path(final_target_abs, workspace_root)
@@ -541,6 +608,13 @@ def reapply_conversation_state(
             "hash_before"
         )  # Hash when checkpoint taken
 
+        # Add special handling for rejected 'create' operations
+        first_op_is_rejected_create = (
+            first_relevant_edit["operation"] == "create"
+            and first_relevant_edit.get("status") == "rejected"
+            and not original_path_abs_str in checkpointed_paths  # Add this check
+        )
+
         # Determine the absolute path *at the time the checkpoint was relevant* (start of sequence)
         # This is the source of a move if the first op is move, otherwise the target.
         checkpoint_origin_path_abs_str = (
@@ -563,8 +637,13 @@ def reapply_conversation_state(
         # Check if checkpoint is required but missing
         checkpoint_available = checkpoint_path and checkpoint_path.exists()
         if not checkpoint_available:
+            # If this is a rejected create operation, we don't need a checkpoint
+            if first_op_is_rejected_create:
+                log.info(
+                    f"No checkpoint needed for rejected 'create' operation on '{original_path_rel}'"
+                )
             # If a checkpoint was logged for the original path but isn't found now
-            if original_path_abs_str in checkpointed_paths:
+            elif original_path_abs_str in checkpointed_paths:
                 log.error(
                     f"Checkpoint file '{checkpoint_rel_path_str}' not found for '{original_path_rel}' in conv '{conversation_id}', but history indicates one was created."
                 )
@@ -591,32 +670,55 @@ def reapply_conversation_state(
             current_expected_hash: Optional[str] = None
             file_exists_in_state: bool = False
 
-            # Restore Checkpoint or Initial State
-            checkpoint_origin_path_abs = Path(checkpoint_origin_path_abs_str)
-            if checkpoint_available:
+            # Special handling for rejected create operations
+            if first_op_is_rejected_create:
                 log.info(
-                    f"Restoring checkpoint '{checkpoint_path.name}' to '{get_relative_path(checkpoint_origin_path_abs, workspace_root)}'"
+                    f"Handling rejected 'create' operation for '{original_path_rel}' - ensuring file is removed"
+                )
+                if current_file_path_abs.exists():
+                    try:
+                        if (
+                            current_file_path_abs.is_dir()
+                            and not current_file_path_abs.is_symlink()
+                        ):
+                            shutil.rmtree(current_file_path_abs)
+                        else:
+                            current_file_path_abs.unlink()
+                        log.info(
+                            f"Removed file '{current_file_path_abs}' for rejected create operation"
+                        )
+                    except OSError as e:
+                        log.error(
+                            f"Failed to remove file for rejected create operation: {e}"
+                        )
+                        raise HistoryError(
+                            "Failed to remove file for rejected create"
+                        ) from e
+                file_exists_in_state = False
+                current_expected_hash = None
+                current_file_path_abs = Path(checkpoint_origin_path_abs_str)
+            # Regular checkpoint restoration for other cases
+            elif checkpoint_available:
+                log.info(
+                    f"Restoring checkpoint '{checkpoint_path.name}' to '{get_relative_path(Path(checkpoint_origin_path_abs_str), workspace_root)}'"
                 )
                 try:
-                    # Restore to the path *as it was when checkpoint was taken*
-                    checkpoint_origin_path_abs.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(
-                        checkpoint_path, checkpoint_origin_path_abs
-                    )  # Use copy2 to preserve metadata
+                    # Convert string to Path
+                    checkpoint_origin_path = Path(checkpoint_origin_path_abs_str)
+                    checkpoint_origin_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(checkpoint_path, checkpoint_origin_path)
                     current_file_path_abs = (
-                        checkpoint_origin_path_abs  # File now exists at the origin path
+                        checkpoint_origin_path  # File now exists at the origin path
                     )
                     file_exists_in_state = True
-                    current_expected_hash = calculate_hash(
-                        str(checkpoint_origin_path_abs)
-                    )
+                    current_expected_hash = calculate_hash(str(checkpoint_origin_path))
                     # Verify checkpoint hash if available in log
                     if (
                         initial_hash_from_log
                         and current_expected_hash != initial_hash_from_log
                     ):
                         log.warning(
-                            f"Restored checkpoint hash mismatch for '{checkpoint_origin_path_abs}'. Expected {initial_hash_from_log[:8]}, got {current_expected_hash[:8]}. Overriding expected hash."
+                            f"Restored checkpoint hash mismatch for '{checkpoint_origin_path}'. Expected {initial_hash_from_log[:8]}, got {current_expected_hash[:8]}. Overriding expected hash."
                         )
                         current_expected_hash = (
                             initial_hash_from_log  # Trust the log's record for sequence
@@ -628,7 +730,7 @@ def reapply_conversation_state(
 
                 except Exception as e:
                     log.exception(
-                        f"Checkpoint restore failed for {checkpoint_path} to {checkpoint_origin_path_abs}: {e}"
+                        f"Checkpoint restore failed for {checkpoint_path} to {checkpoint_origin_path}: {e}"
                     )
                     raise HistoryError(
                         f"Checkpoint restore failed for {original_path_rel}"
@@ -666,7 +768,7 @@ def reapply_conversation_state(
                 file_exists_in_state = False
             else:
                 # No checkpoint, not a create. Assume file exists at the path expected by the first op.
-                current_file_path_abs = checkpoint_origin_path_abs
+                current_file_path_abs = checkpoint_origin_path_abs_str
                 if not current_file_path_abs.exists():
                     log.error(
                         f"File '{current_file_path_abs}' expected to exist (no checkpoint, not create) but not found."
@@ -2016,6 +2118,15 @@ Examples:
         if not workspace_root:
             print(
                 f"{COLOR_RED}Error: Could not find workspace root (directory containing .mcp/{HISTORY_DIR_NAME}) starting from '{args.workspace or os.getcwd()}'.{COLOR_RESET}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        # Security: Ensure workspace is current directory or below
+        cwd = Path.cwd().resolve()
+        if not is_path_within_directory(workspace_root, cwd):
+            print(
+                f"{COLOR_RED}Error: For security, workspace root must be within current directory: {cwd}{COLOR_RESET}",
                 file=sys.stderr,
             )
             sys.exit(1)
