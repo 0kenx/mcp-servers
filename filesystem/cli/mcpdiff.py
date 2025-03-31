@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional, Tuple, Set, Union
+import uuid
 
 # --- Configuration Constants ---
 HISTORY_DIR_NAME = "edit_history"
@@ -589,10 +590,10 @@ def find_all_entries(history_root: Path, lock_timeout: int = LOCK_TIMEOUT) -> Li
                 if 'T' in timestamp and 'Z' in timestamp:
                     # Parse ISO-like timestamp: "2025-03-31T154939.993Z"
                     # Convert to a comparable string format: "20250331154939.993"
-                    date_part, time_part = timestamp.split('T')
-                    time_part = time_part.rstrip('Z')
-                    date_str = date_part.replace('-', '')
-                    return date_str + time_part
+                    ts = datetime.strptime(timestamp[:-1], '%Y-%m-%dT%H:%M:%S.%f')
+                    ts = ts.replace(tzinfo=timezone.utc)
+                    epoch_time = ts.timestamp()
+                    return epoch_time
                 else:
                     return float(timestamp)
             else:
@@ -825,7 +826,7 @@ def update_entry_status(
         for e in entries:
             if e.get("edit_id") == entry["edit_id"]:
                 e["status"] = status
-                e["updated_at"] = datetime.now(timezone.utc).timestamp()
+                e["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%S.%fZ")[:21] + "Z"
                 updated = True
                 break
                 
@@ -958,7 +959,9 @@ def format_entry_summary(entry: Dict[str, Any], detailed: bool = False) -> str:
     # Get status in lowercase
     status = entry.get("status", "unknown").lower()
     timestamp = entry.get("timestamp", 0)
+    log.debug(f"timestamp: {timestamp}")
     time_str = format_timestamp(timestamp) if timestamp else "unknown"
+    time_str = "unknown" if time_str is None else time_str
     
     # Apply colors to status
     if status == "pending":
@@ -993,7 +996,7 @@ def format_entry_summary(entry: Dict[str, Any], detailed: bool = False) -> str:
     # Pad the operation field to ensure consistent column width
     op_padding = max(9 - op_length, 0)  # Ensure at least 10 chars for op column
     status_padding = max(8 - status_length, 0)  # Ensure at least 10 chars for status column
-    
+    log.debug(f"time_str: {time_str}, id_short: {id_short}, conv_id_short: {conv_id_short}, op_colored: {op_colored}, status_colored: {status_colored}, file_path: {file_path}")
     summary = f"{time_str:19}  {id_short:8}  {conv_id_short:8}  {op_colored}{' ' * op_padding}  {status_colored}{' ' * status_padding}  {file_path}"
     
     if detailed:
@@ -1502,7 +1505,7 @@ def handle_reject(
                 
             file_path = workspace_root / file_path_str
             
-            # Hash verification - check if the file has been modified since the last edit
+            # 1. Hash verification - check if the file has been modified since the last edit
             last_edit = get_last_edit_for_file(all_entries, file_path_str)
             if last_edit and "hash_after" in last_edit and last_edit["hash_after"]:
                 expected_hash = last_edit["hash_after"]
@@ -1519,34 +1522,124 @@ def handle_reject(
                         if proceed not in ['y', 'yes']:
                             print(f"{COLOR_YELLOW}Operation aborted by user.{COLOR_RESET}")
                             return
-                
-            # Revert the edit if it was applied (pending or accepted)
-            if entry.get("status") in ["pending", "accepted"]:
-                print(f"Reverting edit...")
-                if not apply_or_revert_edit(entry, workspace_root, history_root, is_revert=True):
-                    print(f"{COLOR_RED}Failed to revert edit {entry.get('edit_id')}{COLOR_RESET}")
-                    return
             
-            # Reconstruct the file state to ensure consistency
-            result = reconstruct_file_from_edits(file_path, all_entries, workspace_root, history_root)
-            if result["error"]:
-                print(f"{COLOR_RED}Error reconstructing file: {result['error']}{COLOR_RESET}")
-                return
-                
+            # 2. Take a checkpoint of the current file
+            checkpoint_dir = history_root / CHECKPOINTS_DIR / entry.get("conversation_id", "unknown")
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Create a sanitized filename for the checkpoint
+            sanitized_path = file_path_str.replace("/", "_").replace("\\", "_")
+            checkpoint_path = checkpoint_dir / f"{sanitized_path}_{generate_hex_timestamp()}.chkpt"
+            
+            # Save the current file state
+            if file_path.exists():
+                shutil.copy2(file_path, checkpoint_path)
+                current_hash = calculate_hash(str(file_path))
+            else:
+                # File doesn't exist, create empty checkpoint
+                with open(checkpoint_path, 'w') as f:
+                    pass
+                current_hash = None
+            
+            # Record the snapshot operation in the log
+            snapshot_entry = {
+                "edit_id": str(uuid.uuid4()),
+                "conversation_id": entry.get("conversation_id", "unknown"),
+                "tool_call_index": 0,  # Special index for system-generated entries
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%S.%fZ")[:21] + "Z",
+                "operation": "snapshot",
+                "file_path": file_path_str,
+                "source_path": None,
+                "tool_name": "mcpdiff",
+                "status": "done",
+                "diff_file": None,
+                "checkpoint_file": str(checkpoint_path.relative_to(history_root)),
+                "hash_before": current_hash,
+                "hash_after": current_hash
+            }
+            
             # Make sure log_file is populated if missing
             if "log_file" not in entry and "conversation_id" in entry:
                 entry["log_file"] = f"{entry['conversation_id']}.log"
                 
-            # Update entry with new hash
-            entry["hash_after"] = result["hash"]
+            # Get the log file path for the snapshot entry
+            log_file_path = history_root / LOGS_DIR / entry.get("log_file", f"{entry.get('conversation_id', 'unknown')}.log")
+            
+            # Append snapshot entry to log
+            try:
+                # Read existing entries
+                entries = read_log_file(log_file_path)
                 
-            # Update status
+                # Add snapshot entry
+                entries.append(snapshot_entry)
+                
+                # Write back to log file
+                write_log_file(log_file_path, entries)
+                log.debug(f"Added snapshot entry {snapshot_entry['edit_id']} to log file {log_file_path}")
+            except Exception as e:
+                log.error(f"Error adding snapshot entry to log: {e}")
+                print(f"{COLOR_RED}Failed to record snapshot operation: {e}{COLOR_RESET}")
+                
+            # 3. Mark the edit operation as rejected
             if update_entry_status(entry, "rejected", history_root):
-                print(f"{COLOR_GREEN}Successfully rejected edit: {entry.get('edit_id')}{COLOR_RESET}")
-                successful += 1
+                print(f"{COLOR_YELLOW}Marked edit {entry.get('edit_id')} as rejected{COLOR_RESET}")
             else:
                 print(f"{COLOR_RED}Failed to update status for edit: {entry.get('edit_id')}{COLOR_RESET}")
+                return
+                
+            # 4. Reconstruct the file from the nearest available snapshot, skipping rejected edits
+            print(f"Reconstructing file from the nearest available snapshot...")
+            result = reconstruct_file_from_edits(file_path, all_entries, workspace_root, history_root)
+            
+            # 5. Record the revert operation
+            revert_entry = {
+                "edit_id": str(entry.get('edit_id')),
+                "conversation_id": entry.get("conversation_id", "unknown"),
+                "tool_call_index": 0,  # Special index for system-generated entries
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%S.%fZ")[:21] + "Z",
+                "operation": "revert",
+                "file_path": file_path_str,
+                "source_path": None,
+                "tool_name": "mcpdiff",
+                "status": "done" if not result["error"] else "failed",
+                "diff_file": None,
+                "checkpoint_file": None,
+                "hash_before": current_hash,
+                "hash_after": result["hash"]
+            }
+            
+            # Append revert entry to log
+            try:
+                # Read existing entries again (to include the snapshot and rejection)
+                entries = read_log_file(log_file_path)
+                
+                # Add revert entry
+                entries.append(revert_entry)
+                
+                # Write back to log file
+                write_log_file(log_file_path, entries)
+                log.debug(f"Added revert entry {revert_entry['edit_id']} to log file {log_file_path}")
+            except Exception as e:
+                log.error(f"Error adding revert entry to log: {e}")
+                print(f"{COLOR_RED}Failed to record revert operation: {e}{COLOR_RESET}")
+            
+            # Handle the result
+            if result["error"]:
+                print(f"{COLOR_RED}Error reconstructing file: {result['error']}{COLOR_RESET}")
+                print(f"{COLOR_RED}Restoring file from checkpoint...{COLOR_RESET}")
+                
+                # If reconstruction failed, restore from the checkpoint
+                if file_path.exists():
+                    shutil.copy2(checkpoint_path, file_path)
+                
+                # Also revert the edit status back to pending
+                update_entry_status(entry, "pending", history_root)
+                print(f"{COLOR_YELLOW}Reset edit {entry.get('edit_id')} status to pending{COLOR_RESET}")
+                
                 failed += 1
+            else:
+                print(f"{COLOR_GREEN}Successfully rejected edit and reconstructed file{COLOR_RESET}")
+                successful += 1
                 
         except AmbiguousIDError as e:
             print(f"{COLOR_RED}Error: {e}{COLOR_RESET}")
@@ -1583,7 +1676,7 @@ def handle_reject(
         for file_path_str, file_entries in entries_by_file.items():
             file_path = workspace_root / file_path_str
             
-            # Hash verification for the file
+            # 1. Hash verification for the file
             last_edit = get_last_edit_for_file(all_entries, file_path_str)
             if last_edit and "hash_after" in last_edit and last_edit["hash_after"]:
                 expected_hash = last_edit["hash_after"]
@@ -1601,33 +1694,126 @@ def handle_reject(
                             print(f"{COLOR_YELLOW}Skipping edits for file {file_path_str}.{COLOR_RESET}")
                             continue
             
-            # Process in reverse order to avoid conflicts
-            sorted_entries = sorted(file_entries, key=lambda e: e.get("tool_call_index", 0), reverse=True)
-            for entry in sorted_entries:
-                # Revert the edit
-                reverted = apply_or_revert_edit(entry, workspace_root, history_root, is_revert=True)
-                if not reverted:
-                    print(f"{COLOR_RED}Failed to revert edit: {entry.get('edit_id')}{COLOR_RESET}")
-                    failed += 1
-                    continue
-                    
-                # Make sure log_file is populated if missing
-                if "log_file" not in entry and "conversation_id" in entry:
-                    entry["log_file"] = f"{entry['conversation_id']}.log"
-                    
-                # Update status
-                if update_entry_status(entry, "rejected", history_root):
-                    print(f"{COLOR_GREEN}Successfully rejected edit: {entry.get('edit_id')}{COLOR_RESET}")
-                    successful += 1
-                else:
-                    print(f"{COLOR_RED}Failed to update status for edit: {entry.get('edit_id')}{COLOR_RESET}")
-                    failed += 1
+            # 2. Take a checkpoint of the current file
+            conv_id = file_entries[0].get("conversation_id", "unknown")
+            checkpoint_dir = history_root / CHECKPOINTS_DIR / conv_id
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
             
-            # Reconstruct the file state after all edits in this file are processed
+            # Create a sanitized filename for the checkpoint
+            sanitized_path = file_path_str.replace("/", "_").replace("\\", "_")
+            checkpoint_path = checkpoint_dir / f"{sanitized_path}_{generate_hex_timestamp()}.chkpt"
+            
+            # Save the current file state
+            if file_path.exists():
+                shutil.copy2(file_path, checkpoint_path)
+                current_hash = calculate_hash(str(file_path))
+            else:
+                # File doesn't exist, create empty checkpoint
+                with open(checkpoint_path, 'w') as f:
+                    pass
+                current_hash = None
+                
+            # Record the snapshot operation in the log
+            snapshot_entry = {
+                "edit_id": str(uuid.uuid4()),
+                "conversation_id": conv_id,
+                "tool_call_index": 0,  # Special index for system-generated entries
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%S.%fZ")[:21] + "Z",
+                "operation": "snapshot",
+                "file_path": file_path_str,
+                "source_path": None,
+                "tool_name": "mcpdiff",
+                "status": "done",
+                "diff_file": None,
+                "checkpoint_file": str(checkpoint_path.relative_to(history_root)),
+                "hash_before": current_hash,
+                "hash_after": current_hash
+            }
+            
+            # Get the log file path
+            log_file_path = history_root / LOGS_DIR / f"{conv_id}.log"
+            
+            # Append snapshot entry to log
+            try:
+                # Read existing entries
+                entries = read_log_file(log_file_path)
+                
+                # Add snapshot entry
+                entries.append(snapshot_entry)
+                
+                # Write back to log file
+                write_log_file(log_file_path, entries)
+                log.debug(f"Added snapshot entry {snapshot_entry['edit_id']} to log file {log_file_path}")
+            except Exception as e:
+                log.error(f"Error adding snapshot entry to log: {e}")
+                print(f"{COLOR_RED}Failed to record snapshot operation: {e}{COLOR_RESET}")
+            
+            # 3. Mark all edits as rejected
+            update_success = True
+            for entry in file_entries:
+                if not update_entry_status(entry, "rejected", history_root):
+                    print(f"{COLOR_RED}Failed to update status for edit: {entry.get('edit_id')}{COLOR_RESET}")
+                    update_success = False
+            
+            if not update_success:
+                print(f"{COLOR_RED}Failed to update all edit statuses for {file_path_str}{COLOR_RESET}")
+                continue
+                
+            # 4. Reconstruct the file
+            print(f"Reconstructing file {file_path_str}...")
             result = reconstruct_file_from_edits(file_path, all_entries, workspace_root, history_root)
+            
+            # 5. Record the revert operation
+            revert_entry = {
+                "edit_id": str(entry.get('edit_id')),
+                "conversation_id": conv_id,
+                "tool_call_index": 0,  # Special index for system-generated entries
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%S.%fZ")[:21] + "Z",
+                "operation": "revert",
+                "file_path": file_path_str,
+                "source_path": None,
+                "tool_name": "mcpdiff",
+                "status": "done" if not result["error"] else "failed",
+                "diff_file": None,
+                "checkpoint_file": None,
+                "hash_before": current_hash,
+                "hash_after": result["hash"]
+            }
+            
+            # Append revert entry to log
+            try:
+                # Read existing entries again (to include the snapshot and rejection)
+                entries = read_log_file(log_file_path)
+                
+                # Add revert entry
+                entries.append(revert_entry)
+                
+                # Write back to log file
+                write_log_file(log_file_path, entries)
+                log.debug(f"Added revert entry {revert_entry['edit_id']} to log file {log_file_path}")
+            except Exception as e:
+                log.error(f"Error adding revert entry to log: {e}")
+                print(f"{COLOR_RED}Failed to record revert operation: {e}{COLOR_RESET}")
+            
+            # Handle the result
             if result["error"]:
                 print(f"{COLOR_RED}Error reconstructing file {file_path_str}: {result['error']}{COLOR_RESET}")
+                print(f"{COLOR_RED}Restoring file from checkpoint...{COLOR_RESET}")
                 
+                # If reconstruction failed, restore from the checkpoint
+                if file_path.exists():
+                    shutil.copy2(checkpoint_path, file_path)
+                
+                # Also revert the edit statuses back to pending
+                for entry in file_entries:
+                    update_entry_status(entry, "pending", history_root)
+                
+                print(f"{COLOR_YELLOW}Reset all edit statuses to pending for {file_path_str}{COLOR_RESET}")
+                failed += len(file_entries)
+            else:
+                print(f"{COLOR_GREEN}Successfully rejected edits and reconstructed file {file_path_str}{COLOR_RESET}")
+                successful += len(file_entries)
+    
     # Print summary
     if successful > 0 or failed > 0:
         print(f"\nReject operation completed: {successful} successful, {failed} failed")
@@ -2045,30 +2231,31 @@ def prompt_for_hash_mismatch(file_path: Path, diff_content: str) -> bool:
 def reconstruct_file_from_edits(file_path: Path, entries: List[Dict[str, Any]], 
                                 workspace_root: Path, history_root: Path) -> Dict[str, Any]:
     """
-    Reconstruct a file by applying all accepted and pending edits from the nearest snapshot.
+    Reconstruct a file by applying accepted and pending edits from the nearest snapshot,
+    while accounting for rejected edits' impact on line numbers without applying them.
     Returns the final hash of the file and any error messages.
     """
-    if not file_path.exists():
-        return {
-            "hash": None,
-            "error": f"File does not exist: {file_path}"
-        }
-    
     try:
         # Get all entries for this file, sorted chronologically
-        file_path_str = str(file_path.relative_to(workspace_root))
+        file_path_str = str(file_path.relative_to(workspace_root)) if file_path.exists() else ""
         file_entries = [e for e in entries if e.get("file_path") == file_path_str]
         
         if not file_entries:
-            # No entries for this file, just return current hash
-            current_hash = calculate_hash(str(file_path))
-            return {
-                "hash": current_hash,
-                "error": None
-            }
+            if file_path.exists():
+                # No entries for this file, just return current hash
+                current_hash = calculate_hash(str(file_path))
+                return {
+                    "hash": current_hash,
+                    "error": None
+                }
+            else:
+                return {
+                    "hash": None,
+                    "error": f"File does not exist: {file_path} and no history entries found"
+                }
         
-        # Sort by timestamp (oldest first)
-        file_entries.sort(key=lambda e: e.get("timestamp", 0))
+        # Sort by timestamp and tool_call_index (oldest first)
+        file_entries.sort(key=lambda e: (e.get("timestamp", 0), e.get("tool_call_index", 0)))
         
         # The first entry should have a checkpoint if this isn't a brand new file
         first_entry = file_entries[0]
@@ -2078,27 +2265,16 @@ def reconstruct_file_from_edits(file_path: Path, entries: List[Dict[str, Any]],
                 "error": f"Missing checkpoint for first edit of {file_path_str}"
             }
         
-        # Find all accepted and pending edits
-        applicable_edits = [e for e in file_entries if e.get("status") in ["accepted", "pending"]]
+        # Create a temporary file for reconstruction
+        temp_file = tempfile.NamedTemporaryFile(delete=False)
+        temp_file.close()
+        temp_path = temp_file.name
         
-        # Calculate the current expected hash based on the entries
-        expected_hash = None
-        for entry in applicable_edits:
-            expected_hash = entry.get("hash_after")
-        
-        # If expected hash matches current, we're good
-        current_hash = calculate_hash(str(file_path))
-        if expected_hash and current_hash == expected_hash:
-            return {
-                "hash": current_hash,
-                "error": None
-            }
-        
-        # Otherwise, we need to reconstruct the file
-        # Start with the checkpoint or create a new file
+        # Initialize with checkpoint or empty file
         if first_entry.get("operation") == "create":
             # For a create operation, we'd start with an empty file
             log.debug(f"Starting reconstruction with empty file for {file_path_str}")
+            open(temp_path, 'w').close()  # Create empty file
         elif first_entry.get("checkpoint_file"):
             # Get checkpoint path and verify it exists
             checkpoint_path = history_root / first_entry["checkpoint_file"]
@@ -2108,45 +2284,99 @@ def reconstruct_file_from_edits(file_path: Path, entries: List[Dict[str, Any]],
                     "error": f"Checkpoint file not found: {checkpoint_path}"
                 }
             
-            # Copy checkpoint to a temporary file
-            temp_file = tempfile.NamedTemporaryFile(delete=False)
-            temp_file.close()
-            shutil.copy2(checkpoint_path, temp_file.name)
+            # Copy checkpoint to the temporary file
+            shutil.copy2(checkpoint_path, temp_path)
+        
+        # Process all edits in chronological order
+        for entry in file_entries:
+            operation = entry.get("operation", "").lower()
+            status = entry.get("status", "").lower()
             
-            # Apply all edits to the temporary file
-            for entry in applicable_edits:
-                if entry.get("operation") == "edit" and entry.get("diff_file"):
-                    diff_path = history_root / entry["diff_file"]
-                    if not diff_path.exists():
-                        # Try alternative paths
-                        if "conversation_id" in entry:
-                            alt_diff_path = history_root / DIFFS_DIR / entry["conversation_id"] / f"{entry['edit_id']}.diff"
-                            if alt_diff_path.exists():
-                                diff_path = alt_diff_path
-                            else:
-                                log.warning(f"Could not find diff file for entry {entry.get('edit_id')}")
-                                continue
+            # Skip operations that aren't relevant for content changes
+            if operation not in ["create", "edit", "replace", "delete", "move"]:
+                continue
+                
+            # For rejected edits, we don't apply them but account for their existence
+            if status == "rejected":
+                log.debug(f"Skipping rejected edit {entry.get('edit_id')}")
+                continue
+                
+            # Only process accepted and pending edits
+            if status not in ["accepted", "pending"]:
+                continue
+                
+            # Handle different operation types
+            if operation == "create":
+                if entry == first_entry:
+                    # Already created empty file above
+                    pass
+                else:
+                    # Should not happen - multiple creates for same file
+                    log.warning(f"Multiple create operations found for {file_path_str}")
                     
-                    # Apply the diff to the temporary file
-                    git_command = ["git", "apply", "-v", "--unsafe-paths", diff_path]
-                    result = subprocess.run(
-                        git_command,
-                        capture_output=True,
-                        text=True,
-                        cwd=os.path.dirname(temp_file.name)
-                    )
+            elif operation == "edit":
+                if not entry.get("diff_file"):
+                    log.warning(f"Missing diff file for edit operation {entry.get('edit_id')}")
+                    continue
                     
-                    if result.returncode != 0:
-                        log.warning(f"Error applying diff for {entry.get('edit_id')}: {result.stderr}")
+                diff_path = history_root / DIFFS_DIR / entry["conversation_id"] / f"{entry['edit_id']}.diff"
+                if not diff_path.exists():
+                    # Try alternative paths
+                    alt_diff_path = history_root / entry.get("diff_file", "")
+                    if alt_diff_path.exists():
+                        diff_path = alt_diff_path
+                    else:
+                        log.warning(f"Could not find diff file for entry {entry.get('edit_id')}")
+                        continue
+                
+                # Apply the diff to the temporary file
+                git_command = ["git", "apply", "--unsafe-paths", str(diff_path)]
+                result = subprocess.run(
+                    git_command,
+                    capture_output=True,
+                    text=True,
+                    cwd=os.path.dirname(temp_path),
+                    input=open(temp_path, 'r').read(),
+                    env={"GIT_WORK_TREE": os.path.dirname(temp_path)}
+                )
+                
+                if result.returncode != 0:
+                    log.warning(f"Error applying diff for {entry.get('edit_id')}: {result.stderr}")
+                    
+            elif operation == "replace":
+                # Replace entire file content
+                if entry.get("checkpoint_file"):
+                    checkpoint_path = history_root / entry["checkpoint_file"]
+                    if checkpoint_path.exists():
+                        shutil.copy2(checkpoint_path, temp_path)
+                    else:
+                        log.warning(f"Checkpoint file not found for replace operation: {checkpoint_path}")
+                        
+            elif operation == "delete":
+                # For delete operations, we would leave the temp file empty
+                # but we should never reach here as delete operations should
+                # result in the file not existing
+                open(temp_path, 'w').close()  # Truncate file
+                
+            elif operation == "move":
+                # Move operations don't change content, just file path
+                # If this is an accepted/pending move, we would just continue
+                # with the current content
+                pass
+        
+        # Ensure parent directory exists before copying the file
+        if not file_path.parent.exists():
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             
-            # Copy the reconstructed file back to the original location
-            shutil.copy2(temp_file.name, file_path)
-            
-            # Clean up
-            os.unlink(temp_file.name)
+        # Copy the reconstructed file back to the original location
+        shutil.copy2(temp_path, file_path)
         
         # Calculate and return the new hash
         reconstructed_hash = calculate_hash(str(file_path))
+        
+        # Clean up
+        os.unlink(temp_path)
+        
         return {
             "hash": reconstructed_hash,
             "error": None

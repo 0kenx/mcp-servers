@@ -519,17 +519,17 @@ def track_edit_history(func: Callable) -> Callable:
 @mcp.tool()
 def read_file(path: str, ranges: Optional[List[str]] = None) -> str:
     """
-    Read file. For maximum efficiency, read 100-1000 lines at a time. If you want to read the entire file, set range ["1-10000"].
+    Read file by line range. For maximum efficiency, read 100 to 2000 lines at a time. If you want to read the entire file, set range ["1-10000"].
 
     Args:
         path: The path to the file.
         ranges: Optional list of line ranges (1-based). Examples: ["5", "10-120", "100"].
-                If None, reads the first 500 lines.
+                If None, reads the first 3000 lines.
 
     Returns:
         The requested file content with a summary header.
     """
-    DEFAULT_MAX_LINES = 500
+    DEFAULT_MAX_LINES = 3000
     try:
         resolved_path = _resolve_path(path)
         validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
