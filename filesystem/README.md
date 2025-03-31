@@ -1,6 +1,8 @@
 # Filesystem MCP Server
 
-A Python server implementing Model Context Protocol (MCP) for secure filesystem operations.
+A Python server implementing Model Context Protocol (MCP) for secure filesystem operations, designed to enable AI assistants like Claude to interact with your local files in a controlled, secure manner.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ## Features
 
@@ -20,12 +22,38 @@ A Python server implementing Model Context Protocol (MCP) for secure filesystem 
 ## Installation
 
 Build the Docker image locally:
+### Prerequisites
+
+- Docker installed and running
+- Python 3.12+ (if installing from source)
+- Git (optional, required for git-aware features)
+
+### Option 1: Docker Installation (Recommended)
+
 
 ```bash
 docker build -t mcp/filesystem .
 ```
 
-## Usage with Claude
+### Option 2: Local Installation
+
+Clone the repository and install dependencies:
+
+```bash
+git clone https://github.com/your-repo/filesystem-mcp.git
+cd filesystem-mcp
+python -m pip install -e .
+```
+
+Install the `mcpdiff` CLI tool:
+
+```bash
+./install.sh
+```
+
+## Usage
+
+### With Claude Desktop
 
 Add this to your `claude_desktop_config.json`:
 
@@ -48,6 +76,50 @@ Add this to your `claude_desktop_config.json`:
 ```
 
 Note: All directories are mounted to `/projects` by default. Adding the `,ro` flag will make the directory read-only.
+
+### Multiple Directories
+
+You can mount multiple directories by adding additional mount arguments:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "--mount", "type=bind,src=/path/to/dir1,dst=/projects/dir1",
+        "--mount", "type=bind,src=/path/to/dir2,dst=/projects/dir2,ro",
+        "mcp/filesystem",
+        "/projects/dir1", "/projects/dir2"
+      ]
+    }
+  }
+}
+```
+
+### Using the CLI Tool
+
+The `mcpdiff` tool lets you review, accept, or reject changes made by Claude:
+
+```bash
+# Show edit history status
+mcpdiff status
+
+# Show diff for a specific edit
+mcpdiff show <edit_id_prefix>
+
+# Accept a specific edit
+mcpdiff accept -e <edit_id_prefix>
+
+# Reject all edits in a conversation
+mcpdiff reject -c <conversation_id>
+
+# Interactive review mode
+mcpdiff review
+```
 
 ## Available Tools
 
@@ -165,6 +237,24 @@ Note: All directories are mounted to `/projects` by default. Adding the `,ro` fl
 ## Security
 
 The server implements comprehensive security measures:
+## Architecture
+
+The MCP Filesystem Server is composed of three main components:
+
+1. **MCP Server** (`src/filesystem.py`): The core server implementing the MCP protocol and file operation tools
+2. **Edit Utilities** (`src/mcp_edit_utils.py`): Helper functions for path validation, diff generation, and edit history tracking
+3. **CLI Diff Tool** (`cli/mcpdiff.py`): Command-line interface for reviewing and managing edits
+
+### Edit History System
+
+All changes made by Claude are tracked in the `.mcp/edit_history` directory with:
+
+- **Logs**: JSON records of all operations with timestamps and IDs
+- **Diffs**: Detailed change information for each edit
+- **Checkpoints**: File snapshots for recovery if needed
+
+This system provides accountability and allows you to review, accept, or reject any changes Claude makes to your files.
+
 
 - Maintains a whitelist of allowed directories specified via command-line arguments
 - Performs strict path validation to prevent unauthorized access outside allowed directories 
@@ -183,3 +273,46 @@ The server implements comprehensive security measures:
 ## License
 
 [MIT](LICENSE)
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Permission denied errors**: Ensure the Docker user has appropriate permissions on the mounted directories.
+
+2. **Path validation failures**: Ensure all paths you're accessing are within the allowed directories specified in the mount arguments.
+
+3. **Dependency issues**: If installing from source, ensure you're using Python 3.12+ and have all required dependencies.
+
+### Debugging
+
+For more verbose output, you can add environment variables to enable debug logging:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e", "MCP_DEBUG=1",
+        "--mount", "type=bind,src=/path/to/your/directory,dst=/projects",
+        "mcp/filesystem",
+        "/projects"
+      ]
+    }
+  }
+}
+```
