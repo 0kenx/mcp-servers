@@ -80,8 +80,11 @@ Use test-driven development whenever possible. Look for interface documentation 
 # Tool calling
 You have MCP tools at your disposal to solve the coding task. Follow these rules regarding tool calls:
 
-ALWAYS follow the tool call schema exactly as specified and make sure to provide all necessary parameters. The conversation may reference tools that are no longer available. Only calls tools when they are necessary. Call the multi version of tools where available, such as read multiple files, list directory tree, make multiple edits, etc. If the USER's task is general or you already know the answer, just respond without calling tools. Before calling each tool, first explain to the USER why you are calling it. 
-
+ALWAYS follow the tool call schema exactly as specified and make sure to provide all necessary parameters.
+The conversation may reference tools that are no longer available. Only calls tools when they are necessary. 
+Call the multi version of tools where available, such as read multiple files, list directory tree, make multiple edits, etc. 
+If 3 tries to call an editing tool fail, stop and ask the USER for help. NEVER use `sed`, pipe, `rm` or other text processing tools to edit files.
+If the USER's task is general or you already know the answer, just respond without calling tools. Before calling each tool, first explain to the USER why you are calling it. 
 Answer the USER's request using the relevant tool(s), if they are available. Check that all the required parameters for each tool call are provided or can reasonably be inferred from context. IF there are no relevant tools or there are missing values for required parameters, ask the USER to supply these values; otherwise proceed with the tool calls. If the USER provides a specific value for a parameter (for example provided in quotes), make sure to use that value EXACTLY. DO NOT make up values for or ask about optional parameters. Carefully analyze descriptive terms in the request as they may indicate required parameter values that should be included even if not explicitly quoted.
 
 # Working directory
@@ -516,11 +519,11 @@ def track_edit_history(func: Callable) -> Callable:
 @mcp.tool()
 def read_file(path: str, ranges: Optional[List[str]] = None) -> str:
     """
-    Read specific lines or the first 500 lines of a file.
+    Read file. For maximum efficiency, read 100-1000 lines at a time. If you want to read the entire file, set range ["1-10000"].
 
     Args:
         path: The path to the file.
-        ranges: Optional list of line ranges (1-based). Examples: ["5", "10-20", "100"].
+        ranges: Optional list of line ranges (1-based). Examples: ["5", "10-120", "100"].
                 If None, reads the first 500 lines.
 
     Returns:
@@ -569,9 +572,7 @@ def read_file(path: str, ranges: Optional[List[str]] = None) -> str:
                 return f"No matching lines found in specified ranges for {path}."
 
             # Determine range description for header
-            sorted_nums = sorted(line_numbers)
-            range_desc = f"lines {', '.join(map(str, sorted_nums))}" # Simplified description
-            header = f"[TOTAL {total_lines} lines, showing {range_desc}]"
+            header = f"[TOTAL {total_lines} lines]"
 
         else:
             # Default: Read first DEFAULT_MAX_LINES
@@ -961,10 +962,12 @@ def directory_tree(
     # Check if this path is within a git repository by walking up the directory tree
     def find_git_root(start_path: str) -> Optional[str]:
         current = Path(start_path).resolve()
-        while current != current.parent:  # Stop at root
+        max_depth = 20
+        while current != current.parent and max_depth > 0:  # Stop at root
             if (current / ".git").exists():
                 return str(current)
             current = current.parent
+            max_depth -= 1
         return None
 
     # First try to find git root from the working directory
@@ -1029,8 +1032,8 @@ def directory_tree(
 
         # Get the relative path from git root to the requested directory
         rel_path = os.path.relpath(validated_path, git_root)
-        if rel_path == ".":
-            rel_path = ""
+        # if rel_path == ".":
+        #     rel_path = ""
 
         # Collect tracked files
         for rel_file in git_files:
