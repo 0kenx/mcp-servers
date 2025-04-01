@@ -720,13 +720,13 @@ def read_function_by_keyword(
 ) -> str:
     """
     Read a function definition from a file by keyword or regex pattern.
-
+    
     Args:
         path: Path to the file
         keyword: Keyword to identify the function (usually the function name), or a regex pattern if use_regex is True
         include_lines_before: Number of lines to include before the function definition
         use_regex: Whether to interpret the keyword as a regular expression (default: False)
-
+    
     Returns:
         The function definition with context, or a message if not found
     """
@@ -849,8 +849,7 @@ def read_function_by_keyword(
         return "\n".join(result)
 
     # If we get here, none of the matches were valid function definitions
-    return f"Found matches for {'pattern' if use_regex else f\"keyword '{keyword}'\"} but none appeared to be valid function definitions."
-
+    return f"Found matches for {'pattern' if use_regex else f"keyword '{keyword}'"} but none appeared to be valid function definitions."
 
 @mcp.tool()
 def create_directory(path: str) -> str:
