@@ -8,13 +8,13 @@ import shutil
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 # Import from local utility and history modules
 import mcpdiff_utils as utils
 import mcpdiff_history as history
 from mcpdiff_utils import (
-    log, HistoryError, ExternalModificationError, TimeoutError, AmbiguousIDError,
+    log, HistoryError, ExternalModificationError, AmbiguousIDError,
     COLOR_RESET, COLOR_RED, COLOR_GREEN, COLOR_YELLOW, COLOR_CYAN, COLOR_BLUE,
     LOCK_TIMEOUT, HISTORY_DIR_NAME, CHECKPOINTS_DIR
 )

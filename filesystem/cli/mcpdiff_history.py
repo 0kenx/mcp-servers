@@ -343,7 +343,7 @@ def format_entry_summary(entry: Dict[str, Any]) -> str:
     file_path = entry.get("file_path", "N/A")
     timestamp_val = entry.get("timestamp", 0)
 
-    time_str = utils.format_timestamp_relative(timestamp_val)
+    time_str = utils.format_timestamp_absolute(timestamp_val, True)
 
     # Status Color
     status_color = utils.COLOR_YELLOW if status == "pending" else \

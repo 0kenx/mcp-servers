@@ -342,39 +342,44 @@ def write_log_file(log_file_path: Path, entries: List[Dict[str, Any]], lock_time
 
 
 def parse_timestamp(timestamp: Union[float, str]) -> float:
-    """Parse various timestamp formats into a float epoch time (UTC)."""
+    """Parse various timestamp formats into a float epoch time."""
     if isinstance(timestamp, (int, float)):
         return float(timestamp)
     if isinstance(timestamp, str):
+        tsre = re.compile("^(?P<yy>\d{4})[ -]?(?P<mm>\d{2})[ -]?(?P<dd>\d{2})[ T]?(?P<h>\d{2})[ :]?(?P<m>\d{2})[ :]?(?P<s>\d{2})\.?(?P<d>\d{1,9})?[+-]?((?P<tsh>\d{2})\:?(?P<tsm>\d{2}))?")
+        m = re.match(tsre, timestamp)
+        if m is not None:
+            td = f".{m.group('d')}" if m.group('d') is not None else ".00"
+            tz = f"+{m.group('tsh')}" if m.group('tsh') is not None else "+00"
+            tz += f":{m.group('tsm')}" if m.group('tsm') is not None else ":00"
+            tstd = f"{m.group('yy')}-{m.group('mm')}-{m.group('dd')}T{m.group('h')}:{m.group('m')}:{m.group('s')}{td}{tz}"
+            ts = datetime.strptime(tstd, "%Y-%m-%dT%H:%M:%S.%f%z")
+            epoch_time = ts.timestamp()
+            return epoch_time
+        else:
+            try:
+                return float(timestamp)
+            except ValueError:
+                return 0.0 
+    # Handle the case when timestamp is other data type
+    else:
         try:
-            # Handle ISO 8601 format like "2025-03-31T154939.993Z"
-            if timestamp.endswith("Z") and "T" in timestamp:
-                 # Handle potential missing microseconds
-                if '.' in timestamp:
-                    dt_format = "%Y-%m-%dT%H:%M:%S.%fZ"
-                else:
-                     # Add microseconds part if missing before parsing
-                    timestamp = timestamp[:-1] + ".000Z"
-                    dt_format = "%Y-%m-%dT%H:%M:%S.%fZ"
+            return float(timestamp)
+        except:
+            return 0.0
 
-                # Need to handle up to 6 microsecond digits, but strptime only handles 6.
-                # Truncate if more than 6 (though original format uses 3).
-                if '.' in timestamp:
-                    parts = timestamp.split('.')
-                    ms_part = parts[1][:-1] # Remove Z
-                    if len(ms_part) > 6:
-                        ms_part = ms_part[:6]
-                        timestamp = parts[0] + '.' + ms_part + 'Z'
-
-                dt = datetime.strptime(timestamp, dt_format)
-                return dt.replace(tzinfo=timezone.utc).timestamp()
-            else:
-                 # Assume it's a float stored as a string
-                 return float(timestamp)
-        except (ValueError, TypeError) as e:
-            log.warning(f"Could not parse timestamp string '{timestamp}': {e}")
-            return 0.0 # Return a default value for sorting/comparison
-    return 0.0 # Default for unexpected types
+def format_timestamp_absolute(timestamp_val: Union[float, str], display_friendly: bool = False) -> str:
+    """Format a timestamp as absolute time (e.g., '2025-03-31 15:49:39')."""
+    try:
+        epoch_time = parse_timestamp(timestamp_val)
+        if epoch_time == 0.0: return "unknown time"
+        if display_friendly:
+            return datetime.fromtimestamp(epoch_time, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            return datetime.fromtimestamp(epoch_time, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (ValueError, TypeError, OSError) as e:
+        log.debug(f"Error formatting absolute timestamp for '{timestamp_val}': {e}")
+        return "unknown time"
 
 
 def format_timestamp_relative(timestamp_val: Union[float, str]) -> str:
