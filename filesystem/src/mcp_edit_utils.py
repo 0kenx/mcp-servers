@@ -496,7 +496,7 @@ def generate_diff(
     # Properly normalize input lines
     before_lines = ensure_nl(content_before_lines)
     after_lines = ensure_nl(content_after_lines)
-    
+
     # difflib expects lines WITH newlines
     diff_iter = difflib.unified_diff(
         before_lines,

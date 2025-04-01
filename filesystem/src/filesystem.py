@@ -177,7 +177,9 @@ def _get_or_create_conversation_id(ctx: Optional[Context] = None) -> str:
             or current_time - _last_tool_call_time > _conversation_timeout
         ):
             # Use hex representation of timestamp instead of integer
-            _current_conversation_id = format(int(current_time), 'x')  # Convert to hex without '0x' prefix
+            _current_conversation_id = format(
+                int(current_time), "x"
+            )  # Convert to hex without '0x' prefix
             _last_tool_call_time = current_time
             log.info(
                 f"Created new hex timestamp-based conversation: {_current_conversation_id}"
@@ -220,7 +222,12 @@ def _resolve_path(path: str) -> str:
         ):
             # Replace leading '.' with working directory or prepend working directory to relative path
             # Special case: handle ".something" as "./.something" not "./something"
-            if path.startswith(".") and len(path) > 1 and path[1] != '/' and path[1] != '\\':
+            if (
+                path.startswith(".")
+                and len(path) > 1
+                and path[1] != "/"
+                and path[1] != "\\"
+            ):
                 # This is a path like ".tests" or ".config" - treat as "./.tests" or "./.config"
                 return os.path.join(WORKING_DIRECTORY, "." + path[1:])
             else:
@@ -557,8 +564,7 @@ def read_file(path: str, ranges: Optional[List[str]] = None) -> str:
                             return f"Invalid line number '{r}': must be >= 1."
                         line_numbers.add(line_num)
             except ValueError:
-                 return f"Invalid range format in '{r}'. Use numbers or 'start-end'."
-
+                return f"Invalid range format in '{r}'. Use numbers or 'start-end'."
 
             if not line_numbers:
                 return f"No valid line numbers specified in ranges for {path}."
@@ -577,7 +583,9 @@ def read_file(path: str, ranges: Optional[List[str]] = None) -> str:
         else:
             # Default: Read first DEFAULT_MAX_LINES
             end_line = min(total_lines, DEFAULT_MAX_LINES)
-            selected_lines_data = list(enumerate(lines[:end_line], 1)) # Use enumerate for 1-based index
+            selected_lines_data = list(
+                enumerate(lines[:end_line], 1)
+            )  # Use enumerate for 1-based index
             header = f"[TOTAL {total_lines} lines, showing lines 1-{end_line}]"
 
         # Format the output with line numbers
@@ -601,10 +609,12 @@ def read_multiple_files(paths: List[str]) -> str:
             # Call the refactored read_file with default settings (first 500 lines)
             content = read_file(file_path)
             results.append(f"--- {file_path} ---\n{content}\n")
-        except Exception as e: # Catch potential errors from the called read_file
+        except Exception as e:  # Catch potential errors from the called read_file
             log.warning(f"read_multiple_files failed for sub-path {file_path}: {e}")
             # Use the error message returned by read_file if possible
-            error_msg = str(e) if isinstance(e, str) else f"Error processing file: {str(e)}"
+            error_msg = (
+                str(e) if isinstance(e, str) else f"Error processing file: {str(e)}"
+            )
             results.append(f"--- {file_path} ---\n{error_msg}\n")
     return "\n".join(results)
 
@@ -1443,7 +1453,9 @@ def write_file(ctx: Context, path: str, content: str) -> str:
                     content_to_write = content
         else:
             # Handle unexpected content types (e.g., list, int)
-            log.warning(f"Unexpected content type {type(content)} for write_file, attempting str conversion.")
+            log.warning(
+                f"Unexpected content type {type(content)} for write_file, attempting str conversion."
+            )
             content_to_write = str(content)
 
         with open(validated_path, "w", encoding="utf-8") as f:
@@ -1537,7 +1549,9 @@ def edit_file_diff(
                 )
                 continue
             replace_count = -1 if replace_all else 1
-            new_content = new_content.replace(old_text, content_to_replace_with, replace_count)
+            new_content = new_content.replace(
+                old_text, content_to_replace_with, replace_count
+            )
             operations["replace"] += count if replace_all else (1 if count > 0 else 0)
 
         # --- Process Insertions ---
