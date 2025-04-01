@@ -1455,7 +1455,6 @@ def write_file(ctx: Context, path: str, content: str) -> str:
         # Ensure parent directory exists
         Path(validated_path).parent.mkdir(parents=True, exist_ok=True)
 
-        log.warning(f"Write file {type(content)}: {content}")
         # Handle content that might be a dictionary string
         try:
             # Try to parse the string as JSON
@@ -1472,7 +1471,6 @@ def write_file(ctx: Context, path: str, content: str) -> str:
                 # If all attempts fail, write the original string content
                 content_to_write = content
         
-        log.warning(f"Write file 2{type(content_to_write)}: {content_to_write}")
         with open(validated_path, "w", encoding="utf-8") as f:
             f.write(content_to_write)
         return f"Successfully wrote to {path}"
