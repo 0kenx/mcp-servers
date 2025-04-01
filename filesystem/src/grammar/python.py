@@ -4,7 +4,7 @@ Python language parser for extracting structured information from Python code.
 
 import re
 from typing import List, Dict, Optional, Tuple, Set
-from .base import BaseParser, CodeElement, ElementType
+from base import BaseParser, CodeElement, ElementType
 
 
 class PythonParser(BaseParser):

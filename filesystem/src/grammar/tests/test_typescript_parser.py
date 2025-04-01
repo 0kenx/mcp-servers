@@ -3,8 +3,8 @@ Tests for the TypeScript language parser.
 """
 
 import unittest
-from src.grammar.typescript import TypeScriptParser
-from src.grammar.base import ElementType
+from typescript import TypeScriptParser
+from base import ElementType
 
 
 class TestTypeScriptParser(unittest.TestCase):

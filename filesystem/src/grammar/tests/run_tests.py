@@ -47,7 +47,7 @@ def run_specific_test(test_name):
     loader = unittest.TestLoader()
     
     # Load the specified test module
-    module_name = f"src.grammar.tests.{test_name}"
+    module_name = f"tests.{test_name}"
     try:
         suite = loader.loadTestsFromName(module_name)
     except ImportError:

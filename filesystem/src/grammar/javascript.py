@@ -4,7 +4,7 @@ JavaScript language parser for extracting structured information from JavaScript
 
 import re
 from typing import List, Dict, Optional, Tuple, Set, Any
-from .base import BaseParser, CodeElement, ElementType
+from base import BaseParser, CodeElement, ElementType
 
 
 class JavaScriptParser(BaseParser):

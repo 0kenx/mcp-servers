@@ -3,8 +3,8 @@ Tests for the Python language parser.
 """
 
 import unittest
-from src.grammar.python import PythonParser
-from src.grammar.base import ElementType
+from python import PythonParser
+from base import ElementType
 
 
 class TestPythonParser(unittest.TestCase):

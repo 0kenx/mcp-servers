@@ -3,8 +3,8 @@ Tests for the C/C++ language parser.
 """
 
 import unittest
-from src.grammar.c_cpp import CCppParser
-from src.grammar.base import ElementType
+from c_cpp import CCppParser
+from base import ElementType
 
 
 class TestCCppParser(unittest.TestCase):
