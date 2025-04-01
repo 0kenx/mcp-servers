@@ -509,7 +509,7 @@ def track_edit_history(func: Callable) -> Callable:
 
             # Modify the result to include the diff if it's small enough
             # (only for operations that modify files)
-            if operation in ["edit", "replace", "create"] and diff_content:
+            if operation in ["edit", "replace", "create", "delete"] and diff_content:
                 # Count the number of lines in the diff
                 diff_lines = diff_content.count('\n')
                 if diff_lines < 200:  # Check if the diff is less than 200 lines
@@ -1455,31 +1455,24 @@ def write_file(ctx: Context, path: str, content: str) -> str:
         # Ensure parent directory exists
         Path(validated_path).parent.mkdir(parents=True, exist_ok=True)
 
-        # Handle JSON content - check if content is already a dict
-        if isinstance(content, dict):
-            content_to_write = json.dumps(content, indent=2)
-        elif isinstance(content, str):
+        log.warning(f"Write file {type(content)}: {content}")
+        # Handle content that might be a dictionary string
+        try:
+            # Try to parse the string as JSON
+            json_obj = json.loads(content)
+            content_to_write = json.dumps(json_obj, indent=2)
+        except json.JSONDecodeError:
+            # If parsing fails, try cleaning up the string
+            cleaned_content = content.strip().strip("\"'")
+            cleaned_content = cleaned_content.replace('\\"', '"')
             try:
-                # Try to parse the string as JSON
-                json_obj = json.loads(content)
+                json_obj = json.loads(cleaned_content)
                 content_to_write = json.dumps(json_obj, indent=2)
             except json.JSONDecodeError:
-                # If parsing fails, try cleaning up the string
-                cleaned_content = content.strip().strip("\"'")
-                cleaned_content = cleaned_content.replace('\\"', '"')
-                try:
-                    json_obj = json.loads(cleaned_content)
-                    content_to_write = json.dumps(json_obj, indent=2)
-                except json.JSONDecodeError:
-                    # If all attempts fail, write the original string content
-                    content_to_write = content
-        else:
-            # Handle unexpected content types (e.g., list, int)
-            log.warning(
-                f"Unexpected content type {type(content)} for write_file, attempting str conversion."
-            )
-            content_to_write = str(content)
-
+                # If all attempts fail, write the original string content
+                content_to_write = content
+        
+        log.warning(f"Write file 2{type(content_to_write)}: {content_to_write}")
         with open(validated_path, "w", encoding="utf-8") as f:
             f.write(content_to_write)
         return f"Successfully wrote to {path}"
@@ -1703,8 +1696,11 @@ def delete_file(ctx: Context, path: str) -> str:
         # Existence/type checks happen within decorator now before op
         if os.path.isdir(validated_path):
             return f"Error: Path {path} is a directory."
+        if not os.path.exists(validated_path):
+            return f"Error: File {path} does not exist."
         # Decorator ensures file exists before calling this core logic if op is delete
         os.remove(validated_path)
+
         # Verify the file was actually deleted
         if os.path.exists(validated_path):
             return f"Error: Failed to delete file {path}. File still exists."
