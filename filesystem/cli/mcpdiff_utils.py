@@ -346,13 +346,13 @@ def parse_timestamp(timestamp: Union[float, str]) -> float:
     if isinstance(timestamp, (int, float)):
         return float(timestamp)
     if isinstance(timestamp, str):
-        tsre = re.compile(r"^(?P<yy>\d{4})[ -]?(?P<mm>\d{2})[ -]?(?P<dd>\d{2})[ T]?(?P<h>\d{2})[ :]?(?P<m>\d{2})[ :]?(?P<s>\d{2})\.?(?P<d>\d{1,9})?[+-]?((?P<tsh>\d{2})\:?(?P<tsm>\d{2}))?")
+        tsre = re.compile(r"^(?P<yy>\d{4})[ -]?(?P<mm>\d{2})[ -]?(?P<dd>\d{2})[ T]?(?P<h>\d{2})[ :]?(?P<m>\d{2})[ :]?(?P<s>\d{2})\.?(?P<f>\d{1,9})?[+-]?((?P<tsh>\d{2})\:?(?P<tsm>\d{2}))?")
         m = re.match(tsre, timestamp)
         if m is not None:
-            td = f".{m.group('d')}" if m.group('d') is not None else ".00"
+            tf = f".{m.group('f')}" if m.group('f') is not None else ".00"
             tz = f"+{m.group('tsh')}" if m.group('tsh') is not None else "+00"
             tz += f":{m.group('tsm')}" if m.group('tsm') is not None else ":00"
-            tstd = f"{m.group('yy')}-{m.group('mm')}-{m.group('dd')}T{m.group('h')}:{m.group('m')}:{m.group('s')}{td}{tz}"
+            tstd = f"{m.group('yy')}-{m.group('mm')}-{m.group('dd')}T{m.group('h')}:{m.group('m')}:{m.group('s')}{tf}{tz}"
             ts = datetime.strptime(tstd, "%Y-%m-%dT%H:%M:%S.%f%z")
             epoch_time = ts.timestamp()
             return epoch_time
@@ -364,22 +364,23 @@ def parse_timestamp(timestamp: Union[float, str]) -> float:
     # Handle the case when timestamp is other data type
     else:
         try:
-            return float(timestamp)
+            return float(timestamp) # If time is epoch float string
         except:
             return 0.0
 
-def format_timestamp_absolute(timestamp_val: Union[float, str], display_friendly: bool = False) -> str:
+def format_timestamp_absolute(timestamp_val: Union[float, str], display_friendly: bool = False, tolerate_error: bool = False) -> str:
     """Format a timestamp as absolute time (e.g., '2025-03-31 15:49:39')."""
     try:
         epoch_time = parse_timestamp(timestamp_val)
-        if epoch_time == 0.0: return "unknown time"
+        if epoch_time == 0.0 and not tolerate_error: return "unknown time"
         if display_friendly:
             return datetime.fromtimestamp(epoch_time, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         else:
             return datetime.fromtimestamp(epoch_time, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     except (ValueError, TypeError, OSError) as e:
         log.debug(f"Error formatting absolute timestamp for '{timestamp_val}': {e}")
-        return "unknown time"
+        if not tolerate_error: return "unknown time"
+        return "1970-01-01 00:00:00" if display_friendly else "1970-01-01T00:00:00Z"
 
 
 def format_timestamp_relative(timestamp_val: Union[float, str]) -> str:
