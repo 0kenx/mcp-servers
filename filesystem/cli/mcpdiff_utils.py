@@ -346,7 +346,7 @@ def parse_timestamp(timestamp: Union[float, str]) -> float:
     if isinstance(timestamp, (int, float)):
         return float(timestamp)
     if isinstance(timestamp, str):
-        tsre = re.compile("^(?P<yy>\d{4})[ -]?(?P<mm>\d{2})[ -]?(?P<dd>\d{2})[ T]?(?P<h>\d{2})[ :]?(?P<m>\d{2})[ :]?(?P<s>\d{2})\.?(?P<d>\d{1,9})?[+-]?((?P<tsh>\d{2})\:?(?P<tsm>\d{2}))?")
+        tsre = re.compile(r"^(?P<yy>\d{4})[ -]?(?P<mm>\d{2})[ -]?(?P<dd>\d{2})[ T]?(?P<h>\d{2})[ :]?(?P<m>\d{2})[ :]?(?P<s>\d{2})\.?(?P<d>\d{1,9})?[+-]?((?P<tsh>\d{2})\:?(?P<tsm>\d{2}))?")
         m = re.match(tsre, timestamp)
         if m is not None:
             td = f".{m.group('d')}" if m.group('d') is not None else ".00"
