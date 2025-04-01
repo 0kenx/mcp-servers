@@ -347,8 +347,8 @@ def format_entry_summary(entry: Dict[str, Any]) -> str:
 
     # Status Color
     status_color = utils.COLOR_YELLOW if status == "pending" else \
-                   utils.COLOR_GREEN if status == "accepted" else \
-                   utils.COLOR_RED if status == "rejected" else \
+                   utils.COLOR_GREEN if status == "accepted" or status == "done" else \
+                   utils.COLOR_RED if status == "rejected" or status == "failed" else \
                    utils.COLOR_RESET # Default color
 
     # Operation Color & Detail
@@ -357,6 +357,7 @@ def format_entry_summary(entry: Dict[str, Any]) -> str:
     if op == "edit": op_color = utils.COLOR_BLUE
     elif op == "create": op_color = utils.COLOR_GREEN
     elif op == "replace": op_color = utils.COLOR_YELLOW
+    elif op == "snapshot": op_color = utils.COLOR_MAGENTA
     elif op == "delete": op_color = utils.COLOR_RED
     elif op in ["move", "rename"]:
         op_color = utils.COLOR_CYAN

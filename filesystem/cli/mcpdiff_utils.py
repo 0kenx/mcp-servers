@@ -37,6 +37,7 @@ COLOR_GREEN = "\033[92m"
 COLOR_YELLOW = "\033[93m"
 COLOR_BLUE = "\033[94m"
 COLOR_CYAN = "\033[96m"
+COLOR_MAGENTA = "\033[95m"
 
 # --- Custom Exceptions ---
 class HistoryError(Exception):
