@@ -1,0 +1,2 @@
+This is a test file created to test the filesystem tools.
+This line was added with the edit_file_diff tool.

@@ -768,34 +768,86 @@ def read_function_by_keyword(
         )
 
     for match_idx in matches:
-        # Check if this is a function definition by looking for braces
         line_idx = match_idx
-        brace_idx = -1
-
-        # Look for opening brace on the same line or the next few lines
-        for i in range(line_idx, min(line_idx + 3, len(lines))):
-            if "{" in lines[i]:
-                brace_idx = i
-                break
-
-        if brace_idx == -1:
-            continue  # Not a function definition with braces, try next match
-
-        # Track brace nesting to find the end of the function
-        brace_count = 0
-        end_idx = -1
-
-        for i in range(brace_idx, len(lines)):
-            line = lines[i]
-            brace_count += line.count("{")
-            brace_count -= line.count("}")
-
-            if brace_count == 0:
-                end_idx = i
-                break
-
-        if end_idx == -1:
-            return f"Found function at line {match_idx + 1}, but could not locate matching closing brace."
+        # Get file extension to determine language type
+        file_ext = os.path.splitext(validated_path)[1].lower()
+        
+        # Handle Python-style functions (by indentation)
+        if file_ext in ('.py', '.pyx', '.pyw'):
+            # Check if this line could be a function definition
+            line = lines[line_idx].strip()
+            if not (line.startswith('def ') or 'def ' in line):
+                continue  # Not a function definition
+            
+            # Find where function body starts (line with colon)
+            func_start = line_idx
+            colon_found = ':' in line
+            i = line_idx
+            
+            # Look for colon if not on the same line
+            while not colon_found and i < min(line_idx + 5, len(lines) - 1):
+                i += 1
+                if ':' in lines[i]:
+                    colon_found = True
+            
+            if not colon_found:
+                continue  # Not a proper function definition
+            
+            # Now find the end of the function by tracking indentation
+            base_indent = None
+            end_idx = len(lines) - 1  # Default to end of file
+            
+            for i in range(func_start + 1, len(lines)):
+                # Skip empty lines or comments at the beginning
+                line_content = lines[i].strip()
+                if not line_content or line_content.startswith('#'):
+                    continue
+                    
+                # Get indentation of first non-empty line after function definition
+                if base_indent is None:
+                    base_indent = len(lines[i]) - len(lines[i].lstrip())
+                    continue
+                
+                # Check if we're back to base indentation level or less
+                current_indent = len(lines[i]) - len(lines[i].lstrip())
+                if current_indent <= base_indent and line_content and not line_content.startswith('#'):
+                    # We found a line with same or less indentation - this is the end of the function
+                    end_idx = i - 1
+                    break
+        
+        # Handle C-style functions (with braces)
+        elif file_ext in ('.c', '.cpp', '.h', '.hpp', '.java', '.js', '.ts', '.php', '.cs'):
+            brace_idx = -1
+            
+            # Look for opening brace on the same line or the next few lines
+            for i in range(line_idx, min(line_idx + 3, len(lines))):
+                if "{" in lines[i]:
+                    brace_idx = i
+                    break
+            
+            if brace_idx == -1:
+                continue  # Not a function definition with braces
+            
+            # Track brace nesting to find the end of the function
+            brace_count = 0
+            end_idx = -1
+            
+            for i in range(brace_idx, len(lines)):
+                line = lines[i]
+                brace_count += line.count("{")
+                brace_count -= line.count("}")
+                
+                if brace_count == 0:
+                    end_idx = i
+                    break
+            
+            if end_idx == -1:
+                return f"Found function at line {match_idx + 1}, but could not locate matching closing brace."
+        
+        # For other languages, just try to capture a reasonable chunk of code
+        else:
+            # Default behavior - capture 20 lines after match
+            end_idx = min(line_idx + 20, len(lines) - 1)
 
         # Include the requested number of lines before the function
         start_idx = max(0, match_idx - include_lines_before)
@@ -809,7 +861,8 @@ def read_function_by_keyword(
 
         return "\n".join(result)
 
-    return f"Found {'pattern matches' if use_regex else f"keyword '{keyword}'"} but no valid function definition with braces was identified."
+    # If we get here, none of the matches were valid function definitions
+    return f"Found matches for {'pattern' if use_regex else f\"keyword '{keyword}'\"} but none appeared to be valid function definitions."
 
 
 @mcp.tool()
@@ -873,6 +926,7 @@ def full_directory_tree(
     show_permissions: bool = False,
     show_owner: bool = False,
     show_size: bool = False,
+    show_files_ignored_by_git: bool = False,  # Added for compatibility with directory_tree
 ) -> str:
     """
     Get a recursive listing of files and directories with optional metadata.
@@ -910,10 +964,16 @@ def full_directory_tree(
             metadata = get_metadata(
                 str(current_path), False, False, show_permissions, show_owner, show_size
             )
+            # For the root directory, show the full path that was requested
+            if current_path == Path(validated_start_path):
+                display_name = path
+            else:
+                display_name = str(current_path)
+              
             output_lines.append(
-                f"{current_path.name}/ [{metadata}]"
+                f"{display_name}/ [{metadata}]"
                 if metadata
-                else f"{current_path.name}/"
+                else f"{display_name}/"
             )
 
             try:
@@ -1011,7 +1071,7 @@ def directory_tree(
 
     if not git_root or show_files_ignored_by_git:
         return full_directory_tree(
-            path, show_line_count, show_permissions, show_owner, show_size
+            path, show_line_count, show_permissions, show_owner, show_size, show_files_ignored_by_git
         )
 
     # Find git executable
@@ -1697,12 +1757,15 @@ def delete_file(ctx: Context, path: str) -> str:
         if not os.path.exists(validated_path):
             return f"Error: File {path} does not exist."
         # Decorator ensures file exists before calling this core logic if op is delete
-        os.remove(validated_path)
-
-        # Verify the file was actually deleted
-        if os.path.exists(validated_path):
-            return f"Error: Failed to delete file {path}. File still exists."
-        return f"Successfully deleted {path}"
+        try:
+            os.remove(validated_path)
+            return f"Successfully deleted {path}"
+        except PermissionError:
+            # If we can't delete due to permissions, report this explicitly
+            return f"Error: Permission denied when trying to delete {path}"
+        except Exception as specific_error:
+            # Be more explicit about other errors
+            return f"Error deleting {path}: {specific_error}"
     except (ValueError, FileNotFoundError, Exception) as e:
         return f"Error deleting file: {str(e)}"
 
