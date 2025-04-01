@@ -10,8 +10,7 @@ from .python import PythonParser
 from .c_cpp import CCppParser
 from .javascript import JavaScriptParser
 from .typescript import TypeScriptParser
-from .rust import RustParser
-from .solidity import SolidityParser
+
 from .base import CodeElement, ElementType, BaseParser
 
 # Map of file extensions to appropriate parser classes
@@ -35,10 +34,7 @@ EXTENSION_TO_PARSER = {
     # TypeScript 
     '.ts': TypeScriptParser,
     '.tsx': TypeScriptParser,
-    # Rust
-    '.rs': RustParser,
-    # Solidity
-    '.sol': SolidityParser,
+
 }
 
 def get_parser_for_file(file_path):
