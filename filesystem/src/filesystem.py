@@ -507,6 +507,19 @@ def track_edit_history(func: Callable) -> Callable:
             current_log_entries.append(log_entry)
             write_log_file(log_file_path, current_log_entries)
 
+            # Modify the result to include the diff if it's small enough
+            # (only for operations that modify files)
+            if operation in ["edit", "replace", "create"] and diff_content:
+                # Count the number of lines in the diff
+                diff_lines = diff_content.count('\n')
+                if diff_lines < 200:  # Check if the diff is less than 200 lines
+                    # Add the diff to the result
+                    modified_result = result
+                    if not modified_result.endswith('\n'):
+                        modified_result += '\n'
+                    modified_result += f"\nDiff ({diff_lines} lines):\n{diff_content}"
+                    return modified_result
+
             return result
 
         finally:
@@ -801,10 +814,17 @@ def read_function_by_keyword(
 
 @mcp.tool()
 def create_directory(path: str) -> str:
-    """Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation. If the directory already exists, this operation will succeed silently."""
+    """Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation. If the directory already exists, this operation will return its listing."""
     try:
         resolved_path = _resolve_path(path)
         validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
+        
+        # Check if directory already exists
+        if os.path.isdir(validated_path):
+            # Return the directory listing
+            return list_directory(path)
+            
+        # Create the directory
         os.makedirs(validated_path, exist_ok=True)
         return f"Successfully created directory {path}"
     except (ValueError, Exception) as e:
@@ -1658,7 +1678,16 @@ def move_file(ctx: Context, source: str, destination: str) -> str:
         if os.path.exists(validated_dest_path):
             return f"Error: Destination path {destination} already exists."
         Path(validated_dest_path).parent.mkdir(parents=True, exist_ok=True)
-        os.rename(validated_source_path, validated_dest_path)
+        
+        # Using shutil.move instead of os.rename to better handle cross-device moves
+        shutil.move(validated_source_path, validated_dest_path)
+        
+        # Verify the operation succeeded
+        if not os.path.exists(validated_dest_path):
+            return f"Error: Move operation failed. Destination file {destination} does not exist."
+        if os.path.exists(validated_source_path):
+            return f"Error: Move operation incomplete. Source file {source} still exists."
+            
         return f"Successfully moved {source} to {destination}"
     except (ValueError, Exception) as e:
         return f"Error moving file: {str(e)}"
@@ -1676,6 +1705,9 @@ def delete_file(ctx: Context, path: str) -> str:
             return f"Error: Path {path} is a directory."
         # Decorator ensures file exists before calling this core logic if op is delete
         os.remove(validated_path)
+        # Verify the file was actually deleted
+        if os.path.exists(validated_path):
+            return f"Error: Failed to delete file {path}. File still exists."
         return f"Successfully deleted {path}"
     except (ValueError, FileNotFoundError, Exception) as e:
         return f"Error deleting file: {str(e)}"
