@@ -1016,6 +1016,8 @@ def directory_tree(
     try:
         output_lines = []
 
+        os.chdir(validated_path)
+
         # git config --global --add safe.directory /path
         subprocess.run(
             [
