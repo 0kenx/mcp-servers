@@ -5,7 +5,7 @@ Utility functions and classes for parser tests.
 import os
 import tempfile
 from typing import List, Dict, Any, Type, Optional
-from src.grammar.base import BaseParser, CodeElement, ElementType
+from base import BaseParser, CodeElement, ElementType
 
 
 def create_temp_file(content: str) -> str:
