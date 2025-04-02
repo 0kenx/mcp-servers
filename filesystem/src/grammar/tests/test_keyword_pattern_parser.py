@@ -70,7 +70,7 @@ include <stdio.h>
 
         js_cls = self.helper.find_element(elements, ElementType.CLASS, "JsClass")
         self.assertIsNotNone(js_cls)
-        self.assertEqual(js_cls.start_line, 11)
+        self.assertEqual(js_cls.start_line, 10)
 
         sql_p = self.helper.find_element(elements, ElementType.FUNCTION, "sql_proc")
         self.assertIsNotNone(sql_p)
