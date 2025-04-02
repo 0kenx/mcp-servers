@@ -1,8 +1,24 @@
 # MCP Exec Server
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) ![Version](https://img.shields.io/badge/version-0.1.0-green) ![Docker](https://img.shields.io/badge/Docker-Ready-blue)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) ![Version](https://img.shields.io/badge/version-0.1.0-green) ![Python](https://img.shields.io/badge/Python-3.12+-blue) ![Docker](https://img.shields.io/badge/Docker-Ready-blue)
 
-A powerful MCP server enabling AI assistants to execute commands and run code across multiple programming languages in secure, isolated environments. This server provides a complete development toolkit with pre-configured language environments and intelligent package management.
+A powerful MCP server enabling AI assistants like Claude to execute commands and run code across multiple programming languages in secure, isolated environments. This server provides a complete development toolkit with pre-configured language environments, intelligent package management, and comprehensive process control.
+
+## Table of Contents
+- [Overview](#overview)
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [MCP Tools](#mcp-tools)
+- [Usage Examples](#usage-examples)
+- [When to Use Each Tool](#when-to-use-each-tool)
+- [Security](#security)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Overview
+
+The MCP Exec Server serves as a powerful bridge between AI assistants and command-line environments. It enables capabilities ranging from simple command execution to running complex scripts in multiple programming languages. By providing a secure, containerized environment with pre-installed development tools, this server allows AI assistants to help with coding, data analysis, and system management tasks. It's designed to be easily integrated with Claude and other AI assistants through the Model Context Protocol (MCP).
 
 ## Features
 
@@ -35,6 +51,88 @@ A powerful MCP server enabling AI assistants to execute commands and run code ac
 | Tool | Description | Parameters |
 |------|-------------|------------|
 | `execute_command` | Run shell commands with timeout and output capture | • `command`: Command to execute<br>• `timeout`: Maximum time in seconds (default: 30)<br>• `output_type`: Output streams to return ("stdout", "stderr", "both")<br>• `shell`: Whether to use shell (default: True) |
+| `execute_script` | Run code in various languages | • `script`: Code content to execute<br>• `script_type`: Language ("bash", "python", "js", "rust", "go")<br>• `timeout`: Maximum time in seconds (default: 30)<br>• `output_type`: Output streams to return |
+| `read_output` | Read output from a running process | • `session_id`: ID returned by execute_command<br>• `output_type`: Output streams to read |
+| `force_terminate` | Kill a running process | • `session_id`: ID returned by execute_command |
+| `list_sessions` | Show all active command sessions | *None* |
+| `list_processes` | Show all running processes | *None* |
+| `kill_process` | Terminate a process by PID | • `pid`: Process ID to kill |
+
+### Package Management
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `list_installed_commands` | List all available tools and commands | *None* |
+| `install_command` | Install a specific package | • `command`: Package name to install<br>• `package_manager`: Optional override (apt, pip, npm, etc.) |
+| `configure_packages` | Install multiple packages across package managers | • `config`: Dictionary mapping managers to package lists<br>Example: `{"apt": ["git", "curl"], "pip": ["requests"]}` |
+| `block_command` | Block specific commands from execution | • `command`: Command to block |
+| `unblock_command` | Allow previously blocked commands | • `command`: Command to unblock |
+| `list_blocked_commands` | Show all blocked commands | *None* |
+
+## Requirements
+
+### Software Requirements
+- **Python**: Version 3.12 or newer
+- **Docker**: For containerized deployment (recommended)
+
+### Python Dependencies
+- **System Interaction**: psutil, subprocess
+- **API Framework**: fastapi, uvicorn
+- **MCP Protocol**: mcp[cli]
+
+## Installation
+
+### Option 1: Local Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/0kenx/mcp-servers.git
+cd mcp-servers/exec
+
+# Build the Docker image
+docker build -t mcp/exec .
+```
+
+### Configuration with Claude
+
+Add the MCP Exec Server to your Claude configuration file:
+
+```json
+{
+  "mcpServers": {
+    "exec": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-p",
+        "3006:3006",
+        "-i",
+        "--rm",
+        "mcp/exec"
+      ]
+    }
+  }
+}
+```
+
+### How It Works
+
+The MCP Exec Server acts as a bridge between Claude (or other AI assistants) and a command-line environment. When Claude invokes one of the MCP tools:
+
+1. The server receives the request with parameters (like commands, scripts, or package installations)
+2. It executes the requested operation in a secure, containerized environment
+3. For asynchronous operations, it manages the process lifecycle and captures outputs
+4. The results are returned to Claude, which can then incorporate them into its response
+
+## MCP Tools
+
+The following tools are exposed via Model Context Protocol (MCP) for AI assistants to use:
+
+### Command Execution
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `execute_command` | Run shell commands with timeout and output capture | • `command`: Command to execute<br>• `timeout`: Maximum time in seconds (default: 30)<br>• `output_type`: Output streams to return ("stdout", "stderr", "both") |
 | `execute_script` | Run code in various languages | • `script`: Code content to execute<br>• `script_type`: Language ("bash", "python", "js", "rust", "go")<br>• `timeout`: Maximum time in seconds (default: 30)<br>• `output_type`: Output streams to return |
 | `read_output` | Read output from a running process | • `session_id`: ID returned by execute_command<br>• `output_type`: Output streams to read |
 | `force_terminate` | Kill a running process | • `session_id`: ID returned by execute_command |
@@ -117,57 +215,36 @@ fn main() {
 ### Install a New Tool
 
 ```
-install_tool("tensorflow")
+install_command("tensorflow")
 ```
 
 ### Configure Multiple Tools
 
 ```
-configure_tools({
+configure_packages({
     "apt": ["imagemagick", "ffmpeg"],
     "pip": ["pytorch", "transformers"],
     "npm": ["typescript", "webpack"]
 })
 ```
 
-## Installation and Deployment
+## When to Use Each Tool
 
-### Prerequisites
+The MCP Exec Server provides several tools for different execution scenarios:
 
-- **Docker**: Required for containerized deployment (recommended)
-- **Git**: For cloning the repository
+- **`execute_command`**: Use when you need to run simple shell commands or Linux utilities. Ideal for file operations, system information retrieval, and basic command-line operations.
 
-### Docker Installation (Recommended)
+- **`execute_script`**: Best for running multi-line code in specific programming languages. Particularly useful for complex operations, algorithms, or when you need language-specific functionality.
 
-```bash
-# Clone the repository
-git clone https://github.com/0kenx/mcp-servers.git
-cd mcp-servers/exec
+- **`read_output`** and **`force_terminate`**: Use with long-running operations to monitor output and control execution when needed.
 
-# Build the Docker image
-./build.sh
+- **`list_processes`** and **`kill_process`**: Helpful for managing system resources and terminating runaway processes.
 
-# Verify all development environments are properly configured
-docker run -it --rm mcp/exec /app/verify_envs.sh
-```
+- **`install_command`**: Use when you need a package that isn't pre-installed in the environment. Check available commands first with `list_installed_commands`.
 
-### Running the Server
+- **`configure_packages`**: Ideal for setting up complex environments that require multiple packages across different package managers.
 
-```bash
-# Basic usage
-docker run -p 3006:3006 -it --rm mcp/exec
-
-# With filesystem access to a local directory
-docker run -p 3006:3006 -it --rm \
-  --mount type=bind,src=/path/to/projects,dst=/workspace \
-  mcp/exec
-
-# With resource limits
-docker run -p 3006:3006 -it --rm \
-  --cpus=2 --memory=2g \
-  --network=restricted \
-  mcp/exec
-```
+- **`block_command`** and **`unblock_command`**: Use these for security control when you want to prevent certain commands from being executed.
 
 ## Security Considerations
 
@@ -195,14 +272,7 @@ The Exec MCP Server allows arbitrary command execution, which inherently carries
   ```bash
   docker run --cpus=2 --memory=2g --storage-opt size=10G mcp/exec
   ```
-  
-- **Network Restrictions**: Limit or disable network access when possible
-  ```bash
-  docker run --network=none mcp/exec  # No network access
-  # OR
-  docker run --network=host --add-host=sandbox.internal:127.0.0.1 mcp/exec  # Limited access
-  ```
-  
+
 - **Read-Only Filesystem**: Mount sensitive directories as read-only
   ```bash
   docker run --mount type=bind,src=/data,dst=/data,readonly mcp/exec
@@ -219,3 +289,11 @@ The Exec MCP Server allows arbitrary command execution, which inherently carries
 - Use Docker security scanning tools to verify container security
 - Update the image regularly to incorporate security patches
 - Consider implementing API authentication for the MCP server
+
+## Contributing
+
+Contributions are welcome! If you'd like to improve this project, please feel free to submit pull requests or open issues on the repository.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.

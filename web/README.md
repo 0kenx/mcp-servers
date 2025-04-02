@@ -77,15 +77,8 @@ For users who prefer direct installation on their system:
 git clone https://github.com/0kenx/mcp-servers.git
 cd mcp-servers/web
 
-# Install dependencies using pip
-pip install -r requirements.txt
-
-# Or using uv (faster)
-pip install uv
-uv sync
-
-# Run the server
-python -m src.server sk-YOUR_OPENAI_API_KEY
+# Build the Docker image
+docker build -t mcp/web .
 ```
 
 ### Configuration with Claude

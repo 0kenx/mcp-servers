@@ -672,8 +672,8 @@ def read_multiple_files(paths: List[str]) -> str:
 def read_file_by_keyword(
     path: str,
     keyword: str,
-    include_lines_before: int = 0,
-    include_lines_after: int = 0,
+    include_lines_before: int = 2,
+    include_lines_after: int = 3,
     use_regex: bool = False,
     ignore_case: bool = False,
 ) -> str:
