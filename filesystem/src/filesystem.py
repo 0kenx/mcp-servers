@@ -1244,9 +1244,16 @@ def directory_tree(
         )
 
         # Run git ls-files to get all tracked files
-        result = subprocess.run(
-            [git_cmd, "ls-files"], capture_output=True, text=True, check=True
-        )
+        # Change to git repository root first
+        original_cwd = os.getcwd()
+        os.chdir(git_root)
+        try:
+            result = subprocess.run(
+                [git_cmd, "ls-files"], capture_output=True, text=True, check=True
+            )
+        finally:
+            # Restore original working directory
+            os.chdir(original_cwd)
 
         git_files = list(result.stdout.strip().split("\n"))
         if not git_files or (len(git_files) == 1 and not git_files[0]):
