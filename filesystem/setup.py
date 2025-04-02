@@ -33,9 +33,4 @@ setup(
         "Operating System :: OS Independent",
     ],
     python_requires=">=3.12",
-    entry_points={
-        "console_scripts": [
-            "filesystem-server=filesystem.cli:main",
-        ],
-    },
 )
