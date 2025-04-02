@@ -39,7 +39,7 @@ try:
     CHECKPOINTS_DIR,
 )
 except ImportError:
-    # Fall back to direct import for when running as src/filesystem.py
+    # This branch is for when running as a module
     from mcp_edit_utils import (
         normalize_path,
         expand_home,

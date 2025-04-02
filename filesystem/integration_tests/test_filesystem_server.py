@@ -29,9 +29,9 @@ from integration_tests.test_init import MockContext
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import the necessary modules
-from src.filesystem import (
+from integration_tests.patched_filesystem import (
     _resolve_path,
-    validate_path,
+    validate_path, 
     _get_or_create_conversation_id,
     generate_diff,
 )

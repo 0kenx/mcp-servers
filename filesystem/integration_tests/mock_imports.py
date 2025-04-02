@@ -1,20 +1,28 @@
-"""Mock module for MCP dependencies in integration tests.
+"""
+Mock implementation of MCP dependencies for testing.
 
-This module MUST be imported before any other imports that might use the mcp module.
-It provides mock implementations to avoid the need to install the actual mcp package.
+This mocks only the external dependencies needed (mcp.server.fastmcp),
+not any of the core modules in the filesystem project.
 """
 
-# This needs to be at the very top
 import sys
-
-# Add the mock to sys.modules immediately
-sys.modules['mcp'] = type('mcp', (), {})
-sys.modules['mcp.server'] = type('server', (), {})
 
 # Create mock classes
 class MockFastMCP:
     """Mock FastMCP class for testing."""
-    def __init__(self):
+    def __init__(self, server_name=None, *args, **kwargs):
+        self.server_name = server_name
+        self.tools = {}
+    
+    def tool(self):
+        """Mock tool decorator."""
+        def decorator(func):
+            self.tools[func.__name__] = func
+            return func
+        return decorator
+    
+    def run(self):
+        """Mock run method."""
         pass
 
 class MockContext:
@@ -23,5 +31,7 @@ class MockContext:
         self.client_id = client_id
         self.request_id = request_id
 
-# Update the sys.modules with our classes
+# Add the mock to sys.modules
+sys.modules['mcp'] = type('mcp', (), {})
+sys.modules['mcp.server'] = type('server', (), {}) 
 sys.modules['mcp.server.fastmcp'] = type('fastmcp', (), {'FastMCP': MockFastMCP, 'Context': MockContext})
