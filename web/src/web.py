@@ -36,7 +36,7 @@ OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 if (
     not OPENAI_API_KEY
     or OPENAI_API_KEY == "YOUR_OPENAI_KEY"
-    or OPENAI_API_KEY == "sk-YOUR_OPENAI_API_KEY"
+    or OPENAI_API_KEY == "sk-YOUR_OPENAI_KEY"
 ):  # Added check for placeholder:
     print("Error: OPENAI_API_KEY environment variable not set.", file=sys.stderr)
     # Decide if you want to exit or run without AI tools
