@@ -130,9 +130,16 @@ To configure Claude Desktop or other Claude interfaces to use these MCP servers,
           "run",
           "-i",
           "--rm",
-          "mcp/web",
-          "sk-YOUR_OPENAI_API_KEY"
-      ]
+          "-e",
+          "OPENAI_API_KEY",
+          "-e",
+          "BRAVE_API_KEY",
+          "mcp/web"
+      ],
+      "env": {
+        "OPENAI_API_KEY": "sk-YOUR_OPENAI_KEY",
+        "BRAVE_API_KEY": "YOUR_BRAVE_KEY"
+      }
     }
   }
 }
