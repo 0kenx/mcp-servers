@@ -3,8 +3,8 @@ Tests for the Rust language parser.
 """
 
 import unittest
-from rust import RustParser
-from base import ElementType
+from src.grammar.rust import RustParser
+from src.grammar.base import ElementType
 
 
 class TestRustParser(unittest.TestCase):

@@ -1,8 +1,8 @@
 
 import unittest
-from generic_brace_block import BraceBlockParser
-from base import ElementType, CodeElement
-from test_utils import ParserTestHelper
+from src.grammar.generic_brace_block import BraceBlockParser
+from src.grammar.base import ElementType, CodeElement
+from src.grammar.tests.test_utils import ParserTestHelper
 
 class TestBraceBlockParser(unittest.TestCase):
     """Test cases for the generic BraceBlockParser."""
