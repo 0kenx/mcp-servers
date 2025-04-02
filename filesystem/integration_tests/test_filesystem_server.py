@@ -14,6 +14,9 @@ import sys
 import unittest
 import tempfile
 import shutil
+# Import for git tests disabled due to module dependency issues
+# Run test_git_directory_tree_fix.py separately:
+# python -m integration_tests.test_git_directory_tree_fix
 from pathlib import Path
 import re
 import random
