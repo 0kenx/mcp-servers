@@ -25,9 +25,10 @@ class KeywordPatternParser(BaseParser):
         # Shell function definition (simple cases)
         (re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]+)\s*\(\s*\)\s*\{'), ElementType.FUNCTION, 1), # name() {
         (re.compile(r'^\s*(?:function)\s+([a-zA-Z_][a-zA-Z0-9_]+)'), ElementType.FUNCTION, 1), # function name
-        # Variable/Constant Assignment (heuristic: ALL_CAPS for CONSTANT)
+        # Variable/Constant Assignment (heuristic: ALL_CAPS for CONSTANT or JS const keyword)
         (re.compile(r'^\s*([A-Z_][A-Z0-9_]+)\s*='), ElementType.CONSTANT, 1),
-        (re.compile(r'^\s*(?:var|let|const)?\s*([a-zA-Z_][a-zA-Z0-9_]+)\s*='), ElementType.VARIABLE, 1),
+        (re.compile(r'^\s*const\s+([a-zA-Z_][a-zA-Z0-9_]+)\s*='), ElementType.CONSTANT, 1),
+        (re.compile(r'^\s*(?:var|let|export)?\s*([a-zA-Z_][a-zA-Z0-9_]+)\s*='), ElementType.VARIABLE, 1),
         # Basic Import/Use/Require (capture module name/path)
         (re.compile(r'^\s*(?:import|use|require|include)\s+[\'"]?([a-zA-Z0-9_./-]+)', re.IGNORECASE), ElementType.IMPORT, 1),
          # More specific import like Python/JS `from X import Y` or `import {Y} from X`
