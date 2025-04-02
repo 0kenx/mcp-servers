@@ -35,6 +35,7 @@ The Web Processing MCP Server serves as an intelligent bridge between AI assista
 - **Size Management**: Handle large web pages with automatic size limits and intelligent truncation
 - **Content Cleaning**: Remove ads, navigation elements, and other clutter (when using Markdown output)
 - **Structure Preservation**: Maintain document structure, links, and important formatting
+- **Web Search**: Perform web searches using the Brave Search API
 
 ### AI Analysis
 
@@ -56,6 +57,7 @@ The Web Processing MCP Server serves as an intelligent bridge between AI assista
 - **Python**: Version 3.12 or newer
 - **Docker**: For containerized deployment (recommended)
 - **OpenAI API Key**: Required for AI processing capabilities
+- **Brave API Key**: Required for web search functionality
 
 ### Python Dependencies
 - **Web Processing**: beautifulsoup4, httpx, markdownify
@@ -114,15 +116,22 @@ Add the Web Processing MCP Server to your Claude configuration file:
           "run",
           "-i",
           "--rm",
-          "mcp/web",
-          "sk-YOUR_OPENAI_API_KEY"
-      ]
+          "-e",
+          "OPENAI_API_KEY",
+          "-e",
+          "BRAVE_API_KEY",
+          "mcp/web"
+      ],
+      "env": {
+        "OPENAI_API_KEY": "sk-YOUR_OPENAI_KEY",
+        "BRAVE_API_KEY": "YOUR_BRAVE_KEY"
+      }
     }
   }
 }
 ```
 
-**Note**: Replace `sk-YOUR_OPENAI_API_KEY` with your actual OpenAI API key. This is required for the AI processing capabilities.
+**Note**: Replace `sk-YOUR_OPENAI_KEY` with your actual OpenAI API key (required for AI processing capabilities) and `YOUR_BRAVE_KEY` with your Brave Search API key (required for web search functionality).
 
 
 ## MCP Tools
@@ -219,11 +228,53 @@ crawl_and_process_url(
 Crawl the documentation at https://docs.example.com and create a comprehensive summary of their API endpoints, with examples of how each is used.
 ```
 
+### Web Search
+
+#### `search_web`
+
+Performs a web search using the Brave Search API and returns formatted results.
+
+```python
+search_web(
+    query: str,                      # The search query string
+    count: int = 10,                  # Number of results to return (1-20, default: 10)
+    offset: int = 0,                  # Result offset for pagination (default: 0)
+    timeout: int = 30                 # Request timeout in seconds (default: 30)
+)
+```
+
+**Example use by Claude:**
+```
+Search the web for "latest developments in quantum computing" and summarize the results.
+```
+
+#### `search_web_and_process`
+
+Performs a Brave web search, then processes the results with an AI agent based on instructions.
+
+```python
+search_web_and_process(
+    query: str,                      # The search query string
+    instructions: str,                # Instructions for the AI on how to process the search results
+    count: int = 10,                  # Number of search results to retrieve (1-20, default: 10)
+    offset: int = 0,                  # Result offset for pagination (default: 0)
+    search_timeout: int = 30,         # Timeout for the Brave Search API call (default: 30)
+    openai_model: str = 'o3-mini',    # AI model to use for processing (default: 'o3-mini')
+    openai_max_tokens: int = 10000    # Max tokens for the AI response (default: 10000)
+)
+```
+
+**Example use by Claude:**
+```
+Search the web for "climate change solutions" and analyze the different approaches mentioned across the search results.
+```
+
 ## Use Cases
 
 ### Research & Information Gathering
 
 - **Comprehensive Research**: Gather information from multiple sources on a specific topic
+- **Web Searching**: Perform web searches and analyze results across multiple sources
 - **Competitive Analysis**: Compare multiple websites or products by crawling and analyzing their content
 - **Documentation Exploration**: Process technical documentation and extract key information
 - **News Monitoring**: Collect and analyze news from multiple sources
