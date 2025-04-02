@@ -81,14 +81,24 @@ RUN chown -R $USERNAME:$USERNAME /home/$USERNAME
 # Set working directory
 WORKDIR /app
 
-# Change to the regular user
-USER $USERNAME
+# Install Go
+RUN curl -OL https://golang.org/dl/go1.24.1.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go1.24.1.linux-amd64.tar.gz && \
+    rm go1.24.1.linux-amd64.tar.gz && \
+    echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> /home/$USERNAME/.bashrc
+
+# Install Foundry
+RUN curl -L https://foundry.paradigm.xyz | bash
 
 # Install Rust (rustup and cargo)
-#RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
-#    echo 'source "$HOME/.cargo/env"' >> /home/$USERNAME/.bashrc
-#RUN $HOME/.cargo/bin/rustup component add rustfmt clippy rust-analyzer && \
-#    $HOME/.cargo/bin/cargo install cargo-watch
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
+    echo 'source "$HOME/.cargo/env"' >> /home/$USERNAME/.bashrc
+RUN $HOME/.cargo/bin/rustup component add rustfmt clippy rust-analyzer
+#RUN $HOME/.cargo/bin/cargo install cargo-watch
+
+
+# Change to the regular user
+USER $USERNAME
 
 # Install Python tools and packages
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
@@ -103,12 +113,6 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     flake8 \
     mypy \
     pytest
-
-# Install Go
-#RUN curl -OL https://golang.org/dl/go1.24.1.linux-amd64.tar.gz && \
-#    tar -C /usr/local -xzf go1.24.1.linux-amd64.tar.gz && \
-#    rm go1.24.1.linux-amd64.tar.gz && \
-#    echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> /home/$USERNAME/.bashrc
 
 
 # Set environment variables
