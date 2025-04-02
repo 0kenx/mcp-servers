@@ -124,14 +124,13 @@ class TestCodeSamplesParsing(unittest.TestCase):
                 metadata_info = ""
                 
                 # Add metadata summary if available
-                if hasattr(element, "metadata") and element.metadata:
-                    print(element.metadata)
-                    metadata_keys = list(element.metadata.keys())
-                    if metadata_keys:
-                        metadata_info = f" [metadata: {', '.join(metadata_keys)}]"
+                #if hasattr(element, "metadata") and element.metadata:
+                    #metadata_keys = list(element.metadata.keys())
+                    #if metadata_keys:
+                        #metadata_info = f" [metadata: {', '.join(metadata_keys)}]"
                         
                 print(f"    {element.element_type.value}: {element.name} "
-                      f"(lines {element.start_line}-{element.end_line}){parent_info}{metadata_info}")
+                      f"(lines {element.start_line}-{element.end_line}){parent_info}[metadata:{element.metadata}]")
         
         print("\n" + "=" * 80)
 
