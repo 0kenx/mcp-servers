@@ -15,7 +15,9 @@ import threading
 import time
 import json
 
-from mcp_edit_utils import (
+try:
+    # Try to import from the local module first
+    from .mcp_edit_utils import (
     normalize_path,
     expand_home,
     get_file_stats,
@@ -36,6 +38,37 @@ from mcp_edit_utils import (
     DIFFS_DIR,
     CHECKPOINTS_DIR,
 )
+except ImportError:
+    # This branch is for when running as a module
+    from mcp_edit_utils import (
+        normalize_path,
+        expand_home,
+        get_file_stats,
+        get_metadata,
+        get_history_root,
+        sanitize_path_for_filename,
+        acquire_lock,
+        release_lock,
+        calculate_hash,
+        generate_diff,
+        read_log_file,
+        write_log_file,
+        HistoryError,
+        log,
+        get_next_tool_call_index,
+        validate_path,
+        LOGS_DIR,
+        DIFFS_DIR,
+        CHECKPOINTS_DIR,
+    )
+
+try:
+    # Try relative import first
+    from .grammar import get_parser_for_file, BaseParser, CodeElement, ElementType
+except ImportError:
+    # Fall back to direct import for when running as src/filesystem.py
+    from src.grammar import get_parser_for_file, BaseParser, CodeElement, ElementType
+
 
 from src.grammar import get_parser_for_file, BaseParser, CodeElement, ElementType
 
@@ -67,7 +100,7 @@ IMPORTANT: You should minimize output tokens as much as possible while maintaini
 When making changes to files, first understand the file's code conventions. Mimic code style, use existing libraries and utilities, and follow existing patterns.
 - NEVER assume that a given library is available, even if it is well known. Whenever you write code that uses a library or framework, first check that this codebase already uses the given library. For example, you might look at neighboring files, or check the package.json (or cargo.toml, and so on depending on the language).
 - When you create a new component, first look at existing components to see how they're written; then consider framework choice, naming conventions, typing, and other conventions.
-- When you debug tests, first look at passing tests to see how they're written. NEVER cheat by skipping tests, making mock code, or modifying the test case itself. ONLY modify the test case if the old test case doesn't conform to the interface specification.
+- When you debug tests, first look at passing tests to see how they're written. NEVER cheat by skipping tests, making mock code to circumvent the code under test, modifying the test case itself, or adding special case branches with the sole purpose of passing tests. ONLY modify the test case if the old test case doesn't conform to the interface specification.
 - When you edit a piece of code, first look at the code's surrounding context (especially its imports) to understand the code's choice of frameworks and libraries. Then consider how to make the given change in a way that is most idiomatic.
 - Always follow security best practices. Never introduce code that exposes or logs secrets and keys. Never commit secrets or keys to the repository.
 
@@ -509,6 +542,19 @@ def track_edit_history(func: Callable) -> Callable:
 
             current_log_entries.append(log_entry)
             write_log_file(log_file_path, current_log_entries)
+
+            # Modify the result to include the diff if it's small enough
+            # (only for operations that modify files)
+            if operation in ["edit", "replace", "create", "delete"] and diff_content:
+                # Count the number of lines in the diff
+                diff_lines = diff_content.count('\n')
+                if diff_lines < 200:  # Check if the diff is less than 200 lines
+                    # Add the diff to the result
+                    modified_result = result
+                    if not modified_result.endswith('\n'):
+                        modified_result += '\n'
+                    modified_result += f"\nDiff ({diff_lines} lines):\n{diff_content}"
+                    return modified_result
 
             return result
 
@@ -984,10 +1030,17 @@ def get_function_code(path: str, function_name: str) -> str:
 
 @mcp.tool()
 def create_directory(path: str) -> str:
-    """Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation. If the directory already exists, this operation will succeed silently."""
+    """Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation. If the directory already exists, this operation will return its listing."""
     try:
         resolved_path = _resolve_path(path)
         validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
+        
+        # Check if directory already exists
+        if os.path.isdir(validated_path):
+            # Return the directory listing
+            return list_directory(path)
+            
+        # Create the directory
         os.makedirs(validated_path, exist_ok=True)
         return f"Successfully created directory {path}"
     except (ValueError, Exception) as e:
@@ -1224,9 +1277,16 @@ def directory_tree(
         )
 
         # Run git ls-files to get all tracked files
-        result = subprocess.run(
-            [git_cmd, "ls-files"], capture_output=True, text=True, check=True
-        )
+        # Change to git repository root first
+        original_cwd = os.getcwd()
+        os.chdir(git_root)
+        try:
+            result = subprocess.run(
+                [git_cmd, "ls-files"], capture_output=True, text=True, check=True
+            )
+        finally:
+            # Restore original working directory
+            os.chdir(original_cwd)
 
         git_files = list(result.stdout.strip().split("\n"))
         if not git_files or (len(git_files) == 1 and not git_files[0]):
@@ -1625,31 +1685,22 @@ def write_file(ctx: Context, path: str, content: str) -> str:
         # Ensure parent directory exists
         Path(validated_path).parent.mkdir(parents=True, exist_ok=True)
 
-        # Handle JSON content - check if content is already a dict
-        if isinstance(content, dict):
-            content_to_write = json.dumps(content, indent=2)
-        elif isinstance(content, str):
+        # Handle content that might be a dictionary string
+        try:
+            # Try to parse the string as JSON
+            json_obj = json.loads(content)
+            content_to_write = json.dumps(json_obj, indent=2)
+        except json.JSONDecodeError:
+            # If parsing fails, try cleaning up the string
+            cleaned_content = content.strip().strip("\"'")
+            cleaned_content = cleaned_content.replace('\\"', '"')
             try:
-                # Try to parse the string as JSON
-                json_obj = json.loads(content)
+                json_obj = json.loads(cleaned_content)
                 content_to_write = json.dumps(json_obj, indent=2)
             except json.JSONDecodeError:
-                # If parsing fails, try cleaning up the string
-                cleaned_content = content.strip().strip("\"'")
-                cleaned_content = cleaned_content.replace('\\"', '"')
-                try:
-                    json_obj = json.loads(cleaned_content)
-                    content_to_write = json.dumps(json_obj, indent=2)
-                except json.JSONDecodeError:
-                    # If all attempts fail, write the original string content
-                    content_to_write = content
-        else:
-            # Handle unexpected content types (e.g., list, int)
-            log.warning(
-                f"Unexpected content type {type(content)} for write_file, attempting str conversion."
-            )
-            content_to_write = str(content)
-
+                # If all attempts fail, write the original string content
+                content_to_write = content
+        
         with open(validated_path, "w", encoding="utf-8") as f:
             f.write(content_to_write)
         return f"Successfully wrote to {path}"
@@ -1848,7 +1899,16 @@ def move_file(ctx: Context, source: str, destination: str) -> str:
         if os.path.exists(validated_dest_path):
             return f"Error: Destination path {destination} already exists."
         Path(validated_dest_path).parent.mkdir(parents=True, exist_ok=True)
-        os.rename(validated_source_path, validated_dest_path)
+        
+        # Using shutil.move instead of os.rename to better handle cross-device moves
+        shutil.move(validated_source_path, validated_dest_path)
+        
+        # Verify the operation succeeded
+        if not os.path.exists(validated_dest_path):
+            return f"Error: Move operation failed. Destination file {destination} does not exist."
+        if os.path.exists(validated_source_path):
+            return f"Error: Move operation incomplete. Source file {source} still exists."
+            
         return f"Successfully moved {source} to {destination}"
     except (ValueError, Exception) as e:
         return f"Error moving file: {str(e)}"
@@ -1864,6 +1924,8 @@ def delete_file(ctx: Context, path: str) -> str:
         # Existence/type checks happen within decorator now before op
         if os.path.isdir(validated_path):
             return f"Error: Path {path} is a directory."
+        if not os.path.exists(validated_path):
+            return f"Error: File {path} does not exist."
         # Decorator ensures file exists before calling this core logic if op is delete
         try:
             os.remove(validated_path)

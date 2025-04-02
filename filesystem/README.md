@@ -19,9 +19,26 @@ A Python server implementing Model Context Protocol (MCP) for secure filesystem 
 
 **Note**: The server only allows operations within directories specified via command-line arguments.
 
+## Project Structure
+
+The project follows a standard Python package structure:
+
+```
+/filesystem/          # Root package directory
+  ├── __init__.py    # Package initialization
+  ├── main.py        # Entry point wrapper
+  └── src/           # Source code directory
+      ├── __init__.py
+      ├── filesystem.py    # Main server implementation
+      ├── mcp_edit_utils.py # Utility functions
+      └── grammar/    # Grammar parsing modules
+/integration_tests/  # Integration tests
+/cli/                # CLI tools
+/nvim/               # Neovim integration
+```
+
 ## Installation
 
-Build the Docker image locally:
 ### Prerequisites
 
 - Docker installed and running
@@ -48,271 +65,103 @@ python -m pip install -e .
 Install the `mcpdiff` CLI tool:
 
 ```bash
+cd cli
 ./install.sh
+```
+
+### Option 3: Using uv
+
+If you have `uv` installed, you can run the server directly:
+
+```bash
+# From the filesystem directory
+uv run src/filesystem.py /path/to/allowed/directory
+
+# Or use the provided convenience script
+uv run run_server.py /path/to/allowed/directory
+```
+
+You can also install it using `uvx`:
+
+```bash
+uvx git+https://github.com/0kenx/mcp-servers
 ```
 
 ## Usage
 
-### With Claude Desktop
-
-Add this to your `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "filesystem": {
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "--mount", "type=bind,src=/path/to/your/directory,dst=/projects",
-        "mcp/filesystem",
-        "/projects"
-      ]
-    }
-  }
-}
-```
-
-Note: All directories are mounted to `/projects` by default. Adding the `,ro` flag will make the directory read-only.
-
-### Multiple Directories
-
-You can mount multiple directories by adding additional mount arguments:
-
-```json
-{
-  "mcpServers": {
-    "filesystem": {
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "--mount", "type=bind,src=/path/to/dir1,dst=/projects/dir1",
-        "--mount", "type=bind,src=/path/to/dir2,dst=/projects/dir2,ro",
-        "mcp/filesystem",
-        "/projects/dir1", "/projects/dir2"
-      ]
-    }
-  }
-}
-```
-
-### Using the CLI Tool
-
-The `mcpdiff` tool lets you review, accept, or reject changes made by Claude:
+### Docker Usage
 
 ```bash
-# Show edit history status
-mcpdiff status
-
-# Show diff for a specific edit
-mcpdiff show <edit_id_prefix>
-
-# Accept a specific edit
-mcpdiff accept -e <edit_id_prefix>
-
-# Reject all edits in a conversation
-mcpdiff reject -c <conversation_id>
-
-# Interactive review mode
-mcpdiff review
+docker run -p 3005:3005 -v /path/to/directory:/data mcp/filesystem /data
 ```
 
-## Available Tools
+This will expose port 3005 for the MCP server and allow operations in the mounted `/data` directory.
 
-### read_file
-- Read complete contents of a file
-- Input: `path` (string)
+### Local Usage
 
-### read_multiple_files
-- Read multiple files simultaneously
-- Input: `paths` (string[])
-- Failed reads won't stop the entire operation
+Run the server:
 
-### read_file_by_line
-- Read specific lines or line ranges from a file
-- Inputs:
-  - `path` (string)
-  - `ranges` (string[]): Line numbers or ranges (e.g., ["5", "10-20"])
+```bash
+# Direct invocation
+python src/filesystem.py /path/to/directory1 /path/to/directory2
 
-### read_file_by_keyword
-- Find lines containing a keyword with optional context
-- Inputs:
-  - `path` (string)
-  - `keyword` (string): Text to search for
-  - `before` (int): Lines to include before match (default: 0)
-  - `after` (int): Lines to include after match (default: 0)
-  - `use_regex` (bool): Use regex pattern (default: false)
-  - `ignore_case` (bool): Case-insensitive search (default: false)
-- Returns matching lines with ">" prefix and line numbers
+# Using the run_server.py wrapper
+python run_server.py /path/to/directory1 /path/to/directory2
+```
 
-### read_function_by_keyword
-- Extract function definitions by keyword
-- Inputs:
-  - `path` (string)
-  - `keyword` (string): Typically function name
-  - `before` (int): Lines to include before match (default: 0)
-  - `use_regex` (bool): Use regex pattern (default: false)
+For example, to allow the server to access your Documents and Downloads directories:
 
-### write_file
-- Create or overwrite a file
-- Inputs:
-  - `path` (string)
-  - `content` (string)
+```bash
+python src/filesystem.py ~/Documents ~/Downloads
+```
 
-### edit_file_diff
-- Make surgical edits to a file without specifying line numbers
-- Inputs:
-  - `path` (string)
-  - `replacements` (object): Dictionary with keys as content to find and values as replacement content
-  - `inserts` (object): Dictionary for inserting content after specified anchor text
-  - `replace_all` (boolean): Replace all occurrences or just first match (default: true)
-  - `dry_run` (boolean): Preview changes without applying (default: false)
-- Returns a summary of changes made
+**Note**: The server will ONLY allow file operations within the specified directories.
 
-### edit_file_diff_line
-- Edit a file with precise line number specifications
-- Inputs:
-  - `path` (string)
-  - `edits` (object): Dictionary of edits with keys as line specifiers and values as content
-    - "N": Replace line N with provided content
-    - "N-M": Replace lines N through M with provided content
-    - "Ni": Insert content after line N (use "0i" for beginning)
-    - "a": Append content to end of file
-  - `dry_run` (boolean): Preview changes without applying (default: false)
-- Returns a summary of applied changes
+### Setting up Claude with the Filesystem Server
 
-### create_directory
-- Create directory or ensure it exists
-- Input: `path` (string)
-- Creates parent directories if needed
+1. In the Claude web interface, enable the "Filesystem" tool
+2. Configure it to point to your running server
+3. Verify the connection is working
 
-### list_directory
-- List directory contents with [FILE] or [DIR] prefixes
-- Input: `path` (string)
+### Using the mcpdiff CLI Tool
 
-### directory_tree
-- Get a recursive tree view of files and directories with metadata
-- Inputs:
-  - `path` (string)
-  - `count_lines` (boolean): Include line counts (default: false)
-  - `show_permissions` (boolean): Show file permissions (default: false)
-  - `show_owner` (boolean): Show file ownership information (default: false)
-  - `show_size` (boolean): Show file sizes (default: false)
+The `mcpdiff` CLI tool provides a convenient way to examine changes to files during a conversation:
 
-### git_directory_tree
-- Get a directory tree for a git repository respecting .gitignore
-- Inputs:
-  - `path` (string)
-  - `count_lines` (boolean): Include line counts (default: false)
-  - `show_permissions` (boolean): Show file permissions (default: false)
-  - `show_owner` (boolean): Show file ownership information (default: false)
-  - `show_size` (boolean): Show file sizes (default: false)
+```bash
+# Show changes to a file since the start of the conversation
+mcpdiff show <file_path>
 
-### move_file
-- Move or rename files and directories
-- Inputs:
-  - `source` (string)
-  - `destination` (string)
+# Revert changes to a file
+mcpdiff revert <file_path>
 
-### search_files
-- Recursively search for files/directories matching a pattern
-- Inputs:
-  - `path` (string): Starting directory
-  - `pattern` (string): Search pattern (case-insensitive)
-  - `excludePatterns` (string[]): Glob patterns to exclude
-- Returns full paths to all matching files and directories
+# List all files modified in the current conversation
+mcpdiff list
+```
 
-### get_file_info
-- Get detailed file metadata
-- Input: `path` (string)
-- Returns size, creation time, modified time, permissions, etc.
+### Neovim Integration
 
-### list_allowed_directories
-- List all directories the server is allowed to access
+The project includes Neovim integration for mcpdiff:
 
-## Security
+```bash
+# Copy the plugin files to your Neovim configuration
+mkdir -p ~/.config/nvim/lua/mcpdiff
+cp nvim/lua/mcpdiff/init.lua ~/.config/nvim/lua/mcpdiff/
+cp nvim/plugin/mcpdiff_config.lua ~/.config/nvim/plugin/
+```
 
-The server implements comprehensive security measures:
-## Architecture
+## Security Considerations
 
-The MCP Filesystem Server is composed of three main components:
+The server includes several security measures:
 
-1. **MCP Server** (`src/filesystem.py`): The core server implementing the MCP protocol and file operation tools
-2. **Edit Utilities** (`src/mcp_edit_utils.py`): Helper functions for path validation, diff generation, and edit history tracking
-3. **CLI Diff Tool** (`cli/mcpdiff.py`): Command-line interface for reviewing and managing edits
-
-### Edit History System
-
-All changes made by Claude are tracked in the `.mcp/edit_history` directory with:
-
-- **Logs**: JSON records of all operations with timestamps and IDs
-- **Diffs**: Detailed change information for each edit
-- **Checkpoints**: File snapshots for recovery if needed
-
-This system provides accountability and allows you to review, accept, or reject any changes Claude makes to your files.
-
-
-- Maintains a whitelist of allowed directories specified via command-line arguments
-- Performs strict path validation to prevent unauthorized access outside allowed directories 
-- Validates symlink targets to ensure they don't escape the allowed directories
-- Handles circular symlinks and invalid paths gracefully
-- Verifies parent directories for non-existent paths to ensure they're within allowed boundaries
-
-## Requirements
-
-- Python 3.12+
-- MCP 1.5.0+
-- Docker
-- httpx 0.28.1+
-- Git (optional, for git_directory_tree)
-
-## License
-
-[MIT](LICENSE)
+- Path validation to prevent directory traversal attacks
+- Restricted operations to allowed directories only
+- No shell command execution
+- File access controls respect system permissions
 
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+## License
 
-## Troubleshooting
-
-### Common Issues
-
-1. **Permission denied errors**: Ensure the Docker user has appropriate permissions on the mounted directories.
-
-2. **Path validation failures**: Ensure all paths you're accessing are within the allowed directories specified in the mount arguments.
-
-3. **Dependency issues**: If installing from source, ensure you're using Python 3.12+ and have all required dependencies.
-
-### Debugging
-
-For more verbose output, you can add environment variables to enable debug logging:
-
-```json
-{
-  "mcpServers": {
-    "filesystem": {
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "-e", "MCP_DEBUG=1",
-        "--mount", "type=bind,src=/path/to/your/directory,dst=/projects",
-        "mcp/filesystem",
-        "/projects"
-      ]
-    }
-  }
-}
-```
+This project is licensed under the MIT License - see the LICENSE file for details.
