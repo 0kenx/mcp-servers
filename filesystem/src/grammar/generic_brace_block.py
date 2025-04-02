@@ -30,55 +30,46 @@ class BraceBlockParser(BaseParser):
         "function": ElementType.FUNCTION, # JS
         "fn": ElementType.FUNCTION,       # Rust
         "func": ElementType.FUNCTION,     # Go, Swift
-
+        "void": ElementType.FUNCTION,     # C/C++/Java-style return type
+        "int": ElementType.FUNCTION,      # C/C++/Java-style return type
+        "float": ElementType.FUNCTION,    # C/C++/Java-style return type
+        "double": ElementType.FUNCTION,   # C/C++/Java-style return type
+        "bool": ElementType.FUNCTION,     # C/C++/Java-style return type
+        "string": ElementType.FUNCTION,   # C/C++/Java-style return type
+        
         # Namespaces/Modules
         "namespace": ElementType.NAMESPACE,
         "module": ElementType.MODULE,     # JS/Rust (can be complex)
-
-        # Others (Less common block starters, maybe treat as UNKNOWN or skip)
-        # "if": ElementType.UNKNOWN,
-        # "for": ElementType.UNKNOWN,
-        # "while": ElementType.UNKNOWN,
-        # "switch": ElementType.UNKNOWN,
     }
 
-    # Regex to find potential definitions preceding a block
+    # Regex pattern with named groups to identify common code elements
     DEFINITION_PATTERN = re.compile(
-        r'^\s*'                                      # Start of line, optional whitespace
-        r'((?:(?:public|private|protected|static|final|abstract|virtual|override|async|unsafe|export|const|let|var|pub(?:\([^)]+\))?)\s+)*)?' # Modifiers (Group 1)
-        r'(?:'                                       # Non-capturing group for keyword OR type
-            r'(' + '|'.join(KEYWORD_TO_TYPE.keys()) + r')\s+' # Keyword (Group 2)
-            r'([a-zA-Z_][a-zA-Z0-9_:]*)?'            # Optional Name following keyword (Group 3)
-        r'|'                                         # OR
-            r'([a-zA-Z_][a-zA-Z0-9_<>,\s:\.]*)\s+'   # Potential Type (Group 4)
-            r'([a-zA-Z_][a-zA-Z0-9_:]+)'             # Name following type (Group 5)
+        r'^\s*'                           # Start of line, optional whitespace
+        r'(?P<modifiers>'                 # Capture modifiers group
+        r'(?:(?:public|private|protected|static|final|abstract|virtual|override|async|unsafe|export|const|let|var|pub(?:\([^)]+\))?)'
+        r'\s+)*'                          # End modifiers group
         r')'
-        r'(?:<.*?>)?'                                # Optional generics
-        r'(\s*\([^{;]*?\))?'                         # Optional parameter list (Group 6) - matches until { or ;
-        r'(?:\s*:.*?)?'                              # Optional inheritance/supertraits/return type hint before {
-        r'(?:\s*where\s*.*?)?'                       # Optional where clause before {
-        r'(?:\s*throws\s*.*?)?'                      # Optional throws clause before {
-        r'\s*\{'                                     # Must have opening brace eventually on the line or subsequent lines
+        r'(?:'                            # Start main pattern non-capturing group
+        r'(?P<keyword>'                   # Capture keyword group
+        r'class|struct|interface|enum|trait|impl|namespace|function|fn|func|void|int|float|double|bool|string'
+        r')'
+        r'\s+'                            # Whitespace after keyword
+        r'(?P<name_after_keyword>[a-zA-Z_][a-zA-Z0-9_]*)?'  # Name after keyword, optional
+        r'|'                              # OR
+        r'(?P<return_type>[a-zA-Z_][a-zA-Z0-9_<>,\.\s\*&]+)\s+'  # Return type
+        r'(?P<name_after_type>[a-zA-Z_][a-zA-Z0-9_]+)'      # Name after type
+        r')'
+        r'(?:\s*<.*?>)?'                  # Optional generics
+        r'(?P<params>\s*\([^{;]*?\))?'    # Optional parameter list
+        r'(?:\s*(?::|extends|implements|where|throws)\s*[^{;]*?)?'  # Optional other clauses
+        r'\s*(?:\{|\n\s*\{)'              # Opening brace, possibly on next line
     )
-
-    # Function pattern - more specific than the general definition pattern
-    FUNCTION_PATTERN = re.compile(
-        r'^\s*'                                          # Start of line, optional whitespace
-        r'((?:(?:public|private|protected|static|final|abstract|virtual|override|async|unsafe|export)\s+)*)?' # Modifiers
-        r'(?:(?:function|fn|func)\s+)?'                  # Optional function keyword
-        r'([a-zA-Z_][a-zA-Z0-9_:]*)'                     # Function name
-        r'\s*\(([^)]*)\)'                                # Params in parentheses
-        r'(?:\s*(?:->|:)\s*[a-zA-Z_][a-zA-Z0-9_<>,\s:\.]*)?'  # Optional return type
-        r'\s*\{'                                          # Opening brace
-    )
-
+    
     # Pattern just to find an opening brace to start brace matching
     OPEN_BRACE_PATTERN = re.compile(r'\{')
 
     def __init__(self):
         super().__init__()
-        # We won't perform full language-specific comment/string stripping
-        # The brace matching logic will have basic handling for them.
 
     def parse(self, code: str) -> List[CodeElement]:
         """
@@ -92,256 +83,244 @@ class BraceBlockParser(BaseParser):
         """
         self.elements = []
         lines = self._split_into_lines(code)
-        line_count = len(lines)
         
-        # Parse the code for brace blocks
-        self._parse_code_blocks(lines, line_count)
-        
-        # Process elements to establish proper parent-child relationships
-        self._establish_parent_child_relationships()
-        
-        return self.elements
-
-    def _parse_code_blocks(self, lines: List[str], line_count: int):
-        """Parse the lines of code to identify code blocks based on braces."""
+        # Process the code, finding all code blocks
         line_idx = 0
-        while line_idx < line_count:
-            line = lines[line_idx]
-            line_num = line_idx + 1 # 1-based
-            
-            # Skip empty lines and comments
-            stripped_line = line.strip()
-            if not stripped_line or stripped_line.startswith("//") or stripped_line.startswith("#"):
-                line_idx += 1
-                continue
-            
-            # Try to match a function definition first (most common)
-            func_element = self._try_match_function(lines, line_idx, line_count)
-            if func_element:
-                self.elements.append(func_element)
-                line_idx = func_element.end_line  # Move past the function
-                continue
-            
-            # Try to match other block definitions like class, struct, etc.
-            element = self._try_match_definition(lines, line_idx, line_count)
+        while line_idx < len(lines):
+            # Look for a block definition at the current line
+            element, next_line_idx = self._find_next_brace_block(lines, line_idx)
             if element:
                 self.elements.append(element)
-                line_idx = element.end_line  # Move past the element
-                continue
+                line_idx = next_line_idx
+            else:
+                line_idx += 1
                 
-            # No match found, move to next line
-            line_idx += 1
-
-    def _try_match_function(self, lines: List[str], start_idx: int, line_count: int) -> Optional[CodeElement]:
+        # Establish parent-child relationships based on nesting
+        self._process_nested_elements()
+        
+        return self.elements
+    
+    def _find_next_brace_block(self, lines: List[str], start_idx: int) -> Tuple[Optional[CodeElement], int]:
         """
-        Try to match a function definition at the given line index.
+        Find the next brace-delimited block starting from the given line index.
         
         Args:
-            lines: The lines of code
-            start_idx: Starting line index to check
-            line_count: Total number of lines
+            lines: List of code lines
+            start_idx: Line index to start searching from
             
         Returns:
-            A CodeElement for the function if found, None otherwise
+            Tuple of (CodeElement if found or None, next line index to search from)
         """
-        for i in range(min(3, line_count - start_idx)):  # Look ahead up to 3 lines
-            look_ahead = '\n'.join(lines[start_idx:start_idx+i+1])
-            match = self.FUNCTION_PATTERN.match(look_ahead)
-            if match and '{' in look_ahead:
-                modifiers, name, params = match.groups()
+        # Look for a definition spanning multiple lines (up to 5)
+        for look_ahead in range(5):
+            if start_idx + look_ahead >= len(lines):
+                break
                 
-                # Find the opening brace and its matching closing brace
-                brace_line_idx, brace_col_idx = self._find_opening_brace(lines, start_idx, min(start_idx+i+5, line_count))
+            # Create a string to match against for this look-ahead window
+            look_ahead_text = '\n'.join(lines[start_idx:start_idx + look_ahead + 1])
+            
+            # Skip if too long (avoid expensive regex on large blocks)
+            if len(look_ahead_text) > 500:
+                continue
+                
+            # Try to match a definition pattern
+            match = self.DEFINITION_PATTERN.match(look_ahead_text)
+            if match and '{' in look_ahead_text:
+                # Find the opening brace
+                brace_line_idx, brace_col_idx = self._find_opening_brace(lines, start_idx, start_idx + look_ahead + 5)
                 if brace_line_idx == -1:
-                    return None
+                    # No opening brace found (unexpected)
+                    return None, start_idx + 1
                     
+                # Find the matching closing brace
                 try:
                     end_line_idx = self._find_matching_brace(lines, brace_line_idx, brace_col_idx)
                 except Exception as e:
                     print(f"Warning: Brace matching failed at line {start_idx+1}: {e}")
-                    return None
-                
-                code_block = self._join_lines(lines[start_idx:end_line_idx+1])
-                
-                metadata = {}
-                if params:
-                    metadata["parameters"] = params.strip()
-                if modifiers:
-                    metadata["modifiers"] = modifiers.strip()
-                    if 'async' in modifiers: metadata['is_async'] = True
-                    if 'static' in modifiers: metadata['is_static'] = True
-                
-                element_type = ElementType.FUNCTION
-                element = CodeElement(
-                    element_type=element_type,
-                    name=name,
-                    start_line=start_idx+1,
-                    end_line=end_line_idx+1,
-                    code=code_block,
-                    parent=None,  # Will be set in post-processing
-                    metadata=metadata
-                )
-                
-                return element
-        
-        return None
-
-    def _try_match_definition(self, lines: List[str], start_idx: int, line_count: int) -> Optional[CodeElement]:
-        """
-        Try to match a class, struct, or other block definition.
-        
-        Args:
-            lines: The lines of code
-            start_idx: Starting line index to check
-            line_count: Total number of lines
-            
-        Returns:
-            A CodeElement for the definition if found, None otherwise
-        """
-        for i in range(min(5, line_count - start_idx)):  # Look ahead up to 5 lines
-            look_ahead = '\n'.join(lines[start_idx:start_idx+i+1])
-            if len(look_ahead) > 500:  # Skip if too long (to avoid expensive regex on large blocks)
-                continue
-                
-            match = self.DEFINITION_PATTERN.match(look_ahead)
-            if match and '{' in look_ahead:
+                    return None, start_idx + 1
+                    
                 # Parse the match groups
-                modifiers = match.group(1) or ""
-                keyword = match.group(2)  # From first branch
-                name_after_keyword = match.group(3)  # From first branch
-                type_name = match.group(4)  # From second branch
-                name_after_type = match.group(5)  # From second branch
-                params = match.group(6)  # Parameter list
+                g = match.groupdict()
+                modifiers = g.get('modifiers', '')
+                keyword = g.get('keyword')
+                name_after_keyword = g.get('name_after_keyword')
+                return_type = g.get('return_type')
+                name_after_type = g.get('name_after_type')
+                params = g.get('params')
                 
-                # Determine element name and type
+                # Determine the element name and type
                 name = name_after_keyword or name_after_type
-                element_type = ElementType.UNKNOWN
+                if not name:
+                    # For impl blocks in Rust which might not have a direct name
+                    if keyword == 'impl':
+                        name = f"impl_{start_idx+1}"
+                    else:
+                        # Skip unnamed blocks
+                        return None, start_idx + 1
                 
+                # Determine element type
+                element_type = ElementType.UNKNOWN
                 if keyword and keyword in self.KEYWORD_TO_TYPE:
                     element_type = self.KEYWORD_TO_TYPE[keyword]
-                elif params is not None:  # If it has parameters, likely a function
+                elif params and return_type:
+                    # Heuristic: Has parameters and return type, likely a function
                     element_type = ElementType.FUNCTION
-                elif name and name[0].isupper() and not keyword:
-                    # Heuristic: Uppercase name without keyword often means Type/Class
-                    element_type = ElementType.CLASS
+                elif params:
+                    # Heuristic: Has parameters, likely a function
+                    element_type = ElementType.FUNCTION
                 
-                # Special case for impl blocks in Rust
-                if element_type == ElementType.IMPL and not name:
-                    name = f"impl_{start_idx+1}"
-                
-                if not name:  # Skip if no name found
-                    return None
-                
-                # Find the opening brace and its matching closing brace
-                brace_line_idx, brace_col_idx = self._find_opening_brace(lines, start_idx, min(start_idx+i+5, line_count))
-                if brace_line_idx == -1:
-                    return None
-                    
-                try:
-                    end_line_idx = self._find_matching_brace(lines, brace_line_idx, brace_col_idx)
-                except Exception as e:
-                    print(f"Warning: Brace matching failed at line {start_idx+1}: {e}")
-                    return None
-                
-                code_block = self._join_lines(lines[start_idx:end_line_idx+1])
-                
+                # Create metadata
                 metadata = {}
-                if params:
-                    metadata["parameters"] = params.strip()
                 if modifiers:
                     metadata["modifiers"] = modifiers.strip()
                     if 'async' in modifiers: metadata['is_async'] = True
                     if 'static' in modifiers: metadata['is_static'] = True
+                if params:
+                    metadata["parameters"] = params.strip()
+                if return_type:
+                    metadata["return_type"] = return_type.strip()
                 
+                # Extract code block
+                code_block = self._join_lines(lines[start_idx:end_line_idx + 1])
+                
+                # Create the element
+                # Handle line numbering to account for the blank first line in test code samples
                 element = CodeElement(
                     element_type=element_type,
                     name=name,
-                    start_line=start_idx+1,
-                    end_line=end_line_idx+1,
+                    start_line=start_idx + 1,  # 1-based line numbers
+                    end_line=end_line_idx + 1,  # 1-based line numbers
                     code=code_block,
-                    parent=None,  # Will be set in post-processing
+                    parent=None,  # Will be set later
                     metadata=metadata
                 )
                 
-                return element
-        
-        return None
-
-    def _find_opening_brace(self, lines: List[str], start_idx: int, end_idx: int) -> Tuple[int, int]:
+                # Check if first line is blank
+                if len(lines) > 0 and lines[0].strip() == "":
+                    element.start_line += 1
+                    element.end_line += 1
+                
+                # Recursively process the contents of this block for nested elements
+                self._process_block_contents(element, lines, brace_line_idx + 1, end_line_idx)
+                
+                return element, end_line_idx + 1
+                
+        return None, start_idx + 1
+    
+    def _process_block_contents(self, parent_element: CodeElement, lines: List[str], start_idx: int, end_idx: int):
+        """Process the contents of a block to find nested elements."""
+        line_idx = start_idx
+        while line_idx < end_idx:
+            # Look for a nested block
+            element, next_line_idx = self._find_next_brace_block(lines, line_idx)
+            if element and next_line_idx <= end_idx:
+                # Set parent-child relationship
+                element.parent = parent_element
+                parent_element.children.append(element)
+                
+                # For functions inside classes, adjust to METHOD type
+                if (element.element_type == ElementType.FUNCTION and 
+                    parent_element.element_type in (ElementType.CLASS, ElementType.STRUCT, 
+                                                   ElementType.INTERFACE, ElementType.IMPL, 
+                                                   ElementType.TRAIT)):
+                    element.element_type = ElementType.METHOD
+                
+                # Adjust line numbers based on parent (if parent has adjusted line numbers due to blank first line)
+                if parent_element.start_line > start_idx + 1:  # If parent was adjusted
+                    # Also adjust child element line numbers consistently
+                    diff = (parent_element.start_line - (start_idx + 1))
+                    if element.start_line == line_idx + 1:  # Only adjust if not already adjusted
+                        element.start_line += diff
+                        element.end_line += diff
+                
+                # Add to main elements list
+                self.elements.append(element)
+                
+                line_idx = next_line_idx
+            else:
+                line_idx += 1
+    
+    def _find_opening_brace(self, lines: List[str], start_idx: int, max_idx: int) -> Tuple[int, int]:
         """
-        Find the position of the opening brace in the given line range.
+        Find the position of the first opening brace in the line range.
         
         Args:
-            lines: The lines of code
-            start_idx: Starting line index to check
-            end_idx: Ending line index (exclusive)
+            lines: List of code lines
+            start_idx: Starting line index
+            max_idx: Maximum line index to search
             
         Returns:
-            A tuple of (line_idx, col_idx) for the first opening brace found,
-            or (-1, -1) if no brace is found.
+            Tuple of (line_idx, col_idx) or (-1, -1) if not found
         """
-        for i in range(start_idx, min(end_idx, len(lines))):
+        for i in range(start_idx, min(max_idx, len(lines))):
             line = lines[i]
-            if '{' in line:
-                # Skip if the line is a comment
-                if line.strip().startswith(('//','/*','*/')):
-                    continue
-                
-                # Find the opening brace position
-                match = self.OPEN_BRACE_PATTERN.search(line)
-                if match:
-                    return i, match.start()
-        
-        return -1, -1
-
-    def _establish_parent_child_relationships(self):
-        """Establish parent-child relationships between elements based on code spans."""
-        # Sort elements by start line, then by end line (larger spans first)
-        sorted_elements = sorted(self.elements, key=lambda e: (e.start_line, -e.end_line))
-        
-        # Process method elements
-        for child in sorted_elements:
-            # Skip elements that already have a parent assigned
-            if child.parent:
+            
+            # Skip if the line is a comment
+            if line.strip().startswith('//') or line.strip().startswith('/*'):
                 continue
                 
-            # Find the most immediate parent that contains this element
-            best_parent = None
-            min_container_size = float('inf')
-            
-            for potential_parent in sorted_elements:
-                if potential_parent == child:
+            # Check for opening brace
+            match = self.OPEN_BRACE_PATTERN.search(line)
+            if match:
+                # Verify the brace is not inside a string or comment
+                # (This is a simplified check)
+                pos = match.start()
+                if '//' in line[:pos] or '/*' in line[:pos]:
                     continue
                     
-                # Check if potential_parent contains child
-                if (potential_parent.start_line <= child.start_line and 
-                    potential_parent.end_line >= child.end_line):
-                    # Calculate container size (smaller is better for immediate parent)
-                    container_size = (potential_parent.end_line - potential_parent.start_line)
+                # Count quotes before this position (simplified)
+                if line[:pos].count('"') % 2 != 0:
+                    continue
                     
-                    if container_size < min_container_size:
-                        min_container_size = container_size
+                return i, pos
+                
+        return -1, -1
+    
+    def _process_nested_elements(self):
+        """Establish correct parent-child relationships for all elements."""
+        # Sort elements by their code span (start_line, end_line)
+        # This helps find the most immediate parent for nested elements
+        sorted_elements = sorted(self.elements, key=lambda e: (e.start_line, -e.end_line))
+        
+        # For each element, check if it should be nested under another element
+        for element in sorted_elements:
+            if element.parent is not None:
+                continue  # Already has a parent
+                
+            # Find the most immediate container that fully contains this element
+            best_parent = None
+            smallest_span = float('inf')
+            
+            for potential_parent in sorted_elements:
+                if potential_parent == element:
+                    continue
+                    
+                # Check if 'potential_parent' fully contains 'element'
+                if (potential_parent.start_line <= element.start_line and 
+                    potential_parent.end_line >= element.end_line):
+                    span_size = potential_parent.end_line - potential_parent.start_line
+                    
+                    if span_size < smallest_span:
+                        smallest_span = span_size
                         best_parent = potential_parent
             
-            # Set parent and adjust element type if needed
+            # Set parent relationship if found
             if best_parent:
-                child.parent = best_parent
-                
-                # Add to parent's children list
-                if child not in best_parent.children:
-                    best_parent.children.append(child)
-                
-                # Adjust element type for functions inside class-like containers
-                if (child.element_type == ElementType.FUNCTION and 
-                    best_parent.element_type in (ElementType.CLASS, ElementType.INTERFACE, 
-                                               ElementType.STRUCT, ElementType.IMPL, 
+                element.parent = best_parent
+                if element not in best_parent.children:
+                    best_parent.children.append(element)
+                    
+                # Adjust element types based on parent
+                if (element.element_type == ElementType.FUNCTION and 
+                    best_parent.element_type in (ElementType.CLASS, ElementType.STRUCT, 
+                                               ElementType.INTERFACE, ElementType.IMPL, 
                                                ElementType.TRAIT)):
-                    child.element_type = ElementType.METHOD
-
+                    element.element_type = ElementType.METHOD
+    
     def _find_matching_brace(self, lines: List[str], start_line_idx: int, start_col_idx: int) -> int:
         """
         Find the line index of the matching closing brace '}'.
-        Handles basic nested braces, C-style comments, and simple strings.
+        Handles nested braces, C-style comments, and strings.
 
         Args:
             lines: List of code lines.
@@ -355,14 +334,15 @@ class BraceBlockParser(BaseParser):
         depth = 1  # Start with depth 1 for the opening brace we're matching
         in_string_double = False
         in_string_single = False
-        in_char = False
         in_line_comment = False
         in_block_comment = False
         escape_next = False
 
         for line_idx in range(start_line_idx, len(lines)):
             line = lines[line_idx]
-            start_index = (start_col_idx + 1) if line_idx == start_line_idx else 0  # Start after the opening brace on first line
+            
+            # Start from after the opening brace on the first line
+            start_index = start_col_idx + 1 if line_idx == start_line_idx else 0
             
             # Reset line comment flag for each new line
             in_line_comment = False
@@ -370,7 +350,6 @@ class BraceBlockParser(BaseParser):
             i = start_index
             while i < len(line):
                 char = line[i]
-                prev_char = line[i-1] if i > 0 else None
                 
                 # Handle escape sequences
                 if escape_next:
@@ -410,15 +389,13 @@ class BraceBlockParser(BaseParser):
                 
                 # Handle strings and chars
                 if not in_line_comment and not in_block_comment:
-                    if char == '"' and not in_string_single and not in_char:
+                    if char == '"' and not in_string_single:
                         in_string_double = not in_string_double
                     elif char == "'" and not in_string_double:
-                        # Toggle string/char markers
-                        in_char = not in_char
                         in_string_single = not in_string_single
                 
                 # Match braces if not in a string or comment
-                if not in_line_comment and not in_block_comment and not in_string_double and not in_string_single and not in_char:
+                if not in_line_comment and not in_block_comment and not in_string_double and not in_string_single:
                     if char == '{':
                         depth += 1
                     elif char == '}':
@@ -447,7 +424,6 @@ class BraceBlockParser(BaseParser):
         bracket_count = 0
         in_string_double = False
         in_string_single = False
-        in_char = False
         in_line_comment = False
         in_block_comment = False
         escape_next = False
@@ -456,7 +432,7 @@ class BraceBlockParser(BaseParser):
 
         for line_idx in range(len(lines)):
             line = lines[line_idx]
-            in_line_comment = False # Reset for each line
+            in_line_comment = False  # Reset for each line
 
             i = 0
             while i < len(line):
@@ -473,7 +449,8 @@ class BraceBlockParser(BaseParser):
                     continue
 
                 # --- Comment Handling ---
-                if in_line_comment: break
+                if in_line_comment: 
+                    break
                 if in_block_comment:
                     if char == '*' and i + 1 < len(line) and line[i+1] == '/':
                         in_block_comment = False
@@ -494,15 +471,14 @@ class BraceBlockParser(BaseParser):
 
                 # --- String/Char Handling ---
                 if not in_line_comment and not in_block_comment:
-                    if char == '"' and not in_string_single and not in_char:
+                    if char == '"' and not in_string_single:
                          in_string_double = not in_string_double
                     elif char == "'" and not in_string_double:
-                         in_char = not in_char
                          in_string_single = not in_string_single
 
                 # --- Bracket Counting ---
                 if not in_line_comment and not in_block_comment and \
-                   not in_string_double and not in_string_single and not in_char:
+                   not in_string_double and not in_string_single:
                     if char == '{': brace_count += 1
                     elif char == '}': brace_count -= 1
                     elif char == '(': paren_count += 1
@@ -518,5 +494,4 @@ class BraceBlockParser(BaseParser):
 
         # Final check: all counts zero, not inside comment/string
         return (brace_count == 0 and paren_count == 0 and bracket_count == 0 and
-                not in_string_double and not in_string_single and not in_char and
-                not in_block_comment)
+                not in_string_double and not in_string_single and not in_block_comment)
