@@ -4,7 +4,7 @@ Base classes and types for language parsers.
 
 import re
 from enum import Enum
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 
 
 class ElementType(Enum):
@@ -33,6 +33,13 @@ class ElementType(Enum):
 class CodeElement:
     """
     Represents a code element such as a function, class, variable, etc.
+    
+    The CodeElement stores metadata about code symbols including:
+    - docstrings: Documentation strings preceding the symbol definition
+    - decorators: Function/class decorators in languages that support them
+    - annotations: Type annotations, return types, etc.
+    - visibility: Public/private/protected modifiers
+    - attributes: Additional language-specific attributes
     """
 
     def __init__(
@@ -90,11 +97,22 @@ class CodeElement:
 class BaseParser:
     """
     Base parser class with common utilities for all language parsers.
+    
+    Includes support for:
+    - Handling incomplete code with unmatched braces or indentation issues
+    - Extracting metadata from symbols (docstrings, decorators, etc.)
+    - Common utility methods for all parsers
     """
 
     def __init__(self):
         """Initialize the base parser."""
         self.elements: List[CodeElement] = []
+        self.language = "generic"
+        self.handle_incomplete_code = True
+        self.language_aware_preprocessing = True  # Enable advanced preprocessing by default
+        self._metadata_extractor = None
+        self._was_code_modified = False
+        self._preprocessing_diagnostics = None
 
     def parse(self, code: str) -> List[CodeElement]:
         """
@@ -106,6 +124,16 @@ class BaseParser:
         Returns:
             A list of CodeElement objects
         """
+        # First, preprocess the code to handle incomplete syntax if enabled
+        if self.handle_incomplete_code:
+            preprocessed_code, was_modified = self.preprocess_incomplete_code(code)
+            self._was_code_modified = was_modified
+            
+            if was_modified:
+                # Use the preprocessed code for parsing
+                code = preprocessed_code
+                
+        # Actual parsing is implemented by subclasses
         raise NotImplementedError("Subclasses must implement parse method")
 
     def find_function(self, code: str, name: str) -> Optional[CodeElement]:
@@ -306,3 +334,67 @@ class BaseParser:
             result.append(line)
 
         return "\n".join(result)
+    def preprocess_incomplete_code(self, code: str) -> Tuple[str, bool]:
+        """
+        Preprocess potentially incomplete code.
+        
+        This method applies various strategies to handle incomplete code with
+        unmatched braces, incorrect indentation, etc. It ensures the parser
+        can still extract useful information even from invalid code.
+        
+        By default, uses basic preprocessing. If language_aware_preprocessing is True,
+        it will use more advanced language-specific strategies.
+        
+        Args:
+            code: Source code that might be incomplete
+            
+        Returns:
+            Tuple of (preprocessed code, was_modified flag)
+        """
+        if not self.handle_incomplete_code:
+            return code, False
+            
+        if hasattr(self, "language_aware_preprocessing") and self.language_aware_preprocessing:
+            # Use advanced language-aware preprocessing
+            from .language_aware_preprocessing import get_preprocessor
+            preprocessor = get_preprocessor(self.language)
+            processed_code, was_modified, self._preprocessing_diagnostics = preprocessor.preprocess_code(code)
+            return processed_code, was_modified
+        else:
+            # Use basic preprocessing
+            from .incomplete_code_handler import IncompleteCodeHandler
+            return IncompleteCodeHandler.preprocess_code(code)
+    
+    def extract_metadata(self, code: str, line_idx: int) -> Dict[str, Any]:
+        """
+        Extract metadata from code at the given line index.
+        
+        Args:
+            code: Source code
+            line_idx: Line index where the symbol starts
+            
+        Returns:
+            Dictionary of extracted metadata
+        """
+        if not self._metadata_extractor:
+            from .metadata_extractor import get_metadata_extractor
+            self._metadata_extractor = get_metadata_extractor(self.language)
+            
+        return self._metadata_extractor.extract_metadata(code, line_idx)
+    
+    def was_code_modified(self) -> bool:
+        """
+        Check if the code was modified during preprocessing.
+        
+        Returns:
+            True if code was modified to handle incomplete syntax
+        """
+        return self._was_code_modified
+    def get_preprocessing_diagnostics(self) -> Optional[Dict[str, Any]]:
+        """
+        Get detailed diagnostics about the preprocessing that was applied.
+        
+        Returns:
+            Dictionary with preprocessing diagnostics or None if no advanced preprocessing was done
+        """
+        return self._preprocessing_diagnostics

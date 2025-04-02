@@ -15,6 +15,8 @@ class PythonParser(BaseParser):
     def __init__(self):
         """Initialize the Python parser."""
         super().__init__()
+        self.language = "python"
+        self.language_aware_preprocessing = True  # Use language-aware preprocessing
         # Patterns for identifying various Python elements
         self.function_pattern = re.compile(r"^\s*def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(")
         self.class_pattern = re.compile(r"^\s*class\s+([a-zA-Z_][a-zA-Z0-9_]*)")
@@ -100,6 +102,12 @@ class PythonParser(BaseParser):
                 # Extract class code
                 class_code = "\n".join(lines[line_idx : block_end + 1])
 
+                # Extract metadata for this class
+                metadata = self.extract_metadata("\n".join(lines), line_idx)
+                # Add decorators if they were collected earlier
+                if decorators:
+                    metadata["decorators"] = decorators
+                
                 # Create the class element
                 class_element = CodeElement(
                     element_type=ElementType.CLASS,
@@ -108,15 +116,8 @@ class PythonParser(BaseParser):
                     end_line=block_end + 1,
                     code=class_code,
                     parent=parent,
-                    metadata={"decorators": decorators},
+                    metadata=metadata,
                 )
-
-                # Check for docstring
-                doc_idx = line_idx + 1
-                if doc_idx <= end_idx:
-                    docstring = self._extract_docstring(lines, doc_idx, indent_level)
-                    if docstring:
-                        class_element.metadata["docstring"] = docstring
 
                 # Add to elements list
                 self.elements.append(class_element)
@@ -149,11 +150,18 @@ class PythonParser(BaseParser):
                 # Extract function code
                 func_code = "\n".join(lines[line_idx : block_end + 1])
 
-                # Extract return type if present
-                return_type = None
-                return_match = self.return_type_pattern.search(line)
-                if return_match:
-                    return_type = return_match.group(1).strip()
+                # Extract metadata for this function
+                metadata = self.extract_metadata("\n".join(lines), line_idx)
+                
+                # Add decorators if they were collected earlier
+                if decorators:
+                    metadata["decorators"] = decorators
+                
+                # Extract return type if present and not already in metadata
+                if "return_type" not in metadata:
+                    return_match = self.return_type_pattern.search(line)
+                    if return_match:
+                        metadata["return_type"] = return_match.group(1).strip()
 
                 # Create function element
                 func_element = CodeElement(
@@ -163,17 +171,8 @@ class PythonParser(BaseParser):
                     end_line=block_end + 1,
                     code=func_code,
                     parent=parent,
-                    metadata={"decorators": decorators, "return_type": return_type},
+                    metadata=metadata,
                 )
-
-                # Check for docstring
-                doc_idx = line_idx + 1
-                if doc_idx <= end_idx:
-                    docstring = self._extract_docstring(
-                        lines, doc_idx, indent_level + 4
-                    )
-                    if docstring:
-                        func_element.metadata["docstring"] = docstring
 
                 # Add to elements list
                 self.elements.append(func_element)
