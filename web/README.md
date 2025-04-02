@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) ![Version](https://img.shields.io/badge/version-0.1.0-green) ![Python](https://img.shields.io/badge/Python-3.12+-blue)
 
-A sophisticated web content retrieval and analysis platform that enables AI assistants like Claude to fetch, crawl, and intelligently process web content. This server bridges the gap between AI assistants and the internet, providing both raw content access and AI-powered information extraction capabilities.
+A sophisticated web content retrieval and analysis platform that enables AI assistants like Claude to fetch, crawl, search, and intelligently process web content. This server bridges the gap between AI assistants and the internet, providing both raw content access and AI-powered information extraction capabilities.
 
 ## Table of Contents
 - [Overview](#overview)
@@ -10,15 +10,15 @@ A sophisticated web content retrieval and analysis platform that enables AI assi
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [MCP Tools](#mcp-tools)
-- [Configuration](#configuration)
 - [Use Cases](#use-cases)
+- [When to Use Each Tool](#when-to-use-each-tool)
 - [Security](#security)
 - [Contributing](#contributing)
 - [License](#license)
 
 ## Overview
 
-The Web Processing MCP Server serves as an intelligent bridge between AI assistants and the broader internet. It enables capabilities ranging from simple URL content fetching to multi-page website crawling with intelligent processing of discovered content. By combining web access with AI-powered analysis, this server transforms raw web data into structured, useful information.
+The Web Processing MCP Server serves as an intelligent bridge between AI assistants and the broader internet. It enables capabilities ranging from simple URL content fetching to multi-page website crawling and web searching with intelligent processing of discovered content. By combining web access with AI-powered analysis, this server transforms raw web data into structured, useful information. It's designed to be easily integrated with Claude and other AI assistants through the Model Context Protocol (MCP).
 
 ## Features
 
@@ -43,6 +43,7 @@ The Web Processing MCP Server serves as an intelligent bridge between AI assista
 - **Custom Instructions**: Provide specific directions for how the AI should analyze content
 - **Multi-URL Processing**: Collect and analyze content from multiple sources in a single operation
 - **Information Extraction**: Extract specific data points, summaries, or insights from web content
+- **Search Results Analysis**: Process web search results with AI to synthesize findings into coherent insights
 
 ### Performance & Reliability
 
@@ -67,23 +68,7 @@ The Web Processing MCP Server serves as an intelligent bridge between AI assista
 
 ## Installation
 
-### Option 1: Docker Installation (Recommended)
-
-The Docker installation provides a self-contained environment with all dependencies configured:
-
-```bash
-# Clone the repository
-git clone https://github.com/0kenx/mcp-servers.git
-cd mcp-servers/web
-
-# Build the Docker image
-docker build . -t mcp/web
-
-# Run the server with your OpenAI API key
-docker run -p 3007:3007 -i --rm mcp/web sk-YOUR_OPENAI_API_KEY
-```
-
-### Option 2: Local Installation
+### Option 1: Local Installation
 
 For users who prefer direct installation on their system:
 
@@ -92,18 +77,11 @@ For users who prefer direct installation on their system:
 git clone https://github.com/0kenx/mcp-servers.git
 cd mcp-servers/web
 
-# Install dependencies using pip
-pip install -r requirements.txt
-
-# Or using uv (faster)
-pip install uv
-uv sync
-
-# Run the server
-python -m src.server sk-YOUR_OPENAI_API_KEY
+# Build the Docker image
+docker build -t mcp/web .
 ```
 
-## Configuration with Claude
+### Configuration with Claude
 
 Add the Web Processing MCP Server to your Claude configuration file:
 
@@ -132,6 +110,16 @@ Add the Web Processing MCP Server to your Claude configuration file:
 ```
 
 **Note**: Replace `sk-YOUR_OPENAI_KEY` with your actual OpenAI API key (required for AI processing capabilities) and `YOUR_BRAVE_KEY` with your Brave Search API key (required for web search functionality).
+
+### How It Works
+
+The Web Processing MCP Server acts as a bridge between Claude (or other AI assistants) and the web. When Claude invokes one of the MCP tools:
+
+1. The server receives the request with parameters (like URLs, search queries, or processing instructions)
+2. It handles the web interaction (fetching content, crawling, or searching) using `httpx` for HTTP requests
+3. Content is processed using libraries like `beautifulsoup4` for HTML parsing and `markdownify` for conversion
+4. For AI-enhanced tools, the content is sent to OpenAI's API with your specified instructions
+5. The processed results are returned to Claude, which can then incorporate them into its response
 
 
 ## MCP Tools
@@ -293,6 +281,22 @@ Search the web for "climate change solutions" and analyze the different approach
 - **Technical Troubleshooting**: Search for solutions to technical problems across multiple sources
 - **Learning Resources**: Collect and organize educational content on specific topics
 
+## When to Use Each Tool
+
+The Web Processing MCP Server provides several tools for different web interaction scenarios:
+
+- **`fetch_url`**: Use when you need to examine the content of a specific web page without additional processing. Ideal for simple content retrieval.
+
+- **`fetch_urls_and_process`**: Best for when you need to analyze content from multiple specific URLs and combine the insights. Particularly useful for comparison tasks.
+
+- **`crawl_website`**: Choose this when you need to explore a website's structure and collect content from multiple linked pages.
+
+- **`crawl_url_and_process`**: Ideal for comprehensive analysis of documentation or multi-page resources where you need AI to synthesize information from the entire site.
+
+- **`search_web`**: Use when you need to find information across the internet on a specific topic or query.
+
+- **`search_web_and_process`**: Best for research tasks where you need to gather and synthesize information from multiple search results into a coherent analysis.
+
 ## Security Considerations
 
 ### Safe Web Interaction
@@ -316,7 +320,7 @@ Search the web for "climate change solutions" and analyze the different approach
 
 ## Contributing
 
-Contributions are welcome! If you'd like to improve this project.
+Contributions are welcome! If you'd like to improve this project, please feel free to submit pull requests or open issues on the repository.
 
 ## License
 

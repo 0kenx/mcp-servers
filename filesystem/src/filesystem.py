@@ -127,7 +127,61 @@ Answer the USER's request using the relevant tool(s), if they are available. Che
 The working directory of all MCP tools is the directory that is being set with the set_working_directory tool. This does not impact command line operations. You need to cd into the working directory before executing terminal commands.
 """
 
-mcp = FastMCP("secure-filesystem-server")
+MCP_INSTRUCTIONS = """
+The Filesystem MCP Server is a secure bridge for AI models to interact with your local files and code. This server provides controlled access to filesystem operations, code analysis, and version tracking within explicitly allowed directories.
+
+The server enables reading, writing, analyzing, and managing files and directories through a carefully designed interface that prioritizes security and utility.
+
+Key capabilities:
+
+1. Directory Operations:
+   - `set_working_directory`: Establish context for operations
+   - `get_working_directory`: Check current working context
+   - `directory_tree`: Generate recursive directory listings
+   - `list_directory`: Get basic directory listings
+   - `create_directory`: Create new directory structures
+   - `search_directories`: Find directories matching patterns
+   - `search_files`: Locate files matching patterns
+   - `list_allowed_directories`: See which directories are accessible
+   - `changes_since_last_commit`: View Git repository status
+
+2. File Reading & Analysis:
+   - `read_file`: Read whole files or specific line ranges
+   - `read_multiple_files`: Process several files at once
+   - `read_file_by_keyword`: Find and extract sections containing specific terms
+   - `read_function_by_keyword`: Locate functions containing specific keywords
+   - `get_symbols`: Extract code structure (functions, classes, methods)
+   - `get_function_code`: Extract complete function definitions
+   - `get_file_info`: Retrieve detailed metadata about files
+
+3. File Writing & Modification:
+   - `write_file`: Create new files or completely overwrite existing ones
+   - `edit_file_diff`: Make targeted changes using replacements and insertions
+   - `move_file`: Rename or relocate files
+   - `delete_file`: Remove files
+   - `finish_edit`: Signal completion of editing operations
+
+Best practices for usage:
+
+- Always call `set_working_directory` first - this is required before performing operations
+- For file reading:
+  - Use line ranges with `read_file` for efficiency with large files (e.g., ["1-100", "200-300"])
+  - Use `read_file_by_keyword` to extract specific sections rather than reading entire files
+  - When analyzing code, use specialized tools like `get_symbols` and `get_function_code`
+
+- For file modification:
+  - `changes_since_last_commit` should be called before starting to make edits
+  - Prefer `edit_file_diff` over `write_file` for smaller changes to save tokens. Make targeted, small changes rather than whole rewrites
+  - Use `inserts` and `replacements` parameters to make precise edits, group multiple edits into one tool call
+  - Verify the result of edits returned by `edit_file_diff` and check for inconsistencies or unexpected results
+  - Call `finish_edit` before finishing your message to the USER
+
+- For exploration:
+  - Use `list_directory` for immediate contents, `directory_tree` for deeper exploration
+  - Use pattern matching with wildcards in `search_files` (e.g., "*.py" or "config.*")
+"""
+
+mcp = FastMCP("secure-filesystem-server", instructions=MCP_INSTRUCTIONS)
 
 # Command line argument parsing
 if len(sys.argv) < 2:
@@ -672,8 +726,8 @@ def read_multiple_files(paths: List[str]) -> str:
 def read_file_by_keyword(
     path: str,
     keyword: str,
-    include_lines_before: int = 0,
-    include_lines_after: int = 0,
+    include_lines_before: int = 2,
+    include_lines_after: int = 3,
     use_regex: bool = False,
     ignore_case: bool = False,
 ) -> str:

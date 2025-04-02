@@ -10,9 +10,28 @@ from pydantic import AnyUrl, ValidationError
 
 from mcp.server.fastmcp import FastMCP
 
+MCP_INSTRUCTIONS = """
+This Web Processing MCP Server enables you to retrieve, crawl, search, and intelligently process web content, transforming raw web data into structured, useful information.
+
+The server excels at tasks ranging from fetching single URLs to multi-page website crawling with intelligent processing of discovered content. By combining web access with AI-powered analysis, this server enables comprehensive web interaction capabilities.
+
+Key capabilities:
+- Use `fetch_url` for simple content retrieval from a single known URL
+- Use `fetch_urls_and_process` when you need to analyze content from multiple specific URLs with an AI agent according to your instructions. This is the recommended tool
+- Use `crawl_website` when you need to systematically explore a website's content, following links with configurable depth and page limits
+- Use `crawl_url_and_process` for deep analysis of entire website sections with an AI agent according to your instructions
+- Use `search_web` when you need to find information across the internet on a specific topic
+- Use `search_web_and_process` when you need to synthesize search results into coherent insights with an AI agent according to your instructions. This is useful when going through many results
+
+For optimal performance:
+- Provide clear, specific instructions when using AI processing agents
+- Use domain restrictions with the `allowed_domains` parameter to prevent unintended crawling
+- Set appropriate timeouts and page limits to manage processing time
+- Consider content size limits based on the type and depth of information you're looking for
+"""
 
 # Create MCP server
-mcp = FastMCP("web-processing-server")
+mcp = FastMCP("web-processing-server", instructions=MCP_INSTRUCTIONS)
 
 # Default timeout for requests (in seconds)
 DEFAULT_TIMEOUT = 30
@@ -32,7 +51,7 @@ DEFAULT_SEARCH_COUNT = 10
 BRAVE_SEARCH_API_URL = "https://api.search.brave.com/res/v1/web/search"
 
 # --- OpenAI Setup ---
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 if (
     not OPENAI_API_KEY
     or OPENAI_API_KEY == "YOUR_OPENAI_KEY"
@@ -58,7 +77,7 @@ else:
         openai_client = None
 
 # --- Brave Search Setup ---
-BRAVE_API_KEY = os.environ.get('BRAVE_API_KEY')
+BRAVE_API_KEY = os.environ.get("BRAVE_API_KEY")
 if (
     not BRAVE_API_KEY or BRAVE_API_KEY == "YOUR_BRAVE_KEY"
 ):  # Added check for placeholder

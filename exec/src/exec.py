@@ -13,11 +13,44 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, List, Dict, Any, Union, Tuple, Set
 
-
 from mcp.server.fastmcp import FastMCP, Context
 
+MCP_INSTRUCTIONS = """
+The Exec MCP Server is a powerful execution environment that allows AI assistants like Claude to run commands, scripts, and tests. The mounted filesystem is shared with the Filesystem MCP Server.
+
+This server comes with pre-installed development tools for Python, JavaScript/TypeScript, Rust, Go, and system utilities. It enables command execution, process management, and package management capabilities through an intuitive MCP interface.
+
+Key capabilities:
+
+1. Command & Script Execution:
+   - `execute_command`: Run shell commands asynchronously with configurable timeouts. The process doesn't terminate after timeout, but is run in a session pool that can be accessed later. You can simultaneously execute multiple commands in a fork-join pattern
+   - `execute_script`: Run multi-line code in Python, JavaScript, Rust, Go, or Bash asynchronously
+   
+2. Process Management:
+   - `list_sessions`: View all active command sessions
+   - `read_output`: Read output from a running session
+   - `force_terminate`: Kill a specific running session
+   - `list_processes`: List all running system processes by PID
+   - `kill_process`: Terminate a process by its PID
+   
+3. Security Controls:
+   - `block_command`: Prevent specific commands from being executed
+   - `unblock_command`: Allow previously blocked commands
+   - `list_blocked_commands`: View all commands on the blacklist
+   
+4. Package Management:
+   - `list_installed_commands`: Show available tools and commands
+   - `install_command`: Install specific packages or tools
+   - `configure_packages`: Install multiple packages across different managers
+
+For optimal usage:
+- Set reasonable timeouts for your commands and use the fork-join pattern for long running commands
+- Check if tools are already installed with `list_installed_commands` before installation
+- When using scripting languages, handle errors properly
+"""
+
 # Create MCP server
-mcp = FastMCP("command-execution-server")
+mcp = FastMCP("command-execution-server", instructions=MCP_INSTRUCTIONS)
 
 # Default timeout for commands (in seconds)
 DEFAULT_TIMEOUT = 30
