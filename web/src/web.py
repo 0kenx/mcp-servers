@@ -73,7 +73,7 @@ You will receive the web page content within `<content>` tags and the user's spe
 # --- Helper Functions (Partially from Draft) ---
 
 
-def extract_content_from_html(html: str, max_length: Optional[int] = None) -> str:
+def _extract_content_from_html(html: str, max_length: Optional[int] = None) -> str:
     """Extract and convert HTML content to Markdown format, with optional truncation."""
     if not html or not html.strip():
         return "<e>Empty HTML content</e>"
@@ -91,7 +91,7 @@ def extract_content_from_html(html: str, max_length: Optional[int] = None) -> st
         return f"<e>Failed to extract content from HTML: {str(e)}</e>"
 
 
-async def fetch_url(
+async def _fetch_url(
     url: str,
     user_agent: str = DEFAULT_USER_AGENT,
     timeout: int = DEFAULT_TIMEOUT,
@@ -168,7 +168,7 @@ async def fetch_url(
         return (None, None, 500, metadata)  # 500 Internal Server Error
 
 
-async def process_web_content(
+async def _process_web_content(
     content: str,
     url: str,
     content_type: Optional[str] = None,
@@ -197,7 +197,7 @@ async def process_web_content(
     processed_output = None
     if "text/html" in content_type:
         # Simplistic: try markdownify first
-        processed_output = extract_content_from_html(content)
+        processed_output = _extract_content_from_html(content)
 
     # --- Element Extraction (Requires BeautifulSoup) ---
     if extract_elements and "text/html" in content_type:
@@ -261,7 +261,7 @@ async def process_web_content(
             if output_type_lower == "html":
                 processed_output = content
             else:
-                processed_output = extract_content_from_html(
+                processed_output = _extract_content_from_html(
                     content
                 )  # Default to markdown
         else:  # Plain text or other types
@@ -300,100 +300,165 @@ async def _call_openai(
         return None, error_msg
 
 
+async def _crawl_url(
+    url: str,
+    max_pages: int = 5,
+    max_depth: int = 2,
+    timeout: int = DEFAULT_TIMEOUT,
+    allowed_domains: Optional[List[str]] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    Core crawling logic to collect content from multiple linked pages.
+
+    Returns:
+        Tuple containing (list of page content dicts, crawl metadata dict)
+    """
+    try:
+        from bs4 import BeautifulSoup
+        from urllib.parse import urljoin
+    except ImportError:
+        raise ImportError("'beautifulsoup4' library is required for crawling.")
+
+    try:
+        AnyUrl(url)  # Validate start URL
+    except ValidationError as e:
+        raise ValueError(f"Invalid start URL format: {e}")
+
+    _user_agent = DEFAULT_USER_AGENT
+    start_time = datetime.now()
+
+    # Determine base domain and allowed domains
+    try:
+        parsed_start_url = urlparse(url)
+        base_domain = parsed_start_url.netloc
+        if not base_domain:
+            raise ValueError("Could not determine domain from start URL")
+    except Exception as e:
+        raise ValueError(f"Error parsing start URL domain: {e}")
+
+    if not allowed_domains:
+        _allowed_domains = {base_domain}
+    else:
+        _allowed_domains = set(allowed_domains)
+        _allowed_domains.add(base_domain)  # Ensure start domain is always allowed
+
+    # BFS crawl state
+    queue = asyncio.Queue()
+    queue.put_nowait((url, 0))  # (url, depth)
+    crawled = {url}  # Set to track visited URLs
+    pages_content = []  # List to store page content
+
+    async def worker():
+        while not queue.empty() and len(crawled) <= max_pages:
+            try:
+                current_url, depth = await queue.get()
+
+                print(
+                    f"Crawling [Depth:{depth}, Total:{len(crawled)}/{max_pages}]: {current_url}",
+                    file=sys.stderr,
+                )
+
+                # Fetch page
+                content, content_type, status_code, metadata = await _fetch_url(
+                    current_url,
+                    user_agent=_user_agent,
+                    timeout=timeout,
+                )
+
+                if status_code < 400 and content is not None:
+                    # Pre-process content
+                    processed_content = ""
+                    if "text/html" in (content_type or ""):
+                        processed_content = _extract_content_from_html(content)
+                    elif "text/" in (content_type or ""):
+                        processed_content = content
+                    else:
+                        processed_content = content
+
+                    if processed_content and processed_content.strip():
+                        pages_content.append(
+                            {
+                                "url": metadata.get("final_url", current_url),
+                                "depth": depth,
+                                "content": processed_content,
+                                "content_type": content_type,
+                                "status_code": status_code,
+                            }
+                        )
+
+                    # Find and queue links if conditions met
+                    if depth < max_depth and "text/html" in (content_type or ""):
+                        try:
+                            soup = BeautifulSoup(content, "html.parser")
+                            for a_tag in soup.find_all("a", href=True):
+                                href = a_tag["href"]
+                                try:
+                                    absolute_url = urljoin(current_url, href)
+                                    parsed_link = urlparse(absolute_url)
+
+                                    # Basic validation and filtering
+                                    if (
+                                        parsed_link.scheme in ("http", "https")
+                                        and parsed_link.netloc
+                                        and parsed_link.netloc in _allowed_domains
+                                        and absolute_url not in crawled
+                                        and len(crawled) + queue.qsize() < max_pages
+                                    ):
+                                        crawled.add(absolute_url)
+                                        await queue.put((absolute_url, depth + 1))
+                                except Exception as link_e:
+                                    print(
+                                        f"Warning: Skipping link '{href}' due to parsing error: {link_e}",
+                                        file=sys.stderr,
+                                    )
+                        except Exception as parse_e:
+                            print(
+                                f"Warning: Could not parse links on {current_url}: {parse_e}",
+                                file=sys.stderr,
+                            )
+
+                queue.task_done()
+
+            except asyncio.CancelledError:
+                print("Crawler task cancelled.", file=sys.stderr)
+                break
+            except Exception as e:
+                print(
+                    f"Error in crawler worker for {current_url}: {e}",
+                    file=sys.stderr,
+                )
+                queue.task_done()  # Ensure task is marked done even on error
+
+    # Run crawler worker
+    crawl_timeout = max_pages * timeout + 10
+    try:
+        await asyncio.wait_for(worker(), timeout=crawl_timeout)
+        await queue.join()
+    except asyncio.TimeoutError:
+        print(
+            f"Warning: Crawl timed out after {crawl_timeout} seconds.", file=sys.stderr
+        )
+    except Exception as e:
+        print(f"Error during crawl execution: {e}", file=sys.stderr)
+
+    # Prepare metadata
+    crawl_metadata = {
+        "start_url": url,
+        "pages_crawled": len(crawled),
+        "pages_with_content": len(pages_content),
+        "max_depth_reached": max((p.get("depth", 0) for p in pages_content), default=0),
+        "duration_seconds": (datetime.now() - start_time).total_seconds(),
+        "allowed_domains": list(_allowed_domains),
+    }
+
+    return pages_content, crawl_metadata
+
+
 # --- MCP Tools ---
 
 
 @mcp.tool()
-async def fetch_and_process_url(
-    url: str,
-    instructions: str,
-    timeout: int = DEFAULT_TIMEOUT,
-    max_length: int = DEFAULT_FETCH_MAX_LENGTH,
-    user_agent: Optional[str] = None,
-    openai_model: str = DEFAULT_OPENAI_MODEL,
-    openai_max_tokens: int = DEFAULT_OPENAI_MAX_TOKENS,
-    preprocess_to_format: str = "markdown",  # Hint for pre-processing before AI
-) -> str:
-    """
-    Fetches URL content and processes it with an external AI agent based on instructions.
-    
-    Args:
-        url: URL to fetch
-        instructions: Prompts for the AI agent on how toprocess data
-        timeout: Request timeout in seconds (default: 30)
-        max_length: Max chars to process (default: 100000)
-        user_agent: Custom user agent string.
-        openai_model: AI model to use (default: 'o3-mini')
-        openai_max_tokens: Max tokens for AI response (default: 10000)
-        preprocess_to_format: Format to convert content to BEFORE sending to AI ('markdown', 'text', 'html'). Markdown recommended.
-    
-    Returns:
-        AI-processed content or error message
-    """
-    if not openai_client:
-        return "Error: OpenAI client not available. Cannot process with AI."
-
-    # Validate URL format early
-    try:
-        AnyUrl(url)
-    except ValidationError as e:
-        return f"Invalid URL format: {e}"
-
-    _user_agent = user_agent or DEFAULT_USER_AGENT
-
-    # 1. Fetch content
-    content, content_type, status_code, metadata = await fetch_url(
-        url, user_agent=_user_agent, timeout=timeout
-    )
-
-    # Handle fetch errors
-    if status_code >= 400 or content is None:
-        error_msg = metadata.get(
-            "error", f"Failed to fetch URL (Status: {status_code})"
-        )
-        return f"Error fetching {url}: {error_msg}"
-
-    # 2. Pre-process content based on hint (usually convert to Markdown)
-    processed_content = ""
-    if "text/html" in (content_type or "") and preprocess_to_format != "html":
-        processed_content = extract_content_from_html(content, max_length=max_length)
-    elif "text/" in (content_type or "") or preprocess_to_format == "text":
-        processed_content = content[:max_length]
-        if len(content) > max_length:
-            processed_content += f"\n\n[Content truncated at {max_length} characters]"
-    else:  # Keep raw for JSON, XML, or if hint is html
-        processed_content = content[:max_length]
-        if len(content) > max_length:
-            processed_content += f"\n\n[Content truncated at {max_length} characters]"
-
-    if "<e>Failed to extract content" in processed_content:
-        # If markdownify failed significantly, maybe try sending raw HTML snippet?
-        # Or just report the failure? Let's report it for now.
-        return (
-            f"Error processing HTML content from {url}: Could not convert to Markdown."
-        )
-
-    if not processed_content.strip():
-        return (
-            f"Error: Fetched content from {url} appears to be empty after processing."
-        )
-
-    # 3. Call OpenAI
-    ai_result, ai_error = await _call_openai(
-        content=processed_content,
-        instructions=instructions,
-        model=openai_model,
-        max_tokens=openai_max_tokens,
-    )
-
-    if ai_error:
-        return f"Error processing content from {url} with AI: {ai_error}"
-
-    return ai_result or "AI returned an empty response."
-
-
-@mcp.tool()
-async def fetch_and_process_multiple_urls(
+async def fetch_and_process_urls(
     urls: List[str],
     instructions: str,
     timeout: int = DEFAULT_TIMEOUT,
@@ -404,20 +469,20 @@ async def fetch_and_process_multiple_urls(
     preprocess_to_format: str = "markdown",
 ) -> str:
     """
-    Fetches multiple URLs and processes each with an external AI agent using the same instructions.
-    
+    Fetches list of URLs, combines content, and processes with an external AI agent following instructions.
+
     Args:
         urls: List of URLs to fetch
-        instructions: Instructions for AI to process each URL
+        instructions: Instructions for AI to process the combined content
         timeout: Request timeout per URL in seconds (default: 30)
         max_length: Max chars per URL to process (default: 100000)
         user_agent: Custom user agent string
         openai_model: AI model to use (default: 'o3-mini')
         openai_max_tokens: Max tokens for AI responses (default: 10000)
         preprocess_to_format: Format to convert content to BEFORE sending to AI ('markdown', 'text', 'html'). Markdown recommended.
-    
+
     Returns:
-        Combined results as JSON map or markdown
+        AI-processed combined content
     """
     if not openai_client:
         return "Error: OpenAI client not available. Cannot process with AI."
@@ -426,16 +491,16 @@ async def fetch_and_process_multiple_urls(
 
     _user_agent = user_agent or DEFAULT_USER_AGENT
 
-    async def _fetch_and_process_one(url: str):
+    async def _fetch_one(url: str):
         try:
             # Validate URL
             try:
                 AnyUrl(url)
             except ValidationError as e:
-                return url, f"Invalid URL format: {e}"
+                return url, None, f"Invalid URL format: {e}"
 
             # Fetch
-            content, content_type, status_code, metadata = await fetch_url(
+            content, content_type, status_code, metadata = await _fetch_url(
                 url,
                 user_agent=_user_agent,
                 timeout=timeout,
@@ -444,13 +509,14 @@ async def fetch_and_process_multiple_urls(
             if status_code >= 400 or content is None:
                 return (
                     url,
+                    None,
                     f"Error fetching: {metadata.get('error', f'Status {status_code}')}",
                 )
 
             # Pre-process
             processed_content = ""
             if "text/html" in (content_type or "") and preprocess_to_format != "html":
-                processed_content = extract_content_from_html(
+                processed_content = _extract_content_from_html(
                     content, max_length=max_length
                 )
             elif "text/" in (content_type or "") or preprocess_to_format == "text":
@@ -467,59 +533,174 @@ async def fetch_and_process_multiple_urls(
                     )
 
             if "<e>Failed to extract content" in processed_content:
-                return url, "Error processing HTML: Could not convert to Markdown."
+                return (
+                    url,
+                    None,
+                    "Error processing HTML: Could not convert to Markdown.",
+                )
             if not processed_content.strip():
-                return url, "Error: Fetched content appears empty after processing."
+                return (
+                    url,
+                    None,
+                    "Error: Fetched content appears empty after processing.",
+                )
 
-            # Call AI
-            ai_result, ai_error = await _call_openai(
-                content=processed_content,
-                instructions=instructions,
-                model=openai_model,
-                max_tokens=openai_max_tokens,
-            )
-
-            if ai_error:
-                return url, f"AI Error: {ai_error}"
-            return url, ai_result or "AI returned empty response."
+            return url, processed_content, None
 
         except Exception as e:
-            return url, f"Unexpected error processing this URL: {str(e)}"
+            return url, None, f"Unexpected error processing this URL: {str(e)}"
 
-    # Run all processing tasks concurrently
-    tasks = [_fetch_and_process_one(u) for u in urls]
+    # Run all fetch tasks concurrently
+    tasks = [_fetch_one(u) for u in urls]
     results_list = await asyncio.gather(*tasks)
 
+    # Combine all successful content
+    combined_content = ""
+    fetch_summary = []
+
+    for url, content, error in results_list:
+        if content:
+            combined_content += f"\n\n--- URL: {url} ---\n\n{content}\n\n"
+            fetch_summary.append({"url": url, "status": "success"})
+        else:
+            fetch_summary.append({"url": url, "status": "error", "error": error})
+
+    if not combined_content:
+        return "Error: No content could be fetched from any of the provided URLs."
+
+    # Call AI once with combined content
+    ai_result, ai_error = await _call_openai(
+        content=combined_content,
+        instructions=instructions,
+        model=openai_model,
+        max_tokens=openai_max_tokens,
+    )
+
+    if ai_error:
+        return f"Error processing the combined content with AI: {ai_error}"
+
     # Format output
-    output_parts = ["# AI Processing Results for Multiple URLs\n"]
-    output_parts.append(f"**Instructions Applied:**\n```\n{instructions}\n```\n---")
-    for url, result_or_error in results_list:
-        output_parts.append(f"## Result for: {url}\n")
-        output_parts.append(f"```markdown\n{result_or_error}\n```\n---")
+    output_parts = ["# AI Agent Processing of Multiple URLs\n"]
+    output_parts.append(f"**Instructions Applied:**\n```\n{instructions}\n```\n")
+
+    # Add fetch summary
+    output_parts.append("## URLs Processed\n")
+    for item in fetch_summary:
+        if item["status"] == "success":
+            output_parts.append(f"- SUCCESS: {item['url']}")
+        else:
+            output_parts.append(f"- ERROR: {item['url']} - {item['error']}")
+
+    output_parts.append("\n## AI Agent Analysis Result\n")
+    output_parts.append(ai_result or "AI agent returned an empty response.")
+
     return "\n".join(output_parts)
 
+
+@mcp.tool()
+async def crawl_and_process_url(
+    url: str,
+    instructions: str,
+    max_pages: int = 5,
+    max_depth: int = 2,
+    timeout: int = DEFAULT_TIMEOUT,
+    allowed_domains: Optional[List[str]] = None,
+    openai_model: str = DEFAULT_OPENAI_MODEL,
+    openai_max_tokens: int = DEFAULT_OPENAI_MAX_TOKENS,
+) -> str:
+    """
+    Crawls website and processes discovered pages with AI based on instructions.
+
+    Args:
+        url: Starting URL to crawl
+        instructions: Instructions for AI processing of crawled content
+        max_pages: Max pages to fetch (default: 5)
+        max_depth: Max link depth from start URL (default: 2)
+        timeout: Request timeout per page in seconds (default: 30)
+        allowed_domains: Domains to restrict crawling to (default: start URL's domain)
+        openai_model: AI model to use (default: 'o3-mini')
+        openai_max_tokens: Max tokens for AI response (default: 10000)
+
+    Returns:
+        AI-processed content from crawled pages
+    """
+    if not openai_client:
+        return "Error: OpenAI client not available. Cannot process with AI."
+
+    try:
+        # Call the core crawling function
+        pages_content, crawl_metadata = await _crawl_url(
+            url=url,
+            max_pages=max_pages,
+            max_depth=max_depth,
+            timeout=timeout,
+            allowed_domains=allowed_domains,
+        )
+
+        if not pages_content:
+            return "No valid content was found during crawling."
+
+        # Prepare content for AI processing
+        combined_content = ""
+        for i, page in enumerate(pages_content):
+            combined_content += f"\n\n--- PAGE {i + 1}: {page['url']} ---\n\n"
+            combined_content += page["content"]
+
+        # Process with AI
+        ai_result, ai_error = await _call_openai(
+            content=combined_content,
+            instructions=instructions,
+            model=openai_model,
+            max_tokens=openai_max_tokens,
+        )
+
+        if ai_error:
+            return f"Error processing crawled content with AI: {ai_error}"
+
+        # Markdown output
+        output_parts = ["# AI Analysis of Crawled Content\n"]
+        output_parts.append(f"- Starting URL: {url}")
+        output_parts.append(f"- Pages Crawled: {crawl_metadata['pages_crawled']}")
+        output_parts.append(
+            f"- Pages With Content: {crawl_metadata['pages_with_content']}"
+        )
+        output_parts.append(
+            f"- Max Depth Reached: {crawl_metadata['max_depth_reached']}"
+        )
+        output_parts.append(
+            f"- Duration: {crawl_metadata['duration_seconds']:.2f} seconds"
+        )
+        output_parts.append("\n## AI Analysis\n")
+        output_parts.append(ai_result or "AI returned an empty response.")
+        return "\n".join(output_parts)
+
+    except ImportError as e:
+        return f"Error: {str(e)}"
+    except ValueError as e:
+        return f"Error: {str(e)}"
+    except Exception as e:
+        return f"Unexpected error during crawl and process: {str(e)}"
 
 
 # --- Non-AI Tools ---
 
 
 @mcp.tool()
-async def fetch_url_content(
+async def fetch_url(
     url: str,
     timeout: int = DEFAULT_TIMEOUT,
     output_type: str = "markdown",
     max_length: int = DEFAULT_FETCH_MAX_LENGTH,
-
 ) -> str:
     """
     Fetches URL content without AI processing.
-    
+
     Args:
         url: URL to fetch
         timeout: Request timeout in seconds (default: 30)
         output_type: Output format (default: 'markdown', options: 'html', 'text', 'json', 'raw')
         max_length: Max chars to return (default: 100000)
-    
+
     Returns:
         Fetched content in requested format or error message
     """
@@ -530,7 +711,7 @@ async def fetch_url_content(
 
     _user_agent = DEFAULT_USER_AGENT
 
-    content, content_type, status_code, metadata = await fetch_url(
+    content, content_type, status_code, metadata = await _fetch_url(
         url, user_agent=_user_agent, timeout=timeout
     )
 
@@ -576,7 +757,7 @@ async def fetch_url_content(
             },  # Avoid redundant/large fields
         }
         if "text/html" in (content_type or ""):
-            output_data["markdown_content"] = extract_content_from_html(
+            output_data["markdown_content"] = _extract_content_from_html(
                 content
             )  # No length limit here, raw content already truncated
             output_data["raw_html_snippet"] = content  # Use already truncated content
@@ -596,9 +777,9 @@ async def fetch_url_content(
             return content + truncation_notice
         elif output_type_lower in ["markdown", "text"]:
             # Use text for text type for cleaner output if markdownify fails
-            return extract_content_from_html(content) + truncation_notice
+            return _extract_content_from_html(content) + truncation_notice
         else:  # Default to markdown for unknown types from HTML
-            return extract_content_from_html(content) + truncation_notice
+            return _extract_content_from_html(content) + truncation_notice
 
     # Handle non-HTML types
     elif output_type_lower in ["text", "markdown", "html"]:  # Treat as text
@@ -608,294 +789,80 @@ async def fetch_url_content(
 
 
 @mcp.tool()
-async def fetch_multiple_urls(  # Note: This does NOT use AI.
-    urls: List[str],
-    timeout: int = DEFAULT_TIMEOUT,
-    output_type: str = "markdown",  # markdown, html, text, json
-    max_length: int = DEFAULT_FETCH_MAX_LENGTH,  # Max length *per URL* in combined output
-    output_structure: str = "json",  # 'json' or 'markdown'
-) -> str:
-    """
-    Fetches multiple URLs (non-AI) and combines their content.
-    
-    Args:
-        urls: URLs to fetch
-        timeout: Request timeout per URL in seconds (default: 30)
-        output_type: Format for each URL's content (default: 'markdown')
-        max_length: Max chars per URL in output (default: 100000)
-        output_structure: Combined output format (default: 'json', alt: 'markdown')
-    
-    Returns:
-        Combined content as JSON map or markdown
-    """
-    if not urls:
-        return "Error: No URLs provided."
-
-    _user_agent = DEFAULT_USER_AGENT
-
-    async def _fetch_one_basic(url: str):
-        # Simplified fetch & format for the non-AI multi-fetch
-        try:
-            AnyUrl(url)  # Validate
-            content, content_type, status_code, metadata = await fetch_url(
-                url,
-                user_agent=_user_agent,
-                timeout=timeout,
-            )
-
-            if status_code >= 400 or content is None:
-                return (
-                    url,
-                    f"Error fetching: {metadata.get('error', f'Status {status_code}')}",
-                )
-
-            # Use the other non-AI tool for basic processing (avoids duplicating logic)
-            processed_content = await process_web_content(
-                content=content,
-                url=url,
-                content_type=content_type,
-                output_type=output_type,
-                max_length=max_length,
-            )
-            # Check if processing itself returned an error message
-            if processed_content.startswith("Error:") or processed_content.startswith(
-                "<e>"
-            ):
-                return url, processed_content
-            else:
-                return url, processed_content
-
-        except ValidationError as e:
-            return url, f"Invalid URL format: {e}"
-        except Exception as e:
-            return url, f"Unexpected error processing this URL: {str(e)}"
-
-    tasks = [_fetch_one_basic(u) for u in urls]
-    results_list = await asyncio.gather(*tasks)
-
-    # Format output
-    if output_structure.lower() == "json":
-        results_dict = {url: result_or_error for url, result_or_error in results_list}
-        try:
-            return json.dumps(results_dict, indent=2)
-        except TypeError as e:
-            return json.dumps(
-                {"error": "Failed to serialize results to JSON", "details": str(e)}
-            )
-    else:  # Markdown
-        output_parts = ["# Basic Fetch Results for Multiple URLs\n---"]
-        for url, result_or_error in results_list:
-            output_parts.append(f"## Result for: {url}\n")
-            output_parts.append(
-                f"{result_or_error}\n---"
-            )  # Assume result is already formatted string
-        return "\n".join(output_parts)
-
-
-# --- Crawl and Analyze Tools  ---
-
-@mcp.tool()
 async def crawl_website(
     url: str,
     max_pages: int = 5,
     max_depth: int = 2,
     timeout: int = DEFAULT_TIMEOUT,
-    output_type: str = "markdown",  # Format for content of *each* page
-    output_file: Optional[str] = None,  # If provided, saves result to file
     follow_links: bool = True,
     allowed_domains: Optional[List[str]] = None,  # Restrict crawl
 ) -> str:
     """
     Crawls website starting from URL, collecting linked pages.
-    
+
     Args:
         url: Starting URL
         max_pages: Max pages to fetch (default: 5)
         max_depth: Max link depth from start URL (default: 2)
         timeout: Request timeout per page in seconds (default: 30)
-        output_type: Content format per page (default: 'markdown')
-        output_file: Path to save results (default: None)
         follow_links: Find and follow links if True (default: True)
-        ignore_robots: Skip robots.txt checks if True (default: True)
         allowed_domains: Domains to restrict crawling to (default: start URL's domain)
-    
+
     Returns:
         Combined crawl results or status if saving to file
     """
     try:
-        from bs4 import BeautifulSoup
-        from urllib.parse import urljoin
-    except ImportError:
-        return "Error: 'beautifulsoup4' library is required for crawling."
+        if not follow_links:
+            max_depth = 0
 
-    try:
-        AnyUrl(url)  # Validate start URL
-    except ValidationError as e:
-        return f"Error: Invalid start URL format: {e}"
-
-    _user_agent = DEFAULT_USER_AGENT
-    start_time = datetime.now()
-
-    # Determine base domain and allowed domains
-    try:
-        parsed_start_url = urlparse(url)
-        base_domain = parsed_start_url.netloc
-        if not base_domain:
-            raise ValueError("Could not determine domain from start URL")
-    except Exception as e:
-        return f"Error parsing start URL domain: {e}"
-
-    if not allowed_domains:
-        _allowed_domains = {base_domain}
-    else:
-        _allowed_domains = set(allowed_domains)
-        _allowed_domains.add(base_domain)  # Ensure start domain is always allowed
-
-    # BFS crawl state
-    queue = asyncio.Queue()
-    queue.put_nowait((url, 0))  # (url, depth)
-    crawled = {url}  # Set to track visited URLs
-    pages_content = []  # List to store page content for AI processing
-
-    async def worker():
-        while not queue.empty() and len(crawled) <= max_pages:
-            try:
-                current_url, depth = await queue.get()
-
-                print(
-                    f"Crawling [Depth:{depth}, Total:{len(crawled)}/{max_pages}]: {current_url}",
-                    file=sys.stderr,
-                )
-
-                # Fetch page
-                content, content_type, status_code, metadata = await fetch_url(
-                    current_url,
-                    user_agent=_user_agent,
-                    timeout=timeout,
-                )
-
-                if status_code < 400 and content is not None:
-                    # Pre-process content for AI
-                    processed_content = ""
-                    if "text/html" in (content_type or ""):
-                        processed_content = extract_content_from_html(content)
-                    elif "text/" in (content_type or ""):
-                        processed_content = content
-                    else:
-                        processed_content = content
-
-                    if processed_content and processed_content.strip():
-                        pages_content.append({
-                            "url": metadata.get("final_url", current_url),
-                            "depth": depth,
-                            "content": processed_content,
-                            "content_type": content_type
-                        })
-
-                    # Find and queue links if conditions met
-                    if (
-                        depth < max_depth
-                        and "text/html" in (content_type or "")
-                    ):
-                        try:
-                            soup = BeautifulSoup(content, "html.parser")
-                            for a_tag in soup.find_all("a", href=True):
-                                href = a_tag["href"]
-                                try:
-                                    absolute_url = urljoin(current_url, href)
-                                    parsed_link = urlparse(absolute_url)
-
-                                    # Basic validation and filtering
-                                    if (
-                                        parsed_link.scheme in ("http", "https")
-                                        and parsed_link.netloc
-                                        and parsed_link.netloc in _allowed_domains
-                                        and absolute_url not in crawled
-                                        and len(crawled) + queue.qsize() < max_pages
-                                    ):
-                                        crawled.add(absolute_url)
-                                        await queue.put((absolute_url, depth + 1))
-                                except Exception as link_e:
-                                    print(
-                                        f"Warning: Skipping link '{href}' due to parsing error: {link_e}",
-                                        file=sys.stderr,
-                                    )
-                        except Exception as parse_e:
-                            print(
-                                f"Warning: Could not parse links on {current_url}: {parse_e}",
-                                file=sys.stderr,
-                            )
-
-                queue.task_done()
-
-            except asyncio.CancelledError:
-                print("Crawler task cancelled.", file=sys.stderr)
-                break
-            except Exception as e:
-                print(
-                    f"Error in crawler worker for {current_url}: {e}", file=sys.stderr
-                )
-                queue.task_done()  # Ensure task is marked done even on error
-
-    # Run crawler worker
-    crawl_timeout = max_pages * timeout + 10
-    try:
-        await asyncio.wait_for(worker(), timeout=crawl_timeout)
-        await queue.join()
-    except asyncio.TimeoutError:
-        print(
-            f"Warning: Crawl timed out after {crawl_timeout} seconds.", file=sys.stderr
+        # Call the core crawling function
+        pages_content, crawl_metadata = await _crawl_url(
+            url=url,
+            max_pages=max_pages,
+            max_depth=max_depth,
+            timeout=timeout,
+            allowed_domains=allowed_domains,
         )
+
+        if not pages_content:
+            return "No valid content was found during crawling."
+
+        # Format output
+        output_parts = [f"# Crawl Report for: {url}\n"]
+        output_parts.append(f"- Pages Crawled: {crawl_metadata['pages_crawled']}")
+        output_parts.append(
+            f"- Pages With Content: {crawl_metadata['pages_with_content']}"
+        )
+        output_parts.append(
+            f"- Max Depth Reached: {crawl_metadata['max_depth_reached']}"
+        )
+        output_parts.append(
+            f"- Duration: {crawl_metadata['duration_seconds']:.2f} seconds"
+        )
+        output_parts.append("\n## Page Details:\n---")
+
+        for page in pages_content:
+            output_parts.append(
+                f"### [{page.get('status_code', 'N/A')}] {page['url']} (Depth: {page['depth']})"
+            )
+            if page.get("content"):
+                output_parts.append(
+                    f"**Content Snippet:**\n```\n{page['content'][:500]}...\n```"
+                )
+            else:
+                output_parts.append("*(No content processed)*")
+            output_parts.append("---")
+
+        output_str = "\n".join(output_parts)
+
+        return output_str
+
+    except ImportError as e:
+        return f"Error: {str(e)}"
+    except ValueError as e:
+        return f"Error: {str(e)}"
     except Exception as e:
-        print(f"Error during crawl execution: {e}", file=sys.stderr)
-
-    if not pages_content:
-        return "No valid content was found during crawling."
-
-    # Prepare content for AI processing
-    combined_content = ""
-    for i, page in enumerate(pages_content):
-        combined_content += f"\n\n--- PAGE {i+1}: {page['url']} ---\n\n"
-        combined_content += page['content']
-
-    # Process with AI
-    ai_result, ai_error = await _call_openai(
-        content=combined_content,
-        instructions=instructions,
-        model=openai_model,
-        max_tokens=openai_max_tokens,
-    )
-
-    if ai_error:
-        return f"Error processing crawled content with AI: {ai_error}"
-
-    if output_structure.lower() == "json":
-        try:
-            # Try to add some structure to the result
-            result_data = {
-                "crawl_info": {
-                    "start_url": url,
-                    "pages_crawled": len(crawled),
-                    "pages_with_content": len(pages_content),
-                    "max_depth_reached": max((p["depth"] for p in pages_content), default=0),
-                    "duration_seconds": (datetime.now() - start_time).total_seconds(),
-                },
-                "ai_processed_result": ai_result
-            }
-            return json.dumps(result_data, indent=2)
-        except:
-            # Fall back to simple JSON if structuring fails
-            return json.dumps({"result": ai_result})
-    else:
-        # Markdown output
-        output_parts = ["# AI Analysis of Crawled Content\n"]
-        output_parts.append(f"- Starting URL: {url}")
-        output_parts.append(f"- Pages Crawled: {len(crawled)}")
-        output_parts.append(f"- Pages With Content: {len(pages_content)}")
-        output_parts.append(f"- Duration: {(datetime.now() - start_time).total_seconds():.2f} seconds")
-        output_parts.append("\n## AI Analysis\n")
-        output_parts.append(ai_result or "AI returned an empty response.")
-        return "\n".join(output_parts)
+        return f"Unexpected error during crawl: {str(e)}"
 
 
 if __name__ == "__main__":
