@@ -1,80 +1,70 @@
 # MCP Exec Server
 
-An MCP server for executing shell commands, Python scripts, and JavaScript scripts securely. This MCP provides a flexible way for LLMs to interact with the command line and execute code in various languages.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) ![Version](https://img.shields.io/badge/version-0.1.0-green) ![Docker](https://img.shields.io/badge/Docker-Ready-blue)
+
+A powerful MCP server enabling AI assistants to execute commands and run code across multiple programming languages in secure, isolated environments. This server provides a complete development toolkit with pre-configured language environments and intelligent package management.
 
 ## Features
 
-- Execute arbitrary terminal commands with optional timeout
-- Execute shell, Python, and JavaScript scripts provided by the LLM
-- Capture and redirect output streams (stdout, stderr)
-- Install tools and packages on demand
-- Auto-detect the appropriate package manager for tools
-- List all installed tools and packages
-- Configure the environment with predefined tool sets
-- Multi-language development environments (Rust, Go, Python, JS/TS, Solidity)
+### Command Execution
+
+- **Flexible Command Execution**: Run shell commands with configurable timeouts
+- **Multi-Language Support**: Execute scripts in Python, JavaScript, Rust, Go, and Solidity
+- **Output Control**: Capture and redirect output streams (stdout, stderr)
+- **Process Management**: Asynchronous execution with monitoring capabilities
+
+### Package Management
+
+- **Smart Dependency Installation**: Auto-detect appropriate package managers (apt, pip, npm, cargo)
+- **Bulk Configuration**: Set up multiple tools across different package managers simultaneously
+- **Environment Discovery**: List installed tools and available commands
+- **Cross-Language Integration**: Seamlessly mix dependencies from different ecosystems
+
+### Development Environments
+
+- **Pre-configured Stacks**: Ready-to-use environments for multiple programming languages
+- **Full Tool Suites**: Complete development toolchains including compilers, linters, and utilities
+- **Data Science Tools**: Python environment with analytical and visualization libraries
+- **Web Development**: Complete JavaScript/TypeScript environment with Node.js
+
 
 ## Available Tools
 
 ### Command Execution
 
-- `execute_command(command, timeout=30, output_type="both", shell=True)`
-  - Execute shell commands with configurable timeout and output capture
-  - `command`: The command to execute
-  - `timeout`: Maximum execution time in seconds
-  - `output_type`: Which outputs to return ("stdout", "stderr", "both")
-  - `shell`: Whether to run the command in a shell
-
-- `execute_script(script, script_type="bash", timeout=30, output_type="both")`
-  - Execute scripts in various languages
-  - `script`: The script content to execute
-  - `script_type`: Language of the script (bash, python, js)
-  - `timeout`: Maximum execution time in seconds
-  - `output_type`: Which outputs to return ("stdout", "stderr", "both")
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `execute_command` | Run shell commands with timeout and output capture | • `command`: Command to execute<br>• `timeout`: Maximum time in seconds (default: 30)<br>• `output_type`: Output streams to return ("stdout", "stderr", "both")<br>• `shell`: Whether to use shell (default: True) |
+| `execute_script` | Run code in various languages | • `script`: Code content to execute<br>• `script_type`: Language ("bash", "python", "js", "rust", "go")<br>• `timeout`: Maximum time in seconds (default: 30)<br>• `output_type`: Output streams to return |
+| `read_output` | Read output from a running process | • `session_id`: ID returned by execute_command<br>• `output_type`: Output streams to read |
+| `force_terminate` | Kill a running process | • `session_id`: ID returned by execute_command |
+| `list_sessions` | Show all active command sessions | *None* |
+| `list_processes` | Show all running processes | *None* |
+| `kill_process` | Terminate a process by PID | • `pid`: Process ID to kill |
 
 ### Package Management
 
-- `list_installed_tools()`
-  - List all tools and packages installed in the system
-
-- `install_tool(tool, package_manager=None)`
-  - Install a specific tool, autodetecting the appropriate package manager
-  - `tool`: Name of the tool or package to install
-  - `package_manager`: Optional override for package manager (apt, pip, npm)
-
-- `install_tools(tools)`
-  - Install multiple tools at once
-  - `tools`: List of tool names to install
-
-- `configure_tools(config)`
-  - Install tools based on a configuration dictionary
-  - `config`: Dictionary mapping package managers to package lists
-  - Example: `{"apt": ["git", "curl"], "pip": ["requests", "numpy"]}`
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `list_installed_commands` | List all available tools and commands | *None* |
+| `install_command` | Install a specific package | • `command`: Package name to install<br>• `package_manager`: Optional override (apt, pip, npm, etc.) |
+| `configure_packages` | Install multiple packages across package managers | • `config`: Dictionary mapping managers to package lists<br>Example: `{"apt": ["git", "curl"], "pip": ["requests"]}` |
+| `block_command` | Block specific commands from execution | • `command`: Command to block |
+| `unblock_command` | Allow previously blocked commands | • `command`: Command to unblock |
+| `list_blocked_commands` | Show all blocked commands | *None* |
 
 ## Preinstalled Development Environments
 
-The MCP now comes with the following development environments preinstalled:
+The MCP Exec server provides ready-to-use development environments for multiple programming languages and paradigms:
 
-### Basic Utilities
-- bash, curl, wget, vim, nano, git, jq, zip, unzip
-
-### Python Environment
-- python 3.12, pip, ipython, requests, pandas, numpy, matplotlib, seaborn
-- Development tools: black, flake8, mypy, pytest
-
-### JavaScript/TypeScript Environment
-- Node.js (v20.x), npm, yarn
-- TypeScript and ts-node globally installed
-
-### Rust Environment
-- rustup, cargo, rustc
-- Additional components: rustfmt, clippy, rust-analyzer
-- Cargo extensions: cargo-watch, cargo-edit, cargo-generate
-
-### Go Environment
-- Go 1.22.1 with standard toolchain
-
-### Solidity Environment
-- Foundry suite: forge, cast, anvil
+| Environment | Components | Features |
+|-------------|------------|----------|
+| **System Utilities** | bash, curl, wget, vim, nano, git, jq, zip, unzip | Core system tools for file management and data processing |
+| **Python 3.12** | pip, ipython, venv<br>pandas, numpy, matplotlib, seaborn<br>black, flake8, mypy, pytest | Complete data science stack with visualization libraries and development tools |
+| **JavaScript/TypeScript** | Node.js v20, npm, yarn<br>TypeScript, ts-node | Modern JavaScript environment with TypeScript support and package managers |
+| **Rust** | rustup, cargo, rustc<br>rustfmt, clippy, rust-analyzer<br>cargo-watch, cargo-edit, cargo-generate | Full Rust development environment with code formatting, linting tools, and useful extensions |
+| **Go 1.22.1** | Standard Go toolchain | Core Go compiler and development tools |
+| **Solidity** | Foundry suite: forge, cast, anvil | Complete Ethereum smart contract development environment |
 
 ## Usage Examples
 
@@ -140,24 +130,92 @@ configure_tools({
 })
 ```
 
-## Deployment
+## Installation and Deployment
 
-Build the Docker container locally:
+### Prerequisites
+
+- **Docker**: Required for containerized deployment (recommended)
+- **Git**: For cloning the repository
+
+### Docker Installation (Recommended)
 
 ```bash
-# Build the image
+# Clone the repository
+git clone https://github.com/0kenx/mcp-servers.git
+cd mcp-servers/exec
+
+# Build the Docker image
 ./build.sh
 
-# Verify all development environments
-docker run -it --rm mcp-exec /app/verify_envs.sh
+# Verify all development environments are properly configured
+docker run -it --rm mcp/exec /app/verify_envs.sh
 ```
 
-## Security Notice
+### Running the Server
 
-This MCP allows arbitrary command execution, which can be potentially dangerous. Use with caution and consider the following security recommendations:
+```bash
+# Basic usage
+docker run -p 3006:3006 -it --rm mcp/exec
 
-- Run the container in an isolated environment
-- Consider restricting network access for the container
-- Monitor resource usage to prevent abuse
-- Consider filesystem restrictions
-- Review commands before execution in sensitive environments
+# With filesystem access to a local directory
+docker run -p 3006:3006 -it --rm \
+  --mount type=bind,src=/path/to/projects,dst=/workspace \
+  mcp/exec
+
+# With resource limits
+docker run -p 3006:3006 -it --rm \
+  --cpus=2 --memory=2g \
+  --network=restricted \
+  mcp/exec
+```
+
+## Security Considerations
+
+### Potential Risks
+
+The Exec MCP Server allows arbitrary command execution, which inherently carries security risks:
+
+- **Code Execution**: AI assistants can run arbitrary code in multiple languages
+- **System Modification**: Commands could potentially modify the container environment
+- **Resource Consumption**: Intensive operations could consume excessive resources
+- **Network Access**: By default, the container has network connectivity
+
+### Security Measures
+
+#### Built-in Protections
+
+- **Command Blocking**: Block dangerous commands via the `block_command` tool
+- **Timeouts**: All executions have configurable timeouts to prevent infinite loops
+- **Process Management**: Monitor and terminate long-running processes
+- **Containerization**: All execution happens within an isolated Docker container
+
+#### Recommended Configuration
+
+- **Resource Limits**: Restrict CPU, memory, and disk usage using Docker's resource controls
+  ```bash
+  docker run --cpus=2 --memory=2g --storage-opt size=10G mcp/exec
+  ```
+  
+- **Network Restrictions**: Limit or disable network access when possible
+  ```bash
+  docker run --network=none mcp/exec  # No network access
+  # OR
+  docker run --network=host --add-host=sandbox.internal:127.0.0.1 mcp/exec  # Limited access
+  ```
+  
+- **Read-Only Filesystem**: Mount sensitive directories as read-only
+  ```bash
+  docker run --mount type=bind,src=/data,dst=/data,readonly mcp/exec
+  ```
+  
+- **Capabilities Reduction**: Remove unnecessary Linux capabilities
+  ```bash
+  docker run --cap-drop=ALL --cap-add=NET_BIND_SERVICE mcp/exec
+  ```
+
+#### Operational Security
+
+- Review execution logs regularly for suspicious activity
+- Use Docker security scanning tools to verify container security
+- Update the image regularly to incorporate security patches
+- Consider implementing API authentication for the MCP server
