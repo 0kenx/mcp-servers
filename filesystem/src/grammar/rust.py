@@ -1,9 +1,13 @@
 """
 Rust language parser for extracting structured information from Rust code.
+
+This module provides a comprehensive parser for Rust code that can handle
+incomplete or syntactically incorrect code, extract rich metadata, and
+build a structured representation of the code elements.
 """
 
 import re
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple, Any, Set
 from .base import BaseParser, CodeElement, ElementType
 
 
@@ -11,11 +15,15 @@ class RustParser(BaseParser):
     """
     Parser for Rust code that extracts functions, structs, enums, traits, impl blocks,
     modules, constants, statics, and imports (use statements).
+    
+    Includes built-in preprocessing for incomplete code and metadata extraction.
     """
 
     def __init__(self):
         """Initialize the Rust parser."""
         super().__init__()
+        self.language = "rust"
+        self.handle_incomplete_code = True
 
         # Regex patterns for Rust elements
         # Visibility (optional 'pub', 'pub(crate)', etc.)
@@ -27,7 +35,7 @@ class RustParser(BaseParser):
             r"(?:<.*?>)?"  # Optional generics
             r"\s*\((.*?)\)"  # Parameters
             r"(?:\s*->\s*(.*?))?"  # Optional return type
-            r"\s*(?:where\s*.*?)?"  # Optional where clause
+            r"(?:\s*where\s*.*?)?"  # Optional where clause
             r"\s*\{"
         )
 
@@ -37,7 +45,7 @@ class RustParser(BaseParser):
             r"(?:<.*?>)?"  # Optional generics
             r"\s*\((.*?)\)"  # Parameters
             r"(?:\s*->\s*(.*?))?"  # Optional return type
-            r"\s*(?:where\s*.*?)?"  # Optional where clause
+            r"(?:\s*where\s*.*?)?"  # Optional where clause
             r"\s*;"  # Ends with semicolon
         )
 
@@ -110,6 +118,36 @@ class RustParser(BaseParser):
         self.doc_comment_inner_pattern = re.compile(r"^\s*//!(.*)")
         # Attribute pattern
         self.attribute_pattern = re.compile(r"^\s*#\[(.*?)\]")
+        
+        # Standard indentation for Rust
+        self.standard_indent = 4
+        
+        # Allowed nesting patterns
+        self.allowed_nestings = [
+            ('module', 'function'),
+            ('module', 'struct'),
+            ('module', 'enum'),
+            ('module', 'trait'),
+            ('module', 'impl'),
+            ('module', 'module'),
+            ('module', 'const'),
+            ('module', 'static'),
+            ('module', 'import'),
+            ('module', 'type_definition'),
+            ('impl', 'function'),
+            ('impl', 'const'),
+            ('impl', 'type_definition'),
+            ('trait', 'function'),
+            ('trait', 'type_definition'),
+            ('trait', 'const'),
+            ('function', 'struct'),  # Nested structs are allowed in Rust 2018+
+            ('function', 'enum'),    # Nested enums are allowed in Rust 2018+
+            ('function', 'function'), # Nested functions not allowed in stable Rust but we'll support them
+        ]
+        
+        # Diagnostics container
+        self._preprocessing_diagnostics = None
+        self._was_code_modified = False
 
     def parse(self, code: str) -> List[CodeElement]:
         """
@@ -121,6 +159,12 @@ class RustParser(BaseParser):
         Returns:
             List of identified code elements
         """
+        # First, preprocess the code to handle incomplete syntax if enabled
+        if self.handle_incomplete_code:
+            code, was_modified, diagnostics = self.preprocess_incomplete_code(code)
+            self._was_code_modified = was_modified
+            self._preprocessing_diagnostics = diagnostics
+            
         self.elements = []
         lines = self._split_into_lines(code)
         line_count = len(lines)
@@ -801,3 +845,569 @@ class RustParser(BaseParser):
                 globals_dict[element.name] = element
 
         return globals_dict
+
+    def preprocess_incomplete_code(self, code: str) -> Tuple[str, bool, Dict[str, Any]]:
+        """
+        Preprocess Rust code that might be incomplete or have syntax errors.
+        
+        Args:
+            code: The original code that might have issues
+            
+        Returns:
+            Tuple of (preprocessed code, was_modified flag, diagnostics)
+        """
+        diagnostics = {
+            "fixes_applied": [],
+            "confidence_score": 1.0,
+        }
+        
+        modified = False
+        
+        # First apply language-agnostic fixes
+        code, basic_modified = self._apply_basic_fixes(code)
+        if basic_modified:
+            modified = True
+            diagnostics["fixes_applied"].append("basic_syntax_fixes")
+        
+        # Apply Rust-specific fixes
+        code, rust_modified, rust_diagnostics = self._fix_rust_specific(code)
+        if rust_modified:
+            modified = True
+            diagnostics["fixes_applied"].append("rust_specific_fixes")
+            diagnostics.update(rust_diagnostics)
+        
+        # Apply structural fixes
+        code, struct_modified, struct_diagnostics = self._fix_structural_issues(code)
+        if struct_modified:
+            modified = True
+            diagnostics["fixes_applied"].append("structural_fixes")
+            diagnostics.update(struct_diagnostics)
+        
+        # Calculate overall confidence
+        if modified:
+            # More fixes = less confidence
+            num_fixes = len(diagnostics["fixes_applied"])
+            diagnostics["confidence_score"] = max(0.3, 1.0 - (num_fixes * 0.2))
+        
+        self._preprocessing_diagnostics = diagnostics
+        self._was_code_modified = modified
+        
+        return code, modified, diagnostics
+    
+    def _apply_basic_fixes(self, code: str) -> Tuple[str, bool]:
+        """Apply basic syntax fixes regardless of language."""
+        modified = False
+        
+        # Balance braces
+        code, braces_modified = self._balance_braces(code)
+        modified = modified or braces_modified
+        
+        # Fix indentation
+        lines, indent_modified = self._fix_indentation(code.splitlines())
+        if indent_modified:
+            code = '\n'.join(lines)
+            modified = True
+        
+        # Recover incomplete blocks
+        code, blocks_modified = self._recover_incomplete_blocks(code)
+        modified = modified or blocks_modified
+        
+        return code, modified
+    
+    def _balance_braces(self, code: str) -> Tuple[str, bool]:
+        """
+        Balance unmatched braces in code by adding missing closing braces.
+        
+        Args:
+            code: Source code that may have unmatched braces
+            
+        Returns:
+            Tuple of (balanced code, was_modified flag)
+        """
+        stack = []
+        modified = False
+        
+        # First, check if we have unbalanced braces
+        for i, char in enumerate(code):
+            if char == '{':
+                stack.append(i)
+            elif char == '}':
+                if stack:
+                    stack.pop()
+                # Ignore extra closing braces
+        
+        # If stack is empty, braces are balanced
+        if not stack:
+            return code, modified
+            
+        # Add missing closing braces at the end
+        modified = True
+        balanced_code = code + '\n' + '}'.join([''] * len(stack))
+        
+        return balanced_code, modified
+    
+    def _fix_indentation(self, lines: List[str]) -> Tuple[List[str], bool]:
+        """
+        Attempt to fix incorrect indentation in Rust code.
+        
+        Args:
+            lines: Source code lines that may have incorrect indentation
+            
+        Returns:
+            Tuple of (fixed lines, was_modified flag)
+        """
+        if not lines:
+            return lines, False
+            
+        modified = False
+        fixed_lines = lines.copy()
+        
+        # Identify standard indentation unit (4 spaces for Rust by convention)
+        indent_unit = self.standard_indent
+        
+        # Fix common indentation issues
+        for i in range(1, len(lines)):
+            if not lines[i].strip():  # Skip empty lines
+                continue
+                
+            current_indent = len(lines[i]) - len(lines[i].lstrip())
+            prev_indent = len(lines[i-1]) - len(lines[i-1].lstrip())
+            
+            # Check for sudden large increases in indentation (more than indent_unit)
+            if current_indent > prev_indent + indent_unit and current_indent % indent_unit != 0:
+                # Fix to nearest indent_unit multiple
+                correct_indent = (current_indent // indent_unit) * indent_unit
+                fixed_lines[i] = ' ' * correct_indent + lines[i].lstrip()
+                modified = True
+            
+            # Check if line ends with { and next line should be indented
+            if lines[i-1].rstrip().endswith('{'):
+                # Next line should be indented
+                if current_indent <= prev_indent and lines[i].strip():
+                    # Add proper indentation
+                    fixed_lines[i] = ' ' * (prev_indent + indent_unit) + lines[i].lstrip()
+                    modified = True
+        
+        return fixed_lines, modified
+    
+    def _recover_incomplete_blocks(self, code: str) -> Tuple[str, bool]:
+        """
+        Recover blocks with missing closing elements.
+        
+        Args:
+            code: Source code that may have incomplete blocks
+            
+        Returns:
+            Tuple of (recovered code, was_modified flag)
+        """
+        lines = code.splitlines()
+        modified = False
+        
+        # Check for definitions at the end of the file without body
+        if lines and len(lines) > 0:
+            last_line = lines[-1].strip()
+            
+            # Common patterns for definitions that should have a body
+            rust_patterns = [
+                r'^\s*(?:pub\s+)?(?:fn|struct|enum|trait|impl|mod)\s+\w+.*\{$',  # Function/struct/etc definition with open brace
+                r'^\s*(?:pub\s+)?(?:fn|struct|enum|trait|impl|mod)\s+\w+.*$',    # Incomplete definition
+                r'^\s*\}$'                                                        # Lone closing brace
+            ]
+            
+            for pattern in rust_patterns:
+                if re.match(pattern, last_line):
+                    # Add a minimal body or closing brace if needed
+                    if last_line.endswith('{'):
+                        lines.append('}')
+                        modified = True
+                    elif not last_line.endswith('}') and not last_line.endswith(';'):
+                        # This might be an incomplete definition
+                        if re.search(r'(?:fn|struct|enum|trait|impl|mod)\s+\w+', last_line):
+                            lines.append('{')
+                            lines.append('}')
+                            modified = True
+                    break
+        
+        return '\n'.join(lines), modified
+    
+    def _fix_rust_specific(self, code: str) -> Tuple[str, bool, Dict[str, Any]]:
+        """
+        Apply Rust-specific fixes.
+        
+        Args:
+            code: Source code to fix
+            
+        Returns:
+            Tuple of (fixed code, was_modified flag, diagnostics)
+        """
+        lines = code.splitlines()
+        modified = False
+        diagnostics = {"rust_fixes": []}
+        
+        # Fix missing semicolons
+        semicolon_fixed_lines = []
+        for line in lines:
+            line_stripped = line.strip()
+            if (
+                line_stripped and 
+                not line_stripped.endswith(';') and 
+                not line_stripped.endswith('{') and
+                not line_stripped.endswith('}') and
+                not line_stripped.startswith('//') and
+                not line_stripped.startswith('/*') and
+                not line_stripped.endswith('*/') and
+                (
+                    # Lines that should end with semicolons
+                    line_stripped.startswith('let ') or
+                    line_stripped.startswith('use ') or
+                    line_stripped.startswith('type ') or
+                    line_stripped.startswith('const ') or
+                    line_stripped.startswith('static ') or
+                    re.match(r'^\s*(?:pub\s+)?let\s+\w+\s*=', line)
+                ) and
+                not (
+                    # Exceptions where semicolons are not needed
+                    re.match(r'^\s*(?:fn|struct|enum|trait|impl|mod|if|else|while|for|match)\s+', line) or
+                    re.match(r'^\s*(?:pub|extern|unsafe|async)\s+', line)
+                )
+            ):
+                semicolon_fixed_lines.append(line + ';')
+                modified = True
+                diagnostics["rust_fixes"].append("added_missing_semicolon")
+                continue
+            
+            semicolon_fixed_lines.append(line)
+        
+        if modified:
+            code = '\n'.join(semicolon_fixed_lines)
+        
+        # Fix missing impl blocks for trait method declarations
+        impl_fixed_lines = code.splitlines()
+        i = 0
+        while i < len(impl_fixed_lines) - 1:
+            line = impl_fixed_lines[i]
+            
+            # Look for trait method declarations without implementation
+            if (
+                self.trait_method_signature_pattern.match(line) and
+                i + 1 < len(impl_fixed_lines) and
+                not impl_fixed_lines[i+1].strip().startswith('{')
+            ):
+                # Add minimal implementation
+                impl_fixed_lines.insert(i+1, ' ' * self.standard_indent + '{')
+                impl_fixed_lines.insert(i+2, ' ' * self.standard_indent + '    // TODO: Implement this method')
+                impl_fixed_lines.insert(i+3, ' ' * self.standard_indent + '}')
+                
+                modified = True
+                diagnostics["rust_fixes"].append("added_missing_trait_implementation")
+                i += 3  # Skip the added lines
+            
+            i += 1
+        
+        if modified:
+            code = '\n'.join(impl_fixed_lines)
+        
+        # Fix unbalanced macro invocations (very common in Rust)
+        macro_fixed_lines = []
+        unmatched_macro_brackets = 0
+        in_macro = False
+        for line in code.splitlines():
+            line_stripped = line.strip()
+            
+            # Detect macro invocations
+            if re.match(r'^\s*\w+!\s*\(', line_stripped) and line_stripped.count('(') > line_stripped.count(')'):
+                in_macro = True
+                unmatched_macro_brackets += line_stripped.count('(') - line_stripped.count(')')
+            elif in_macro:
+                unmatched_macro_brackets += line_stripped.count('(') - line_stripped.count(')')
+                if unmatched_macro_brackets <= 0:
+                    in_macro = False
+                    unmatched_macro_brackets = 0
+            
+            # Fix lines with unmatched macro brackets
+            if in_macro and i == len(code.splitlines()) - 1 and unmatched_macro_brackets > 0:
+                # This is the last line and we have unmatched macro brackets
+                macro_fixed_lines.append(line + ')' * unmatched_macro_brackets + ';')
+                modified = True
+                diagnostics["rust_fixes"].append("fixed_unmatched_macro_brackets")
+            else:
+                macro_fixed_lines.append(line)
+        
+        if modified:
+            code = '\n'.join(macro_fixed_lines)
+        
+        # Fix lifetime syntax in function signatures and struct declarations
+        lifetime_fixed_lines = []
+        for line in code.splitlines():
+            # Fix common lifetime syntax issues
+            if (("fn " in line or "struct " in line or "impl " in line) and 
+                "<'" in line and 
+                not re.search(r"<'[a-z_]+\s*(?:,|>)", line)):
+                
+                # Missing space after lifetime parameter
+                line = re.sub(r"<'([a-z_]+)(?=[,>])", r"<'\1 ", line)
+                modified = True
+                diagnostics["rust_fixes"].append("fixed_lifetime_syntax")
+            
+            lifetime_fixed_lines.append(line)
+        
+        if modified:
+            code = '\n'.join(lifetime_fixed_lines)
+        
+        return code, modified, diagnostics
+    
+    def _fix_structural_issues(self, code: str) -> Tuple[str, bool, Dict[str, Any]]:
+        """
+        Fix structural issues in the code based on nesting and language patterns.
+        
+        Args:
+            code: Source code to fix
+            
+        Returns:
+            Tuple of (fixed code, was_modified flag, diagnostics)
+        """
+        # Analyze code structure and nesting
+        nesting_analysis = self._analyze_nesting(code)
+        diagnostics = {"nesting_analysis": nesting_analysis}
+        
+        # Fix indentation based on nesting
+        code, indent_modified = self._fix_indentation_based_on_nesting(code, nesting_analysis)
+        
+        return code, indent_modified, diagnostics
+    
+    def _analyze_nesting(self, code: str) -> Dict[str, Any]:
+        """
+        Analyze the nesting structure of the code.
+        
+        Args:
+            code: Source code to analyze
+            
+        Returns:
+            Dictionary with nesting analysis results
+        """
+        lines = code.splitlines()
+        result = {
+            "max_depth": 0,
+            "invalid_nestings": [],
+            "missing_closing_tokens": 0,
+            "elements_by_depth": {},
+        }
+        
+        # Stack to track nesting
+        stack = []
+        
+        # Track the type of element at each nesting level
+        current_nesting_type = ["module"]  # Rust files are implicitly modules
+        
+        for i, line in enumerate(lines):
+            line_stripped = line.strip()
+            
+            # Skip comments and empty lines
+            if not line_stripped or line_stripped.startswith('//') or line_stripped.startswith('/*'):
+                continue
+            
+            # Detect element types
+            element_type = None
+            if self.function_pattern.match(line):
+                element_type = "function"
+            elif self.struct_pattern.match(line):
+                element_type = "struct"
+            elif self.enum_pattern.match(line):
+                element_type = "enum"
+            elif self.trait_pattern.match(line):
+                element_type = "trait"
+            elif self.impl_pattern.match(line):
+                element_type = "impl"
+            elif self.mod_pattern.match(line):
+                element_type = "module"
+            
+            # Check for block start/end
+            if '{' in line_stripped:
+                depth = len(stack)
+                stack.append('{')
+                
+                if depth + 1 > result["max_depth"]:
+                    result["max_depth"] = depth + 1
+                
+                # Record element at this depth
+                if element_type:
+                    if str(depth) not in result["elements_by_depth"]:
+                        result["elements_by_depth"][str(depth)] = []
+                    result["elements_by_depth"][str(depth)].append(element_type)
+                    
+                    # Check if this nesting is valid
+                    parent_type = current_nesting_type[-1] if current_nesting_type else "module"
+                    if not self._can_be_nested(parent_type, element_type):
+                        result["invalid_nestings"].append({
+                            "line": i + 1,
+                            "parent_type": parent_type,
+                            "child_type": element_type,
+                            "unlikely_score": 0.9
+                        })
+                    
+                    # Push the new element type onto the stack
+                    current_nesting_type.append(element_type)
+            
+            if '}' in line_stripped and stack:
+                stack.pop()
+                if current_nesting_type and len(current_nesting_type) > 1:
+                    current_nesting_type.pop()
+        
+        # Count unclosed blocks
+        result["missing_closing_tokens"] = len(stack)
+        
+        return result
+    
+    def _fix_indentation_based_on_nesting(self, code: str, nesting_analysis: Dict[str, Any]) -> Tuple[str, bool]:
+        """
+        Fix indentation issues based on nesting analysis.
+        
+        Args:
+            code: Source code to fix
+            nesting_analysis: Result of nesting analysis
+            
+        Returns:
+            Tuple of (fixed code, was_modified flag)
+        """
+        lines = code.splitlines()
+        modified = False
+        
+        # Stack to track braces
+        stack = []
+        expected_indent_level = 0
+        
+        # Process each line
+        fixed_lines = []
+        for line in lines:
+            line_stripped = line.strip()
+            current_indent = len(line) - len(line.lstrip())
+            
+            # Handle closing braces - they should be at parent's indent level
+            if line_stripped.startswith('}'):
+                if stack:
+                    stack.pop()
+                    expected_indent_level = len(stack) * self.standard_indent
+                    # Adjust the indentation of this closing brace
+                    if current_indent != expected_indent_level:
+                        line = ' ' * expected_indent_level + line_stripped
+                        modified = True
+            
+            # Normal line - should be at current indent level
+            elif line_stripped:
+                if current_indent != expected_indent_level and not line_stripped.startswith('//'):
+                    # This line has incorrect indentation
+                    line = ' ' * expected_indent_level + line_stripped
+                    modified = True
+            
+            # Handle opening braces - increase expected indent for next line
+            if '{' in line_stripped:
+                stack.append('{')
+                expected_indent_level = len(stack) * self.standard_indent
+            
+            fixed_lines.append(line)
+        
+        return '\n'.join(fixed_lines), modified
+    
+    def _can_be_nested(self, parent_type: str, child_type: str) -> bool:
+        """Check if the child element can be nested inside the parent element."""
+        return (parent_type, child_type) in self.allowed_nestings
+    
+    def _get_nesting_likelihood(self, element_type: str, nesting_level: int) -> float:
+        """
+        Get the likelihood score for an element at a specific nesting level.
+        Returns a value between 0-1 where higher is more likely.
+        """
+        if nesting_level == 0:  # Module level
+            return 1.0  # All top-level elements are typical
+        elif nesting_level == 1:  # Inside module, impl, trait
+            if element_type in ('function', 'struct', 'enum', 'trait', 'impl'):
+                return 0.9
+            return 0.5
+        else:  # Deep nesting
+            # Rust doesn't typically have deeply nested elements
+            return max(0.1, 1.0 - (nesting_level * 0.3))
+            
+    def extract_metadata(self, code: str, line_idx: int) -> Dict[str, Any]:
+        """
+        Extract Rust-specific metadata from code.
+        
+        Args:
+            code: The full source code
+            line_idx: The line index where the symbol definition starts
+            
+        Returns:
+            Dictionary containing docstrings, attributes, visibility, etc.
+        """
+        lines = code.splitlines()
+        if line_idx >= len(lines):
+            return {}
+            
+        metadata = {}
+        
+        # Extract doc comments
+        doc_comments = []
+        current_idx = line_idx - 1
+        while current_idx >= 0:
+            line = lines[current_idx]
+            doc_match = self.doc_comment_outer_pattern.match(line)
+            if doc_match:
+                doc_comments.insert(0, doc_match.group(1).strip())
+                current_idx -= 1
+            else:
+                break
+        
+        if doc_comments:
+            metadata["docstring"] = "\n".join(doc_comments)
+        
+        # Extract attributes
+        attributes = []
+        current_idx = line_idx - 1
+        
+        # Skip doc comments if present
+        if doc_comments:
+            current_idx = line_idx - len(doc_comments) - 1
+            
+        while current_idx >= 0:
+            line = lines[current_idx]
+            attr_match = self.attribute_pattern.match(line)
+            if attr_match:
+                attributes.insert(0, attr_match.group(1))
+                current_idx -= 1
+            else:
+                break
+        
+        if attributes:
+            metadata["attributes"] = attributes
+        
+        # Extract visibility
+        if line_idx < len(lines):
+            line = lines[line_idx]
+            if line.strip().startswith("pub"):
+                metadata["visibility"] = "pub"
+                
+                # Check for restricted visibility
+                if "pub(" in line:
+                    vis_match = re.search(r'pub\(([^)]+)\)', line)
+                    if vis_match:
+                        metadata["visibility_restriction"] = vis_match.group(1)
+            else:
+                metadata["visibility"] = "private"
+        
+        # Extract function-specific metadata
+        if self.function_pattern.match(lines[line_idx]):
+            metadata["is_async"] = "async fn" in lines[line_idx]
+            metadata["is_unsafe"] = "unsafe fn" in lines[line_idx]
+            metadata["is_const"] = "const fn" in lines[line_idx]
+            
+            # Extract return type
+            return_match = re.search(r'->\s*([^{;]+)', lines[line_idx])
+            if return_match:
+                metadata["return_type"] = return_match.group(1).strip()
+        
+        # Extract generics
+        if '<' in lines[line_idx] and '>' in lines[line_idx]:
+            generics_match = re.search(r'<([^>]+)>', lines[line_idx])
+            if generics_match:
+                metadata["generics"] = generics_match.group(1)
+                
+        return metadata

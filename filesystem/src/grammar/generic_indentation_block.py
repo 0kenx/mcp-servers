@@ -4,7 +4,7 @@ Primarily suitable for Python, potentially F#, YAML, CoffeeScript.
 """
 
 import re
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple, Any
 from .base import BaseParser, CodeElement, ElementType
 
 
@@ -40,7 +40,12 @@ class IndentationBlockParser(BaseParser):
     INDENT_WIDTH = 4
 
     def __init__(self):
+        """Initialize the indentation block parser."""
         super().__init__()
+        self.language = "indentation_block"
+        self.handle_incomplete_code = True
+        self._preprocessing_diagnostics = None
+        self._was_code_modified = False
 
     def parse(self, code: str) -> List[CodeElement]:
         """
@@ -52,6 +57,12 @@ class IndentationBlockParser(BaseParser):
         Returns:
             List of identified CodeElement objects
         """
+        # First, preprocess the code to handle incomplete syntax if enabled
+        if self.handle_incomplete_code:
+            code, was_modified, diagnostics = self.preprocess_incomplete_code(code)
+            self._was_code_modified = was_modified
+            self._preprocessing_diagnostics = diagnostics
+            
         self.elements = []
         lines = self._split_into_lines(code)
         line_count = len(lines)
@@ -315,3 +326,392 @@ class IndentationBlockParser(BaseParser):
             # else: current_indent == last_indent, which is fine
 
         return True  # If we reach the end without errors
+
+    def preprocess_incomplete_code(self, code: str) -> Tuple[str, bool, Dict[str, Any]]:
+        """
+        Preprocess indentation-based code that might be incomplete or have syntax errors.
+        
+        Args:
+            code: The original code that might have issues
+            
+        Returns:
+            Tuple of (preprocessed code, was_modified flag, diagnostics)
+        """
+        diagnostics = {
+            "fixes_applied": [],
+            "confidence_score": 1.0,
+        }
+        
+        modified = False
+        
+        # Apply basic fixes
+        code, basic_modified = self._apply_basic_fixes(code)
+        if basic_modified:
+            modified = True
+            diagnostics["fixes_applied"].append("basic_syntax_fixes")
+        
+        # Apply indentation-specific fixes
+        code, indent_modified, indent_diagnostics = self._fix_indentation_specific(code)
+        if indent_modified:
+            modified = True
+            diagnostics["fixes_applied"].append("indentation_specific_fixes")
+            diagnostics.update(indent_diagnostics)
+        
+        # Apply structural fixes
+        code, struct_modified, struct_diagnostics = self._fix_structural_issues(code)
+        if struct_modified:
+            modified = True
+            diagnostics["fixes_applied"].append("structural_fixes")
+            diagnostics.update(struct_diagnostics)
+        
+        # Calculate overall confidence
+        if modified:
+            # More fixes = less confidence
+            num_fixes = len(diagnostics["fixes_applied"])
+            diagnostics["confidence_score"] = max(0.3, 1.0 - (num_fixes * 0.2))
+        
+        return code, modified, diagnostics
+    
+    def _apply_basic_fixes(self, code: str) -> Tuple[str, bool]:
+        """Apply basic syntax fixes for indentation-based languages."""
+        modified = False
+        
+        # Fix indentation consistency
+        lines, indent_modified = self._fix_indentation_consistency(code.splitlines())
+        if indent_modified:
+            code = '\n'.join(lines)
+            modified = True
+        
+        # Recover incomplete blocks
+        code, blocks_modified = self._recover_incomplete_blocks(code)
+        modified = modified or blocks_modified
+        
+        return code, modified
+    
+    def _fix_indentation_consistency(self, lines: List[str]) -> Tuple[List[str], bool]:
+        """
+        Ensure consistent indentation throughout the code.
+        
+        Args:
+            lines: Source code lines that may have inconsistent indentation
+            
+        Returns:
+            Tuple of (fixed lines, was_modified flag)
+        """
+        if not lines:
+            return lines, False
+            
+        modified = False
+        fixed_lines = lines.copy()
+        
+        # Determine most common indentation unit (2, 4, or 8 spaces)
+        indent_differences = []
+        current_indent = 0
+        
+        for i, line in enumerate(lines):
+            if not line.strip():  # Skip empty lines
+                continue
+                
+            line_indent = len(line) - len(line.lstrip())
+            if line_indent > current_indent:
+                diff = line_indent - current_indent
+                if diff > 0:  # Only consider positive differences
+                    indent_differences.append(diff)
+            current_indent = line_indent
+        
+        # Determine most common indent unit
+        if not indent_differences:
+            indent_unit = self.INDENT_WIDTH  # Default
+        else:
+            # Find the most common value among 2, 4, and 8
+            counts = {2: 0, 4: 0, 8: 0}
+            for diff in indent_differences:
+                closest = min(counts.keys(), key=lambda x: abs(x - diff))
+                counts[closest] += 1
+            indent_unit = max(counts, key=counts.get)
+        
+        # Now fix lines with inconsistent indentation
+        for i in range(1, len(lines)):
+            if not lines[i].strip():  # Skip empty lines
+                continue
+                
+            current_indent = len(lines[i]) - len(lines[i].lstrip())
+            prev_indent = len(lines[i-1]) - len(lines[i-1].lstrip())
+            
+            # Check if this line should be indented relative to previous
+            prev_line_ends_with_colon = lines[i-1].rstrip().endswith(':')
+            
+            if prev_line_ends_with_colon and current_indent <= prev_indent:
+                # Line after a colon should be indented
+                fixed_lines[i] = ' ' * (prev_indent + indent_unit) + lines[i].lstrip()
+                modified = True
+            elif current_indent > prev_indent and (current_indent - prev_indent) % indent_unit != 0:
+                # Indentation increase should be a multiple of indent_unit
+                new_indent = prev_indent + indent_unit * ((current_indent - prev_indent) // indent_unit + 1)
+                fixed_lines[i] = ' ' * new_indent + lines[i].lstrip()
+                modified = True
+        
+        return fixed_lines, modified
+    
+    def _recover_incomplete_blocks(self, code: str) -> Tuple[str, bool]:
+        """
+        Fix code with incomplete blocks, particularly focusing on indentation-based languages.
+        
+        Args:
+            code: Source code that may have incomplete blocks
+            
+        Returns:
+            Tuple of (recovered code, was_modified flag)
+        """
+        lines = code.splitlines()
+        modified = False
+        
+        # Check for definition at the end of the file without content
+        if lines and len(lines) > 0:
+            last_line = lines[-1].strip()
+            
+            # In Python-like languages, a line ending with a colon should have content after it
+            if last_line.endswith(':'):
+                # Add a minimal block content (e.g., 'pass' for Python)
+                indent = len(lines[-1]) - len(lines[-1].lstrip())
+                lines.append(' ' * (indent + self.INDENT_WIDTH) + 'pass')
+                modified = True
+        
+        return '\n'.join(lines), modified
+    
+    def _fix_indentation_specific(self, code: str) -> Tuple[str, bool, Dict[str, Any]]:
+        """
+        Apply fixes specific to indentation-based languages.
+        
+        Args:
+            code: Source code to fix
+            
+        Returns:
+            Tuple of (fixed code, was_modified flag, diagnostics)
+        """
+        lines = code.splitlines()
+        modified = False
+        diagnostics = {"indentation_fixes": []}
+        
+        # Check for incorrect dedents
+        stack = [0]  # Stack of indentation levels, starting with 0
+        fixed_lines = []
+        
+        for i, line in enumerate(lines):
+            if not line.strip():  # Skip empty lines
+                fixed_lines.append(line)
+                continue
+                
+            current_indent = len(line) - len(line.lstrip())
+            
+            # If indentation decreases, it should match one of the previous levels
+            if current_indent < stack[-1]:
+                # Find the closest matching indent level in the stack
+                while stack and current_indent < stack[-1]:
+                    stack.pop()
+                
+                if not stack or current_indent != stack[-1]:
+                    # Indentation doesn't match any previous level - fix it
+                    if not stack:
+                        # If stack is empty, default to 0
+                        proper_indent = 0
+                    else:
+                        # Use the most recent matching level
+                        proper_indent = stack[-1]
+                    
+                    fixed_lines.append(' ' * proper_indent + line.lstrip())
+                    modified = True
+                    diagnostics["indentation_fixes"].append(f"fixed_dedent_at_line_{i+1}")
+                    continue
+            
+            # If indentation increases, add the new level to the stack
+            elif current_indent > stack[-1]:
+                stack.append(current_indent)
+            
+            fixed_lines.append(line)
+        
+        if modified:
+            code = '\n'.join(fixed_lines)
+        
+        return code, modified, diagnostics
+    
+    def _fix_structural_issues(self, code: str) -> Tuple[str, bool, Dict[str, Any]]:
+        """
+        Fix structural issues in the code based on indentation patterns.
+        
+        Args:
+            code: Source code to fix
+            
+        Returns:
+            Tuple of (fixed code, was_modified flag, diagnostics)
+        """
+        # Analyze code structure
+        structure_analysis = self._analyze_structure(code)
+        diagnostics = {"structure_analysis": structure_analysis}
+        
+        # Define blocks that might be incomplete
+        lines = code.splitlines()
+        modified = False
+        fixed_lines = lines.copy()
+        
+        # Process block structures
+        for block_info in structure_analysis.get("blocks", []):
+            if block_info.get("is_incomplete", False):
+                # Add missing content to incomplete blocks
+                block_end = block_info.get("end_line", 0)
+                if block_end < len(lines):
+                    indent_level = block_info.get("indent_level", 0)
+                    # Add a 'pass' statement if the block is empty
+                    fixed_lines.insert(block_end + 1, ' ' * (indent_level + self.INDENT_WIDTH) + 'pass')
+                    modified = True
+        
+        if modified:
+            code = '\n'.join(fixed_lines)
+        
+        return code, modified, diagnostics
+    
+    def _analyze_structure(self, code: str) -> Dict[str, Any]:
+        """
+        Analyze the structural elements of indentation-based code.
+        
+        Args:
+            code: Source code to analyze
+            
+        Returns:
+            Dictionary with structural analysis
+        """
+        lines = code.splitlines()
+        result = {
+            "blocks": [],
+            "max_indent_level": 0,
+            "inconsistent_indents": []
+        }
+        
+        # Track blocks based on indentation changes
+        current_indent = 0
+        block_stack = []  # Stack of (line_idx, indent_level) tuples
+        
+        for i, line in enumerate(lines):
+            if not line.strip():
+                continue
+                
+            line_indent = len(line) - len(line.lstrip())
+            
+            # Track maximum indent level
+            if line_indent > result["max_indent_level"]:
+                result["max_indent_level"] = line_indent
+            
+            # Check for new block (indentation increase)
+            if line_indent > current_indent:
+                # Previous line started a new block
+                if i > 0 and lines[i-1].strip().endswith(':'):
+                    block_stack.append((i-1, current_indent))
+                    
+            # Check for end of block(s) (indentation decrease)
+            elif line_indent < current_indent:
+                # Close all blocks that end with this dedent
+                while block_stack and block_stack[-1][1] >= line_indent:
+                    start_idx, indent = block_stack.pop()
+                    # Record the block
+                    block_info = {
+                        "start_line": start_idx + 1,  # 1-indexed line number
+                        "end_line": i,  # End line (exclusive)
+                        "indent_level": indent,
+                        "is_incomplete": (i - start_idx) <= 1  # Block has no content
+                    }
+                    result["blocks"].append(block_info)
+            
+            # Check for inconsistent indentation
+            if block_stack and line_indent > current_indent:
+                expected_indent = current_indent + self.INDENT_WIDTH
+                if line_indent != expected_indent:
+                    result["inconsistent_indents"].append({
+                        "line": i + 1,  # 1-indexed line number
+                        "actual": line_indent,
+                        "expected": expected_indent
+                    })
+            
+            current_indent = line_indent
+        
+        # Close any remaining open blocks
+        end_line = len(lines)
+        while block_stack:
+            start_idx, indent = block_stack.pop()
+            block_info = {
+                "start_line": start_idx + 1,
+                "end_line": end_line,
+                "indent_level": indent,
+                "is_incomplete": (end_line - start_idx) <= 1
+            }
+            result["blocks"].append(block_info)
+        
+        return result
+    
+    def extract_metadata(self, code: str, line_idx: int) -> Dict[str, Any]:
+        """
+        Extract metadata from indentation-based code at the given line index.
+        
+        Args:
+            code: The full source code
+            line_idx: The line index where the symbol definition starts
+            
+        Returns:
+            Dictionary containing extracted metadata
+        """
+        lines = code.splitlines()
+        if line_idx >= len(lines):
+            return {}
+        
+        metadata = {}
+        
+        # Extract docstring by checking the first non-empty line after definition
+        docstring = self._extract_docstring(lines, line_idx + 1, self._count_indentation(lines[line_idx]) + self.INDENT_WIDTH)
+        if docstring:
+            metadata["docstring"] = docstring
+        
+        # Extract decorators (for Python-like languages)
+        decorators = []
+        current_idx = line_idx - 1
+        while current_idx >= 0:
+            line = lines[current_idx].strip()
+            if line.startswith('@'):
+                # Simple decorator detection
+                decorators.insert(0, line[1:])  # Remove the @ symbol
+                current_idx -= 1
+            else:
+                break
+        
+        if decorators:
+            metadata["decorators"] = decorators
+        
+        # Extract function parameters for Python-like definitions
+        definition_line = lines[line_idx]
+        if '(' in definition_line and ')' in definition_line:
+            params_match = re.search(r'\(([^)]*)\)', definition_line)
+            if params_match:
+                metadata["parameters"] = params_match.group(1).strip()
+        
+        # Extract return type annotation (Python 3 style)
+        if '->' in definition_line:
+            return_match = re.search(r'->([^:]+)', definition_line)
+            if return_match:
+                metadata["return_type"] = return_match.group(1).strip()
+        
+        # Extract type annotations for parameters (Python 3 style)
+        type_annotations = {}
+        
+        if '(' in definition_line and ':' in definition_line:
+            # Extract parameter section
+            param_section = definition_line.split('(', 1)[1].split(')', 1)[0]
+            
+            # Find parameters with type annotations
+            for param in param_section.split(','):
+                param = param.strip()
+                if ':' in param:
+                    name, type_ann = param.split(':', 1)
+                    type_annotations[name.strip()] = type_ann.strip()
+        
+        if type_annotations:
+            metadata["type_annotations"] = type_annotations
+        
+        return metadata

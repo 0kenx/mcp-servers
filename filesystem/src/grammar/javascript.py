@@ -1,20 +1,28 @@
 """
 JavaScript language parser for extracting structured information from JavaScript code.
+
+This module provides a comprehensive parser for JavaScript code that can handle
+incomplete or syntactically incorrect code, extract rich metadata, and
+build a structured representation of the code elements.
 """
 
 import re
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple, Any, Set
 from .base import BaseParser, CodeElement, ElementType
 
 
 class JavaScriptParser(BaseParser):
     """
-    Parser for JavaScript code that extracts functions, classes, variables, and imports.
+    Parser for JavaScript code that extracts functions, classes, methods, variables, and imports.
+    
+    Includes built-in preprocessing for incomplete code and metadata extraction.
     """
 
     def __init__(self):
         """Initialize the JavaScript parser."""
         super().__init__()
+        self.language = "javascript"
+        self.handle_incomplete_code = True
 
         # Special flag to fix test_parse_function_declaration line number
         self.test_parse_function_declaration_fix = True
@@ -86,6 +94,32 @@ class JavaScriptParser(BaseParser):
         # Comment patterns
         self.line_comment_pattern = re.compile(r"^(\s*)\/\/")
         self.comment_start_pattern = re.compile(r"^(\s*)\/\*")
+        
+        # Standard indentation for JavaScript
+        self.standard_indent = 2
+        
+        # Allowed nesting patterns
+        self.allowed_nestings = [
+            ('global', 'function'),
+            ('global', 'class'),
+            ('global', 'variable'),
+            ('global', 'import'),
+            ('function', 'function'),
+            ('function', 'variable'),
+            ('function', 'class'),  # Classes can be defined in functions
+            ('class', 'method'),
+            ('class', 'variable'),
+            ('method', 'function'),
+            ('method', 'variable'),
+            ('method', 'class'),
+            ('block', 'function'),  # Functions can be defined in blocks (if, for, etc.)
+            ('block', 'variable'),
+            ('block', 'class'),
+        ]
+        
+        # Diagnostics container
+        self._preprocessing_diagnostics = None
+        self._was_code_modified = False
 
     def parse(self, code: str) -> List[CodeElement]:
         """
@@ -97,6 +131,12 @@ class JavaScriptParser(BaseParser):
         Returns:
             List of identified code elements
         """
+        # First, preprocess the code to handle incomplete syntax if enabled
+        if self.handle_incomplete_code:
+            code, was_modified, diagnostics = self.preprocess_incomplete_code(code)
+            self._was_code_modified = was_modified
+            self._preprocessing_diagnostics = diagnostics
+            
         self.elements = []
 
         # Normalize line endings
@@ -818,3 +858,662 @@ class JavaScriptParser(BaseParser):
                             globals_dict[namespace] = element
 
         return globals_dict
+
+    def preprocess_incomplete_code(self, code: str) -> Tuple[str, bool, Dict[str, Any]]:
+        """
+        Preprocess JavaScript code that might be incomplete or have syntax errors.
+        
+        Args:
+            code: The original code that might have issues
+            
+        Returns:
+            Tuple of (preprocessed code, was_modified flag, diagnostics)
+        """
+        diagnostics = {
+            "fixes_applied": [],
+            "confidence_score": 1.0,
+        }
+        
+        modified = False
+        
+        # First apply language-agnostic fixes
+        code, basic_modified = self._apply_basic_fixes(code)
+        if basic_modified:
+            modified = True
+            diagnostics["fixes_applied"].append("basic_syntax_fixes")
+        
+        # Apply JavaScript-specific fixes
+        code, js_modified, js_diagnostics = self._fix_js_specific(code)
+        if js_modified:
+            modified = True
+            diagnostics["fixes_applied"].append("javascript_specific_fixes")
+            diagnostics.update(js_diagnostics)
+        
+        # Apply structural fixes
+        code, struct_modified, struct_diagnostics = self._fix_structural_issues(code)
+        if struct_modified:
+            modified = True
+            diagnostics["fixes_applied"].append("structural_fixes")
+            diagnostics.update(struct_diagnostics)
+        
+        # Calculate overall confidence
+        if modified:
+            # More fixes = less confidence
+            num_fixes = len(diagnostics["fixes_applied"])
+            diagnostics["confidence_score"] = max(0.3, 1.0 - (num_fixes * 0.2))
+        
+        self._preprocessing_diagnostics = diagnostics
+        self._was_code_modified = modified
+        
+        return code, modified, diagnostics
+    
+    def _apply_basic_fixes(self, code: str) -> Tuple[str, bool]:
+        """Apply basic syntax fixes regardless of language."""
+        modified = False
+        
+        # Balance braces
+        code, braces_modified = self._balance_braces(code)
+        modified = modified or braces_modified
+        
+        # Fix indentation
+        lines, indent_modified = self._fix_indentation(code.splitlines())
+        if indent_modified:
+            code = '\n'.join(lines)
+            modified = True
+        
+        # Recover incomplete blocks
+        code, blocks_modified = self._recover_incomplete_blocks(code)
+        modified = modified or blocks_modified
+        
+        return code, modified
+    
+    def _balance_braces(self, code: str) -> Tuple[str, bool]:
+        """
+        Balance unmatched braces in code by adding missing closing braces.
+        Uses advanced strategies to handle string literals, comments, and nested structures.
+        
+        Args:
+            code: Source code that may have unmatched braces
+            
+        Returns:
+            Tuple of (balanced code, was_modified flag)
+        """
+        stack = []
+        modified = False
+        brace_positions = []
+        in_string = False
+        in_template = False
+        in_single_line_comment = False
+        in_multi_line_comment = False
+        string_delimiter = None
+        escape_next = False
+        
+        # First, identify unmatched braces while properly handling string literals and comments
+        for i, char in enumerate(code):
+            # Handle escape sequences
+            if escape_next:
+                escape_next = False
+                continue
+                
+            if char == '\\':
+                escape_next = True
+                continue
+                
+            # Handle comments
+            if not in_string and not in_template and not in_single_line_comment and not in_multi_line_comment:
+                if char == '/' and i+1 < len(code) and code[i+1] == '/':
+                    in_single_line_comment = True
+                    continue
+                if char == '/' and i+1 < len(code) and code[i+1] == '*':
+                    in_multi_line_comment = True
+                    continue
+            
+            if in_single_line_comment:
+                if char == '\n':
+                    in_single_line_comment = False
+                continue
+                
+            if in_multi_line_comment:
+                if char == '*' and i+1 < len(code) and code[i+1] == '/':
+                    in_multi_line_comment = False
+                continue
+            
+            # Handle string literals
+            if not in_string and not in_template and (char == '"' or char == "'"):
+                in_string = True
+                string_delimiter = char
+                continue
+                
+            if in_string and char == string_delimiter:
+                in_string = False
+                continue
+                
+            if not in_string and char == '`':
+                in_template = not in_template
+                continue
+                
+            # Only process braces if not in a string or comment
+            if not in_string and not in_template and not in_single_line_comment and not in_multi_line_comment:
+                if char == '{':
+                    stack.append(i)
+                    brace_positions.append(i)
+                elif char == '}':
+                    if stack:
+                        stack.pop()
+                    else:
+                        # Extra closing brace - we could remove it but let's just note it for now
+                        pass
+        
+        # If stack is empty, braces are balanced
+        if not stack:
+            return code, modified
+            
+        # Add missing closing braces at appropriate positions
+        balanced_code = code
+        missing_braces = len(stack)
+        
+        # Analyze code structure to add braces at more intelligent positions
+        lines = code.splitlines()
+        
+        # Add braces with proper indentation at the end of the file
+        indentation_levels = []
+        for pos in stack:
+            # Find the line containing this opening brace
+            line_idx = 0
+            for i, line in enumerate(lines):
+                line_len = len(line) + 1  # +1 for newline
+                if pos < line_len:
+                    line_idx = i
+                    break
+                pos -= line_len
+            
+            # Calculate indentation level for this opening brace
+            indentation = len(lines[line_idx]) - len(lines[line_idx].lstrip())
+            indentation_levels.append(indentation)
+        
+        # Sort indentation levels in descending order so inner blocks are closed first
+        indentation_levels.sort(reverse=True)
+        
+        # Add closing braces at the end
+        if lines:
+            # Get indentation of the last line
+            last_line_indent = len(lines[-1]) - len(lines[-1].lstrip()) if lines[-1].strip() else 0
+            
+            # Add a newline if the last line isn't empty
+            if lines[-1].strip():
+                balanced_code += '\n'
+                
+            # Add closing braces with proper indentation
+            for indent in indentation_levels:
+                # Only add indentation if it makes sense
+                if indent <= last_line_indent:
+                    balanced_code += ' ' * indent + '}\n'
+                else:
+                    balanced_code += '}\n'
+        else:
+            # Empty file, just add the braces
+            balanced_code += '\n' + '}'.join([''] * missing_braces)
+        
+        modified = True
+        return balanced_code, modified
+    
+    def _fix_indentation(self, lines: List[str]) -> Tuple[List[str], bool]:
+        """
+        Attempt to fix incorrect indentation in JavaScript code.
+        
+        Args:
+            lines: Source code lines that may have incorrect indentation
+            
+        Returns:
+            Tuple of (fixed lines, was_modified flag)
+        """
+        if not lines:
+            return lines, False
+            
+        modified = False
+        fixed_lines = lines.copy()
+        
+        # Identify standard indentation unit (2 spaces for JavaScript)
+        indent_unit = self.standard_indent
+        
+        # Fix common indentation issues
+        for i in range(1, len(lines)):
+            if not lines[i].strip():  # Skip empty lines
+                continue
+                
+            current_indent = len(lines[i]) - len(lines[i].lstrip())
+            prev_indent = len(lines[i-1]) - len(lines[i-1].lstrip())
+            
+            # Check for sudden large increases in indentation (more than indent_unit)
+            if current_indent > prev_indent + indent_unit and current_indent % indent_unit != 0:
+                # Fix to nearest indent_unit multiple
+                correct_indent = (current_indent // indent_unit) * indent_unit
+                fixed_lines[i] = ' ' * correct_indent + lines[i].lstrip()
+                modified = True
+            
+            # Check if line ends with { and next line should be indented
+            if lines[i-1].rstrip().endswith('{'):
+                # Next line should be indented
+                if current_indent <= prev_indent and lines[i].strip():
+                    # Add proper indentation
+                    fixed_lines[i] = ' ' * (prev_indent + indent_unit) + lines[i].lstrip()
+                    modified = True
+        
+        return fixed_lines, modified
+    
+    def _recover_incomplete_blocks(self, code: str) -> Tuple[str, bool]:
+        """
+        Recover blocks with missing closing elements (e.g., function/class definitions without full bodies).
+        
+        Args:
+            code: Source code that may have incomplete blocks
+            
+        Returns:
+            Tuple of (recovered code, was_modified flag)
+        """
+        lines = code.splitlines()
+        modified = False
+        
+        # Check for function/class definitions at the end of the file without body
+        if lines and len(lines) > 0:
+            last_line = lines[-1].strip()
+            
+            # Common patterns for definitions that should have a body
+            js_patterns = [
+                r'^\s*(?:function|class|if|for|while)\s+.*\($',  # Function/class/control structures
+                r'^\s*.*\)\s*{?$',                              # C-like function
+                r'^\s*.*\s+{$',                                 # Block start
+                r'^\s*(?:const|let|var)\s+.*=>\s*$'             # Arrow function without body
+            ]
+            
+            for pattern in js_patterns:
+                if re.match(pattern, last_line):
+                    # Add a minimal body
+                    if '{' in last_line:  # Already has open brace
+                        lines.append('}')
+                    else:
+                        lines.append('{')
+                        lines.append('}')
+                    modified = True
+                    break
+        
+        return '\n'.join(lines), modified
+    
+    def _fix_js_specific(self, code: str) -> Tuple[str, bool, Dict[str, Any]]:
+        """
+        Apply JavaScript-specific fixes.
+        
+        Args:
+            code: Source code to fix
+            
+        Returns:
+            Tuple of (fixed code, was_modified flag, diagnostics)
+        """
+        lines = code.splitlines()
+        modified = False
+        diagnostics = {"js_fixes": []}
+        
+        # Add missing semicolons at end of lines if needed
+        semicolon_fixed_lines = []
+        for line in lines:
+            line_stripped = line.strip()
+            if (
+                line_stripped and 
+                not line_stripped.endswith(';') and 
+                not line_stripped.endswith('{') and
+                not line_stripped.endswith('}') and
+                not line_stripped.endswith(':') and
+                not line_stripped.startswith('//') and
+                not line_stripped.startswith('/*') and
+                not line_stripped.endswith('*/') and
+                not any(line_stripped.startswith(kw) for kw in ['if', 'for', 'while', 'switch', 'function', 'class'])
+            ):
+                # This might be a line needing a semicolon
+                # Check if it's a statement that should have a semicolon
+                if (
+                    re.search(r'(var|let|const|return|throw|break|continue|yield)\s+\w+.*$', line_stripped) or
+                    re.search(r'^\s*\w+\.\w+.*$', line_stripped) or  # Method calls
+                    re.search(r'^\s*\w+\s*=.*$', line_stripped)      # Assignments
+                ):
+                    semicolon_fixed_lines.append(line + ';')
+                    modified = True
+                    diagnostics["js_fixes"].append("added_missing_semicolon")
+                    continue
+            
+            semicolon_fixed_lines.append(line)
+        
+        if modified:
+            code = '\n'.join(semicolon_fixed_lines)
+        
+        # Fix missing braces in if/for/while statements
+        brace_fixed_lines = code.splitlines()
+        i = 0
+        while i < len(brace_fixed_lines) - 1:
+            line = brace_fixed_lines[i].strip()
+            
+            # Look for control structures without braces
+            if (
+                (line.startswith('if') or line.startswith('for') or line.startswith('while')) and
+                line.endswith(')') and
+                i + 1 < len(brace_fixed_lines) and
+                not brace_fixed_lines[i+1].strip().startswith('{') and
+                not brace_fixed_lines[i].endswith('{')
+            ):
+                # Add opening brace
+                brace_fixed_lines[i] = brace_fixed_lines[i] + ' {'
+                
+                # Find the end of the single-line statement
+                # This is basic and might not work for complex nested statements
+                j = i + 1
+                indent_level = len(brace_fixed_lines[i]) - len(brace_fixed_lines[i].lstrip())
+                
+                # Insert closing brace after the statement
+                brace_fixed_lines.insert(j + 1, ' ' * indent_level + '}')
+                modified = True
+                diagnostics["js_fixes"].append("added_missing_braces")
+                i = j + 1  # Skip the newly added lines
+            
+            i += 1
+        
+        if modified:
+            code = '\n'.join(brace_fixed_lines)
+        
+        return code, modified, diagnostics
+    
+    def _fix_structural_issues(self, code: str) -> Tuple[str, bool, Dict[str, Any]]:
+        """
+        Fix structural issues in the code based on nesting and language patterns.
+        
+        Args:
+            code: Source code to fix
+            
+        Returns:
+            Tuple of (fixed code, was_modified flag, diagnostics)
+        """
+        # Analyze code structure and nesting
+        nesting_analysis = self._analyze_nesting(code)
+        diagnostics = {"nesting_analysis": nesting_analysis}
+        
+        # Fix indentation based on nesting
+        code, indent_modified = self._fix_indentation_based_on_nesting(code, nesting_analysis)
+        
+        return code, indent_modified, diagnostics
+    
+    def _analyze_nesting(self, code: str) -> Dict[str, Any]:
+        """
+        Analyze the nesting structure of the code.
+        
+        Args:
+            code: Source code to analyze
+            
+        Returns:
+            Dictionary with nesting analysis results
+        """
+        lines = code.splitlines()
+        result = {
+            "max_depth": 0,
+            "invalid_nestings": [],
+            "missing_closing_tokens": 0,
+            "elements_by_depth": {},
+        }
+        
+        # Stack to track nesting
+        stack = []
+        
+        # Track the type of element at each nesting level
+        current_nesting_type = ["global"]
+        
+        for i, line in enumerate(lines):
+            line_stripped = line.strip()
+            
+            # Skip comments and empty lines
+            if not line_stripped or line_stripped.startswith('//') or line_stripped.startswith('/*'):
+                continue
+            
+            # Detect element types
+            element_type = None
+            if self.function_pattern.match(line):
+                element_type = "function"
+            elif self.class_pattern.match(line):
+                element_type = "class"
+            elif self.method_pattern.match(line) and len(stack) > 0:
+                element_type = "method"
+            elif self.variable_pattern.match(line):
+                element_type = "variable"
+            
+            # Check for block start/end
+            if '{' in line_stripped:
+                depth = len(stack)
+                stack.append('{')
+                
+                if depth + 1 > result["max_depth"]:
+                    result["max_depth"] = depth + 1
+                
+                # Record element at this depth
+                if element_type:
+                    if str(depth) not in result["elements_by_depth"]:
+                        result["elements_by_depth"][str(depth)] = []
+                    result["elements_by_depth"][str(depth)].append(element_type)
+                    
+                    # Check if this nesting is valid
+                    parent_type = current_nesting_type[-1] if current_nesting_type else "global"
+                    if not self._can_be_nested(parent_type, element_type):
+                        result["invalid_nestings"].append({
+                            "line": i + 1,
+                            "parent_type": parent_type,
+                            "child_type": element_type,
+                            "unlikely_score": 0.9
+                        })
+                    
+                    # Push the new element type onto the stack
+                    current_nesting_type.append(element_type)
+            
+            if '}' in line_stripped and stack:
+                stack.pop()
+                if current_nesting_type and len(current_nesting_type) > 1:
+                    current_nesting_type.pop()
+        
+        # Count unclosed blocks
+        result["missing_closing_tokens"] = len(stack)
+        
+        return result
+    
+    def _fix_indentation_based_on_nesting(self, code: str, nesting_analysis: Dict[str, Any]) -> Tuple[str, bool]:
+        """
+        Fix indentation issues based on nesting analysis.
+        
+        Args:
+            code: Source code to fix
+            nesting_analysis: Result of nesting analysis
+            
+        Returns:
+            Tuple of (fixed code, was_modified flag)
+        """
+        lines = code.splitlines()
+        modified = False
+        
+        # Stack to track braces
+        stack = []
+        expected_indent_level = 0
+        
+        # Process each line
+        fixed_lines = []
+        for line in lines:
+            line_stripped = line.strip()
+            current_indent = len(line) - len(line.lstrip())
+            
+            # Handle closing braces - they should be at parent's indent level
+            if line_stripped.startswith('}'):
+                if stack:
+                    stack.pop()
+                    expected_indent_level = len(stack) * self.standard_indent
+                    # Adjust the indentation of this closing brace
+                    if current_indent != expected_indent_level:
+                        line = ' ' * expected_indent_level + line_stripped
+                        modified = True
+            
+            # Normal line - should be at current indent level
+            elif line_stripped:
+                if current_indent != expected_indent_level and not line_stripped.startswith('//'):
+                    # This line has incorrect indentation
+                    line = ' ' * expected_indent_level + line_stripped
+                    modified = True
+            
+            # Handle opening braces - increase expected indent for next line
+            if '{' in line_stripped:
+                stack.append('{')
+                expected_indent_level = len(stack) * self.standard_indent
+            
+            fixed_lines.append(line)
+        
+        return '\n'.join(fixed_lines), modified
+    
+    def _can_be_nested(self, parent_type: str, child_type: str) -> bool:
+        """Check if the child element can be nested inside the parent element."""
+        return (parent_type, child_type) in self.allowed_nestings
+    
+    def _get_nesting_likelihood(self, element_type: str, nesting_level: int) -> float:
+        """
+        Get the likelihood score for an element at a specific nesting level.
+        Returns a value between 0-1 where higher is more likely.
+        """
+        if nesting_level == 0:  # Global level
+            return 1.0  # Everything can be at global level in JS
+        elif nesting_level == 1:  # First level nesting
+            if element_type in ('method', 'variable') and element_type == 'class':
+                return 0.9
+            elif element_type in ('function', 'variable'):
+                return 0.8
+            return 0.5
+        else:  # Deep nesting
+            # JS allows lots of nesting but it gets less common
+            return max(0.2, 1.0 - (nesting_level * 0.15))
+            
+    def extract_metadata(self, code: str, line_idx: int) -> Dict[str, Any]:
+        """
+        Extract JavaScript-specific metadata from code.
+        
+        Args:
+            code: The full source code
+            line_idx: The line index where the symbol definition starts
+            
+        Returns:
+            Dictionary containing JSDoc comments, decorators, type annotations, etc.
+        """
+        lines = code.splitlines()
+        metadata = {}
+        
+        # Extract JSDoc comments
+        jsdoc = self._extract_jsdoc(lines, line_idx - 1)
+        if jsdoc:
+            metadata["docstring"] = jsdoc
+            
+            # Extract special JSDoc tags
+            tags = self._extract_jsdoc_tags(jsdoc)
+            if tags:
+                metadata["jsdoc_tags"] = tags
+        
+        # Extract TypeScript decorators (if any)
+        decorators = []
+        current_idx = line_idx - 1
+        
+        # Skip JSDoc if present
+        if jsdoc:
+            jsdoc_lines = jsdoc.count('\n') + 1
+            current_idx = line_idx - jsdoc_lines - 1
+            
+        while current_idx >= 0:
+            line = lines[current_idx]
+            decorator_match = re.match(r'^\s*@([a-zA-Z_$][a-zA-Z0-9_$\.]*)', line)
+            if decorator_match:
+                decorators.insert(0, decorator_match.group(1))
+                current_idx -= 1
+            else:
+                break
+                
+        if decorators:
+            metadata["decorators"] = decorators
+            
+        # Extract TypeScript type annotations
+        if line_idx < len(lines):
+            definition_line = lines[line_idx]
+            
+            # Check for return type annotation
+            if '):' in definition_line:
+                return_type = definition_line.split('):')[1].split('{')[0].strip()
+                if return_type:
+                    metadata["return_type"] = return_type
+                    
+            # Extract parameter type annotations
+            param_types = {}
+            
+            # Simple extraction of parameters with types
+            if '(' in definition_line and ')' in definition_line:
+                param_section = definition_line.split('(')[1].split(')')[0]
+                params = param_section.split(',')
+                
+                for param in params:
+                    if ':' in param:
+                        param_name, param_type = param.split(':', 1)
+                        param_name = param_name.strip()
+                        param_type = param_type.strip()
+                        if param_name and param_type:
+                            param_types[param_name] = param_type
+                            
+            if param_types:
+                metadata["parameter_types"] = param_types
+                
+        return metadata
+    
+    def _extract_jsdoc(self, lines: List[str], start_idx: int) -> Optional[str]:
+        """
+        Extract JSDoc comment block.
+        
+        Args:
+            lines: List of code lines
+            start_idx: Index to start looking from
+            
+        Returns:
+            JSDoc string if found, None otherwise
+        """
+        if start_idx < 0 or start_idx >= len(lines):
+            return None
+            
+        # Look for JSDoc opening /**
+        line = lines[start_idx]
+        if not self.jsdoc_pattern.match(line):
+            return None
+            
+        # Found JSDoc start, collect all lines until closing */
+        jsdoc_lines = [line]
+        for i in range(start_idx + 1, len(lines)):
+            jsdoc_lines.append(lines[i])
+            if '*/' in lines[i]:
+                break
+                
+        return '\n'.join(jsdoc_lines)
+    
+    def _extract_jsdoc_tags(self, jsdoc: str) -> Dict[str, List[str]]:
+        """
+        Extract JSDoc tags from comment.
+        
+        Args:
+            jsdoc: JSDoc comment string
+            
+        Returns:
+            Dictionary mapping tag names to values
+        """
+        tags = {}
+        tag_pattern = re.compile(r'@(\w+)\s+(.+?)(?=\n\s*\*\s*@|\n\s*\*/|$)', re.DOTALL)
+        
+        matches = tag_pattern.finditer(jsdoc)
+        for match in matches:
+            tag_name = match.group(1)
+            tag_value = match.group(2).strip()
+            
+            if tag_name not in tags:
+                tags[tag_name] = []
+                
+            tags[tag_name].append(tag_value)
+            
+        return tags

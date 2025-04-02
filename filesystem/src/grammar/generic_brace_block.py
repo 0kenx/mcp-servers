@@ -4,7 +4,7 @@ Suitable for C-like languages (C, C++, Java, C#), JavaScript, TypeScript, Rust, 
 """
 
 import re
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from .base import BaseParser, CodeElement, ElementType
 
 
@@ -65,7 +65,13 @@ class BraceBlockParser(BaseParser):
     OPEN_BRACE_PATTERN = re.compile(r"\{")
 
     def __init__(self):
+        """Initialize the brace block parser."""
         super().__init__()
+        self.language = "brace_block"
+        self.handle_incomplete_code = True
+        self._preprocessing_diagnostics = None
+        self._was_code_modified = False
+        self.standard_indent = 4  # Default indentation for most languages
 
     def parse(self, code: str) -> List[CodeElement]:
         """
@@ -77,6 +83,13 @@ class BraceBlockParser(BaseParser):
         Returns:
             List of identified CodeElement objects
         """
+        # First, preprocess the code to handle incomplete syntax if enabled
+        if self.handle_incomplete_code:
+            code, was_modified, diagnostics = self.preprocess_incomplete_code(code)
+            self._was_code_modified = was_modified
+            self._preprocessing_diagnostics = diagnostics
+            
+        # Continue with existing parse implementation
         self.elements = []
         self.source_lines = self._split_into_lines(code)
         self.line_count = len(self.source_lines)
@@ -832,3 +845,426 @@ class BraceBlockParser(BaseParser):
             and not in_string_single
             and not in_block_comment
         )
+
+    def preprocess_incomplete_code(self, code: str) -> Tuple[str, bool, Dict[str, Any]]:
+        """
+        Preprocess code that might be incomplete or have syntax errors.
+        
+        Args:
+            code: The original code that might have issues
+            
+        Returns:
+            Tuple of (preprocessed code, was_modified flag, diagnostics)
+        """
+        diagnostics = {
+            "fixes_applied": [],
+            "confidence_score": 1.0,
+        }
+        
+        modified = False
+        
+        # First apply language-agnostic fixes
+        code, basic_modified = self._apply_basic_fixes(code)
+        if basic_modified:
+            modified = True
+            diagnostics["fixes_applied"].append("basic_syntax_fixes")
+        
+        # Apply brace block specific fixes
+        code, brace_modified, brace_diagnostics = self._fix_brace_specific(code)
+        if brace_modified:
+            modified = True
+            diagnostics["fixes_applied"].append("brace_specific_fixes")
+            diagnostics.update(brace_diagnostics)
+        
+        # Apply structural fixes
+        code, struct_modified, struct_diagnostics = self._fix_structural_issues(code)
+        if struct_modified:
+            modified = True
+            diagnostics["fixes_applied"].append("structural_fixes")
+            diagnostics.update(struct_diagnostics)
+        
+        # Calculate overall confidence
+        if modified:
+            # More fixes = less confidence
+            num_fixes = len(diagnostics["fixes_applied"])
+            diagnostics["confidence_score"] = max(0.3, 1.0 - (num_fixes * 0.2))
+        
+        return code, modified, diagnostics
+    
+    def _apply_basic_fixes(self, code: str) -> Tuple[str, bool]:
+        """Apply basic syntax fixes regardless of language."""
+        modified = False
+        
+        # Balance braces
+        code, braces_modified = self._balance_braces(code)
+        modified = modified or braces_modified
+        
+        # Fix indentation
+        lines, indent_modified = self._fix_indentation(code.splitlines())
+        if indent_modified:
+            code = '\n'.join(lines)
+            modified = True
+        
+        # Recover incomplete blocks
+        code, blocks_modified = self._recover_incomplete_blocks(code)
+        modified = modified or blocks_modified
+        
+        return code, modified
+    
+    def _balance_braces(self, code: str) -> Tuple[str, bool]:
+        """
+        Balance unmatched braces in code by adding missing closing braces.
+        
+        Args:
+            code: Source code that may have unmatched braces
+            
+        Returns:
+            Tuple of (balanced code, was_modified flag)
+        """
+        stack = []
+        modified = False
+        
+        # First, check if we have unbalanced braces
+        # This is a simplified version, ignoring strings and comments
+        for i, char in enumerate(code):
+            if char == '{':
+                stack.append(i)
+            elif char == '}':
+                if stack:
+                    stack.pop()
+                # Ignore extra closing braces
+        
+        # If stack is empty, braces are balanced
+        if not stack:
+            return code, modified
+            
+        # Add missing closing braces at the end
+        modified = True
+        balanced_code = code + '\n' + '}'.join([''] * len(stack))
+        
+        return balanced_code, modified
+    
+    def _fix_indentation(self, lines: List[str]) -> Tuple[List[str], bool]:
+        """
+        Attempt to fix incorrect indentation in code.
+        
+        Args:
+            lines: Source code lines that may have incorrect indentation
+            
+        Returns:
+            Tuple of (fixed lines, was_modified flag)
+        """
+        if not lines:
+            return lines, False
+            
+        modified = False
+        fixed_lines = lines.copy()
+        
+        # Fix common indentation issues
+        for i in range(1, len(lines)):
+            if not lines[i].strip():  # Skip empty lines
+                continue
+                
+            current_indent = len(lines[i]) - len(lines[i].lstrip())
+            prev_indent = len(lines[i-1]) - len(lines[i-1].lstrip())
+            
+            # Check for sudden large increases in indentation (more than standard_indent)
+            if current_indent > prev_indent + self.standard_indent and current_indent % self.standard_indent != 0:
+                # Fix to nearest standard_indent multiple
+                correct_indent = (current_indent // self.standard_indent) * self.standard_indent
+                fixed_lines[i] = ' ' * correct_indent + lines[i].lstrip()
+                modified = True
+            
+            # Check if line ends with { and next line should be indented
+            if lines[i-1].rstrip().endswith('{'):
+                # Next line should be indented
+                if current_indent <= prev_indent and lines[i].strip() and not lines[i].strip().startswith('}'):
+                    # Add proper indentation
+                    fixed_lines[i] = ' ' * (prev_indent + self.standard_indent) + lines[i].lstrip()
+                    modified = True
+        
+        return fixed_lines, modified
+    
+    def _recover_incomplete_blocks(self, code: str) -> Tuple[str, bool]:
+        """
+        Recover blocks with missing closing elements.
+        
+        Args:
+            code: Source code that may have incomplete blocks
+            
+        Returns:
+            Tuple of (recovered code, was_modified flag)
+        """
+        lines = code.splitlines()
+        modified = False
+        
+        # Check for definitions at the end of the file without body
+        if lines and len(lines) > 0:
+            last_line = lines[-1].strip()
+            
+            # Common patterns for definitions that should have a body
+            patterns = [
+                r'^\s*(?:function|class|if|for|while)\s+.*\($',  # JavaScript-like
+                r'^\s*.*\)\s*{?$',                               # C-like function
+                r'^\s*.*\s+{$'                                   # Block start
+            ]
+            
+            for pattern in patterns:
+                if re.match(pattern, last_line):
+                    # Add a minimal body or closing brace if needed
+                    if last_line.endswith('{'):
+                        lines.append('}')
+                        modified = True
+                    elif not last_line.endswith('}'):
+                        # This might be an incomplete definition
+                        lines.append('{')
+                        lines.append('}')
+                        modified = True
+                    break
+        
+        return '\n'.join(lines), modified
+    
+    def _fix_brace_specific(self, code: str) -> Tuple[str, bool, Dict[str, Any]]:
+        """
+        Apply brace language-specific fixes.
+        
+        Args:
+            code: Source code to fix
+            
+        Returns:
+            Tuple of (fixed code, was_modified flag, diagnostics)
+        """
+        modified = False
+        diagnostics = {"brace_fixes": []}
+        
+        # Fix missing semicolons for languages that require them
+        lines = code.splitlines()
+        semicolon_fixed_lines = []
+        for line in lines:
+            line_stripped = line.strip()
+            if (
+                line_stripped and 
+                not line_stripped.endswith(';') and 
+                not line_stripped.endswith('{') and
+                not line_stripped.endswith('}') and
+                not line_stripped.startswith('//') and
+                not line_stripped.startswith('/*') and
+                not line_stripped.endswith('*/') and
+                not re.match(r'^\s*(?:if|else|for|while|switch|function|class)\s+', line) and
+                not line_stripped.endswith(')') and
+                not ':' in line_stripped  # Skip lines that might be object properties
+            ):
+                semicolon_fixed_lines.append(line + ';')
+                modified = True
+                diagnostics["brace_fixes"].append("added_missing_semicolon")
+                continue
+                
+            semicolon_fixed_lines.append(line)
+        
+        if modified:
+            code = '\n'.join(semicolon_fixed_lines)
+        
+        return code, modified, diagnostics
+    
+    def _fix_structural_issues(self, code: str) -> Tuple[str, bool, Dict[str, Any]]:
+        """
+        Fix structural issues in the code based on nesting and language patterns.
+        
+        Args:
+            code: Source code to fix
+            
+        Returns:
+            Tuple of (fixed code, was_modified flag, diagnostics)
+        """
+        # Analyze code structure and nesting
+        nesting_analysis = self._analyze_nesting(code)
+        diagnostics = {"nesting_analysis": nesting_analysis}
+        
+        # Fix indentation based on nesting
+        code, indent_modified = self._fix_indentation_based_on_nesting(code, nesting_analysis)
+        
+        return code, indent_modified, diagnostics
+    
+    def _analyze_nesting(self, code: str) -> Dict[str, Any]:
+        """
+        Analyze the nesting structure of the code.
+        
+        Args:
+            code: Source code to analyze
+            
+        Returns:
+            Dictionary with nesting analysis results
+        """
+        lines = code.splitlines()
+        result = {
+            "max_depth": 0,
+            "missing_closing_tokens": 0,
+            "elements_by_depth": {},
+        }
+        
+        # Stack to track nesting
+        stack = []
+        
+        for i, line in enumerate(lines):
+            line_stripped = line.strip()
+            
+            # Skip comments and empty lines
+            if not line_stripped or line_stripped.startswith('//') or line_stripped.startswith('/*'):
+                continue
+            
+            # Check for block start/end
+            if '{' in line_stripped:
+                depth = len(stack)
+                stack.append('{')
+                
+                if depth + 1 > result["max_depth"]:
+                    result["max_depth"] = depth + 1
+                
+            if '}' in line_stripped and stack:
+                stack.pop()
+        
+        # Count unclosed blocks
+        result["missing_closing_tokens"] = len(stack)
+        
+        return result
+    
+    def _fix_indentation_based_on_nesting(self, code: str, nesting_analysis: Dict[str, Any]) -> Tuple[str, bool]:
+        """
+        Fix indentation issues based on nesting analysis.
+        
+        Args:
+            code: Source code to fix
+            nesting_analysis: Result of nesting analysis
+            
+        Returns:
+            Tuple of (fixed code, was_modified flag)
+        """
+        lines = code.splitlines()
+        modified = False
+        
+        # Stack to track braces
+        stack = []
+        expected_indent_level = 0
+        
+        # Process each line
+        fixed_lines = []
+        for line in lines:
+            line_stripped = line.strip()
+            current_indent = len(line) - len(line.lstrip())
+            
+            # Handle closing braces - they should be at parent's indent level
+            if line_stripped.startswith('}'):
+                if stack:
+                    stack.pop()
+                    expected_indent_level = len(stack) * self.standard_indent
+                    # Adjust the indentation of this closing brace
+                    if current_indent != expected_indent_level:
+                        line = ' ' * expected_indent_level + line_stripped
+                        modified = True
+            
+            # Normal line - should be at current indent level
+            elif line_stripped:
+                if current_indent != expected_indent_level and not line_stripped.startswith('//'):
+                    # This line has incorrect indentation
+                    line = ' ' * expected_indent_level + line_stripped
+                    modified = True
+            
+            # Handle opening braces - increase expected indent for next line
+            if '{' in line_stripped:
+                stack.append('{')
+                expected_indent_level = len(stack) * self.standard_indent
+            
+            fixed_lines.append(line)
+        
+        return '\n'.join(fixed_lines), modified
+    
+    def extract_metadata(self, code: str, line_idx: int) -> Dict[str, Any]:
+        """
+        Extract metadata from code at the given line index.
+        
+        Args:
+            code: The full source code
+            line_idx: The line index where the symbol definition starts
+            
+        Returns:
+            Dictionary containing extracted metadata
+        """
+        lines = code.splitlines()
+        if line_idx >= len(lines):
+            return {}
+        
+        metadata = {}
+        
+        # Extract JSDoc/C-style documentation comments
+        doc_comments = []
+        current_idx = line_idx - 1
+        in_comment_block = False
+        
+        while current_idx >= 0:
+            line = lines[current_idx]
+            # Check for end of JSDoc/C-style block comment
+            if line.strip().startswith('*/'):
+                in_comment_block = True
+                current_idx -= 1
+                continue
+            
+            # Collect comment content
+            if in_comment_block:
+                if line.strip().startswith('/*') or line.strip().startswith('/**'):
+                    in_comment_block = False
+                    # Reached the start of the comment block
+                    doc_comments.reverse()
+                    metadata["docstring"] = "\n".join(doc_comments)
+                    break
+                else:
+                    # Add comment line after stripping * at beginning if present
+                    comment_line = line.strip()
+                    if comment_line.startswith('*'):
+                        comment_line = comment_line[1:].strip()
+                    doc_comments.append(comment_line)
+                    current_idx -= 1
+                    continue
+            
+            # Check for single-line comments
+            if line.strip().startswith('//'):
+                doc_comments.insert(0, line.strip()[2:].strip())
+                current_idx -= 1
+                continue
+            
+            # If not in a comment block and not a comment line, stop looking
+            if not in_comment_block:
+                break
+                
+            current_idx -= 1
+        
+        # Look for modifiers and annotations on the definition line
+        definition_line = lines[line_idx]
+        
+        # Extract accessibility modifiers
+        modifiers = []
+        for modifier in ['public', 'private', 'protected', 'static', 'final', 'abstract', 'async', 'export']:
+            if re.search(r'\b' + modifier + r'\b', definition_line):
+                modifiers.append(modifier)
+        
+        if modifiers:
+            metadata["modifiers"] = " ".join(modifiers)
+        
+        # Extract parameters from function definitions
+        if '(' in definition_line and ')' in definition_line:
+            params_match = re.search(r'\(([^)]*)\)', definition_line)
+            if params_match:
+                metadata["parameters"] = params_match.group(1).strip()
+        
+        # Extract return type if present (language specific patterns)
+        if '->' in definition_line:  # Rust, TypeScript, etc.
+            return_match = re.search(r'->([^{;]+)', definition_line)
+            if return_match:
+                metadata["return_type"] = return_match.group(1).strip()
+        elif ':' in definition_line and '(' in definition_line:  # TypeScript return type
+            after_params = definition_line.split(')', 1)[1]
+            if ':' in after_params:
+                return_match = re.search(r':\s*([^{;]+)', after_params)
+                if return_match:
+                    metadata["return_type"] = return_match.group(1).strip()
+        
+        return metadata
