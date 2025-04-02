@@ -1,4 +1,5 @@
 import sys
+import os
 import json
 import asyncio
 import httpx
@@ -30,16 +31,8 @@ DEFAULT_SEARCH_COUNT = 10
 # Brave API Endpoint
 BRAVE_SEARCH_API_URL = "https://api.search.brave.com/res/v1/web/search"
 
-# --- Command line argument parsing ---
-if len(sys.argv) < 3:
-    print(
-        "Usage: python web.py <openai-api-key> <brave-api-key>",
-        file=sys.stderr,
-    )
-    sys.exit(1)
-
 # --- OpenAI Setup ---
-OPENAI_API_KEY = sys.argv[1]
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 if (
     not OPENAI_API_KEY
     or OPENAI_API_KEY == "YOUR_OPENAI_KEY"
@@ -65,7 +58,7 @@ else:
         openai_client = None
 
 # --- Brave Search Setup ---
-BRAVE_API_KEY = sys.argv[2]
+BRAVE_API_KEY = os.environ.get('BRAVE_API_KEY')
 if (
     not BRAVE_API_KEY or BRAVE_API_KEY == "YOUR_BRAVE_KEY"
 ):  # Added check for placeholder
