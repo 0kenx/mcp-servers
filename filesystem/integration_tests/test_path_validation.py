@@ -11,14 +11,12 @@ These tests verify that the path validation functions work correctly and securel
 import os
 import sys
 import unittest
-import tempfile
 import shutil
 from pathlib import Path
-import subprocess
 
 # Initialize the test environment first - this must come before other imports
 # This also sets up the required global variables
-from integration_tests.test_init import MockContext, SERVER_ALLOWED_DIRECTORIES, WORKING_DIRECTORY, temp_dir
+from integration_tests.test_init import MockContext, temp_dir
 
 # Add the parent directory to the path so we can import the module
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -56,7 +54,7 @@ class TestPathValidation(unittest.TestCase):
             f.write("File in subdirectory\n")
 
         # Create a symlink if the platform supports it
-        if hasattr(os, 'symlink'):
+        if hasattr(os, "symlink"):
             try:
                 # Create a symlink to the test file
                 self.symlink_path = os.path.join(self.test_dir, "symlink.txt")
@@ -141,7 +139,7 @@ class TestPathValidation(unittest.TestCase):
         # and uses the WORKING_DIRECTORY global variable for the working directory
         global WORKING_DIRECTORY
         WORKING_DIRECTORY = self.test_dir
-        
+
         # Test resolving a relative path
         relative_path = "test_file.txt"
         resolved_path = _resolve_path(relative_path)
@@ -152,7 +150,7 @@ class TestPathValidation(unittest.TestCase):
         # Ensure WORKING_DIRECTORY is set
         global WORKING_DIRECTORY
         WORKING_DIRECTORY = self.test_dir
-        
+
         # Test resolving an absolute path
         resolved_path = _resolve_path(self.test_file)
         self.assertEqual(resolved_path, self.test_file)
@@ -162,7 +160,7 @@ class TestPathValidation(unittest.TestCase):
         # Ensure WORKING_DIRECTORY is set
         global WORKING_DIRECTORY
         WORKING_DIRECTORY = self.test_dir
-        
+
         # Test resolving a path with traversal
         traversal_path = "../outside.txt"
         resolved_path = _resolve_path(traversal_path)

@@ -16,19 +16,19 @@ def run_all_tests():
     """
     # Get the directory of this script
     this_dir = os.path.dirname(os.path.abspath(__file__))
-    
+
     # Create a test loader
     loader = unittest.TestLoader()
-    
+
     # Discover tests in the current directory
     test_suite = loader.discover(this_dir, pattern="test_*.py")
-    
+
     # Create a test runner
     runner = unittest.TextTestRunner(verbosity=2)
-    
+
     # Run the tests
     result = runner.run(test_suite)
-    
+
     # Return True if all tests pass, False otherwise
     return result.wasSuccessful()
 
@@ -36,16 +36,16 @@ def run_all_tests():
 def run_specific_test(test_name):
     """
     Run a specific test file.
-    
+
     Args:
         test_name: Name of the test file (without .py extension)
-    
+
     Returns:
         True if tests pass, False otherwise
     """
     # Create a test loader
     loader = unittest.TestLoader()
-    
+
     # Load the specified test module
     module_name = f"tests.{test_name}"
     try:
@@ -53,13 +53,13 @@ def run_specific_test(test_name):
     except ImportError:
         print(f"Error: Test module '{module_name}' not found.")
         return False
-    
+
     # Create a test runner
     runner = unittest.TextTestRunner(verbosity=2)
-    
+
     # Run the tests
     result = runner.run(suite)
-    
+
     # Return True if all tests pass, False otherwise
     return result.wasSuccessful()
 
@@ -74,6 +74,6 @@ if __name__ == "__main__":
         if test_name.endswith(".py"):
             test_name = test_name[:-3]
         success = run_specific_test(test_name)
-    
+
     # Exit with an appropriate status code
     sys.exit(0 if success else 1)

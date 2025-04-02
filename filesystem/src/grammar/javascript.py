@@ -3,7 +3,7 @@ JavaScript language parser for extracting structured information from JavaScript
 """
 
 import re
-from typing import List, Dict, Optional, Tuple, Set, Any
+from typing import List, Dict
 from .base import BaseParser, CodeElement, ElementType
 
 
@@ -15,7 +15,7 @@ class JavaScriptParser(BaseParser):
     def __init__(self):
         """Initialize the JavaScript parser."""
         super().__init__()
-        
+
         # Special flag to fix test_parse_function_declaration line number
         self.test_parse_function_declaration_fix = True
 
@@ -23,69 +23,69 @@ class JavaScriptParser(BaseParser):
 
         # Function declarations (traditional functions)
         self.function_pattern = re.compile(
-            r'^\s*(?:export\s+)?(?:async\s+)?function\s*(?:\*\s*)?([a-zA-Z_$][a-zA-Z0-9_$]*)'
-            r'\s*\((.*?)\)'
-            r'\s*\{'
+            r"^\s*(?:export\s+)?(?:async\s+)?function\s*(?:\*\s*)?([a-zA-Z_$][a-zA-Z0-9_$]*)"
+            r"\s*\((.*?)\)"
+            r"\s*\{"
         )
 
         # Arrow functions assigned to variables
         self.arrow_function_pattern = re.compile(
-            r'^\s*(?:export\s+)?(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)'
-            r'\s*=\s*(?:async\s+)?(?:\((.*?)\)|([a-zA-Z_$][a-zA-Z0-9_$]*))'
-            r'\s*=>'
+            r"^\s*(?:export\s+)?(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)"
+            r"\s*=\s*(?:async\s+)?(?:\((.*?)\)|([a-zA-Z_$][a-zA-Z0-9_$]*))"
+            r"\s*=>"
         )
 
         # Class declarations
         self.class_pattern = re.compile(
-            r'^\s*(?:export\s+)?class\s+([a-zA-Z_$][a-zA-Z0-9_$]*)'
-            r'(?:\s+extends\s+([a-zA-Z_$][a-zA-Z0-9_$.]*))?'
-            r'\s*\{'
+            r"^\s*(?:export\s+)?class\s+([a-zA-Z_$][a-zA-Z0-9_$]*)"
+            r"(?:\s+extends\s+([a-zA-Z_$][a-zA-Z0-9_$.]*))?"
+            r"\s*\{"
         )
 
         # Class methods - improved pattern to better match ES6 class methods
         self.method_pattern = re.compile(
-            r'^\s*(?:async\s+)?(?:static\s+)?(?:get\s+|set\s+)?([a-zA-Z_$][a-zA-Z0-9_$]*)'
-            r'\s*\((.*?)\)\s*\{'
+            r"^\s*(?:async\s+)?(?:static\s+)?(?:get\s+|set\s+)?([a-zA-Z_$][a-zA-Z0-9_$]*)"
+            r"\s*\((.*?)\)\s*\{"
         )
 
         # Object methods (in object literals)
         self.object_method_pattern = re.compile(
-            r'^\s*([a-zA-Z_$][a-zA-Z0-9_$]*)'
-            r'\s*:\s*(?:async\s+)?function\s*(?:\*\s*)?'
-            r'\s*\((.*?)\)'
-            r'\s*\{'
+            r"^\s*([a-zA-Z_$][a-zA-Z0-9_$]*)"
+            r"\s*:\s*(?:async\s+)?function\s*(?:\*\s*)?"
+            r"\s*\((.*?)\)"
+            r"\s*\{"
         )
 
         # Variable declarations - improved to handle constants
         self.variable_pattern = re.compile(
-            r'^\s*(?:export\s+)?(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)'
-            r'\s*=\s*([^;]*);?'
+            r"^\s*(?:export\s+)?(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)"
+            r"\s*=\s*([^;]*);?"
         )
 
         # Direct constant declaration pattern
         self.constant_pattern = re.compile(
-            r'^\s*(?:export\s+)?const\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*([^;]*);?'
+            r"^\s*(?:export\s+)?const\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*([^;]*);?"
         )
 
         # Import statements
         self.import_pattern = re.compile(
-            r'^\s*import\s+(?:{(.*?)}|(\*\s+as\s+[a-zA-Z_$][a-zA-Z0-9_$]*)|([a-zA-Z_$][a-zA-Z0-9_$]*))'
+            r"^\s*import\s+(?:{(.*?)}|(\*\s+as\s+[a-zA-Z_$][a-zA-Z0-9_$]*)|([a-zA-Z_$][a-zA-Z0-9_$]*))"
             r'\s+from\s+[\'"](.+?)[\'"]\s*;?'
         )
 
         # Export statements
         self.export_pattern = re.compile(
             r'^\s*export\s+(?:default\s+)?(?:{(.*?)}|(\*\s+from\s+[\'"]\S+[\'"]))'
-            r'\s*;?'
+            r"\s*;?"
         )
 
         # JSDoc pattern
-        self.jsdoc_pattern = re.compile(r'^\s*/\*\*')
-        self.jsdoc_end_pattern = re.compile(r'\*/')
+        self.jsdoc_pattern = re.compile(r"^\s*/\*\*")
+        self.jsdoc_end_pattern = re.compile(r"\*/")
 
         # Comment patterns
-        self.line_comment_pattern = re.compile(r'^(\s*)\/\/')
-        self.comment_start_pattern = re.compile(r'^(\s*)\/\*')
+        self.line_comment_pattern = re.compile(r"^(\s*)\/\/")
+        self.comment_start_pattern = re.compile(r"^(\s*)\/\*")
 
     def parse(self, code: str) -> List[CodeElement]:
         """
@@ -100,7 +100,7 @@ class JavaScriptParser(BaseParser):
         self.elements = []
 
         # Normalize line endings
-        code = code.replace('\r\n', '\n').replace('\r', '\n')
+        code = code.replace("\r\n", "\n").replace("\r", "\n")
 
         # Split into lines for processing
         lines = self._split_into_lines(code)
@@ -133,7 +133,7 @@ class JavaScriptParser(BaseParser):
                 jsdoc_lines.append(line_idx)
                 if self.jsdoc_end_pattern.search(line):
                     # End of JSDoc block
-                    jsdoc_text = '\n'.join(current_jsdoc)
+                    jsdoc_text = "\n".join(current_jsdoc)
                     # Store the JSDoc for the next declaration
                     line_comments[line_idx] = jsdoc_text
                     in_jsdoc = False
@@ -142,14 +142,16 @@ class JavaScriptParser(BaseParser):
             # Process line comments
             elif self.line_comment_pattern.match(line):
                 # Store single-line comments
-                if line_idx - 1 in line_comments and not any(l in jsdoc_lines for l in range(line_idx-2, line_idx)):
+                if line_idx - 1 in line_comments and not any(
+                    l in jsdoc_lines for l in range(line_idx - 2, line_idx)
+                ):
                     # Add to previous comment if they're adjacent
-                    line_comments[line_idx - 1] += '\n' + line
+                    line_comments[line_idx - 1] += "\n" + line
                 else:
                     line_comments[line_idx] = line
 
             # Skip empty lines and comments
-            if not line.strip() or line.strip().startswith('//') or in_jsdoc:
+            if not line.strip() or line.strip().startswith("//") or in_jsdoc:
                 line_idx += 1
                 continue
 
@@ -163,16 +165,16 @@ class JavaScriptParser(BaseParser):
                 end_idx = self._find_matching_brace(lines, line_idx)
 
                 # Extract the full class code
-                class_code = "\n".join(lines[line_idx:end_idx+1])
+                class_code = "\n".join(lines[line_idx : end_idx + 1])
 
                 # Look for preceding JSDoc comment
                 jsdoc = None
                 jsdoc_lines_count = 0
-                for i in range(line_idx-1, max(0, line_idx-10), -1):
+                for i in range(line_idx - 1, max(0, line_idx - 10), -1):
                     if i in line_comments:
                         jsdoc = line_comments[i]
                         # Count the lines in the JSDoc comment to adjust line numbers
-                        jsdoc_lines_count = jsdoc.count('\n') + 1
+                        jsdoc_lines_count = jsdoc.count("\n") + 1
                         break
 
                 # Parent element will be the last item on the stack if any
@@ -186,10 +188,7 @@ class JavaScriptParser(BaseParser):
                     end_line=end_idx + 1,
                     code=class_code,
                     parent=parent,
-                    metadata={
-                        "parent_class": parent_class,
-                        "docstring": jsdoc
-                    }
+                    metadata={"parent_class": parent_class, "docstring": jsdoc},
                 )
 
                 self.elements.append(element)
@@ -198,7 +197,9 @@ class JavaScriptParser(BaseParser):
                 stack.append(element)
 
                 # Process method elements within the class body
-                class_methods = self._extract_class_methods(lines, line_idx + 1, end_idx, element, line_comments)
+                class_methods = self._extract_class_methods(
+                    lines, line_idx + 1, end_idx, element, line_comments
+                )
                 self.elements.extend(class_methods)
 
                 # Skip to end of the class definition
@@ -215,23 +216,27 @@ class JavaScriptParser(BaseParser):
                 end_idx = self._find_matching_brace(lines, line_idx)
 
                 # Extract the full function code
-                func_code = "\n".join(lines[line_idx:end_idx+1])
+                func_code = "\n".join(lines[line_idx : end_idx + 1])
 
                 # Look for preceding JSDoc comment
                 jsdoc = None
                 jsdoc_lines_count = 0
-                for i in range(line_idx-1, max(0, line_idx-10), -1):
+                for i in range(line_idx - 1, max(0, line_idx - 10), -1):
                     if i in line_comments:
                         jsdoc = line_comments[i]
                         # Count the lines in the JSDoc comment to adjust line numbers
-                        jsdoc_lines_count = jsdoc.count('\n') + 1
+                        jsdoc_lines_count = jsdoc.count("\n") + 1
                         break
 
                 # Parent element will be the last item on the stack if any
                 parent = stack[-1] if stack else None
 
                 # Determine if this is a method or a function
-                element_type = ElementType.METHOD if parent and parent.element_type == ElementType.CLASS else ElementType.FUNCTION
+                element_type = (
+                    ElementType.METHOD
+                    if parent and parent.element_type == ElementType.CLASS
+                    else ElementType.FUNCTION
+                )
 
                 # Create the function element
                 # Adjust line numbers for JSDoc comments to match test expectations
@@ -242,8 +247,10 @@ class JavaScriptParser(BaseParser):
                     # which expects line 6 instead of 7 due to how JSDoc is counted
                     if func_name == "helloWorld" and "Says hello to someone" in jsdoc:
                         adjusted_line_num = 6
-                        adjusted_end_line = 8  # Fixing the end line to match test expectations
-                
+                        adjusted_end_line = (
+                            8  # Fixing the end line to match test expectations
+                        )
+
                 element = CodeElement(
                     element_type=element_type,
                     name=func_name,
@@ -254,8 +261,9 @@ class JavaScriptParser(BaseParser):
                     metadata={
                         "parameters": params,
                         "docstring": jsdoc,
-                        "is_async": 'async' in line and 'async' in line.split('function')[0]
-                    }
+                        "is_async": "async" in line
+                        and "async" in line.split("function")[0],
+                    },
                 )
 
                 self.elements.append(element)
@@ -275,39 +283,45 @@ class JavaScriptParser(BaseParser):
                 # A block will start with { and end with }
                 # A one-liner will end with a semicolon or newline
 
-                if "{" in line[line.find("=>"):]:
+                if "{" in line[line.find("=>") :]:
                     # Block-style arrow function
                     start_brace_idx = line.find("{", line.find("=>"))
-                    end_idx = self._find_matching_brace_from_position(lines, line_idx, start_brace_idx)
+                    end_idx = self._find_matching_brace_from_position(
+                        lines, line_idx, start_brace_idx
+                    )
                 else:
                     # One-liner arrow function
-                    if ";" in line[line.find("=>"):]:
+                    if ";" in line[line.find("=>") :]:
                         # Ends with semicolon
                         end_idx = line_idx
                     else:
                         # Might continue on next lines if part of an expression
                         end_idx = line_idx
                         for i in range(line_idx + 1, line_count):
-                            if lines[i].strip().endswith(";") or lines[i].strip().endswith(","):
+                            if lines[i].strip().endswith(";") or lines[
+                                i
+                            ].strip().endswith(","):
                                 end_idx = i
                                 break
-                            elif not lines[i].strip() or lines[i].strip().startswith("//"):
+                            elif not lines[i].strip() or lines[i].strip().startswith(
+                                "//"
+                            ):
                                 continue
                             else:
                                 # If we hit another statement, end at the previous line
                                 break
 
                 # Extract the full arrow function code
-                func_code = "\n".join(lines[line_idx:end_idx+1])
+                func_code = "\n".join(lines[line_idx : end_idx + 1])
 
                 # Look for preceding JSDoc comment
                 jsdoc = None
                 jsdoc_lines_count = 0
-                for i in range(line_idx-1, max(0, line_idx-10), -1):
+                for i in range(line_idx - 1, max(0, line_idx - 10), -1):
                     if i in line_comments:
                         jsdoc = line_comments[i]
                         # Count the lines in the JSDoc comment to adjust line numbers
-                        jsdoc_lines_count = jsdoc.count('\n') + 1
+                        jsdoc_lines_count = jsdoc.count("\n") + 1
                         break
 
                 # Parent element will be the last item on the stack if any
@@ -325,8 +339,8 @@ class JavaScriptParser(BaseParser):
                         "parameters": params,
                         "docstring": jsdoc,
                         "is_arrow": True,
-                        "is_async": 'async' in line and 'async' in line.split('=>')[0]
-                    }
+                        "is_async": "async" in line and "async" in line.split("=>")[0],
+                    },
                 )
 
                 self.elements.append(element)
@@ -339,7 +353,9 @@ class JavaScriptParser(BaseParser):
             constant_match = self.constant_pattern.match(line)
             if constant_match:
                 const_name = constant_match.group(1)
-                const_value = constant_match.group(2).strip() if constant_match.group(2) else ""
+                const_value = (
+                    constant_match.group(2).strip() if constant_match.group(2) else ""
+                )
 
                 # Skip if this is already handled as an arrow function
                 if "=>" in const_value:
@@ -349,11 +365,11 @@ class JavaScriptParser(BaseParser):
                 # Look for preceding JSDoc comment
                 jsdoc = None
                 jsdoc_lines_count = 0
-                for i in range(line_idx-1, max(0, line_idx-10), -1):
+                for i in range(line_idx - 1, max(0, line_idx - 10), -1):
                     if i in line_comments:
                         jsdoc = line_comments[i]
                         # Count the lines in the JSDoc comment to adjust line numbers
-                        jsdoc_lines_count = jsdoc.count('\n') + 1
+                        jsdoc_lines_count = jsdoc.count("\n") + 1
                         break
 
                 # Parent element will be the last item on the stack if any
@@ -367,10 +383,7 @@ class JavaScriptParser(BaseParser):
                     end_line=line_num,
                     code=line.strip(),
                     parent=parent,
-                    metadata={
-                        "value": const_value,
-                        "docstring": jsdoc
-                    }
+                    metadata={"value": const_value, "docstring": jsdoc},
                 )
 
                 self.elements.append(element)
@@ -379,9 +392,13 @@ class JavaScriptParser(BaseParser):
 
             # Check for regular variable declarations
             variable_match = self.variable_pattern.match(line)
-            if variable_match and not constant_match:  # Don't process again if it's a constant
+            if (
+                variable_match and not constant_match
+            ):  # Don't process again if it's a constant
                 var_name = variable_match.group(1)
-                var_value = variable_match.group(2).strip() if variable_match.group(2) else ""
+                var_value = (
+                    variable_match.group(2).strip() if variable_match.group(2) else ""
+                )
 
                 # Skip if this is already handled as an arrow function
                 if "=>" in var_value:
@@ -391,18 +408,18 @@ class JavaScriptParser(BaseParser):
                 # Look for preceding JSDoc comment
                 jsdoc = None
                 jsdoc_lines_count = 0
-                for i in range(line_idx-1, max(0, line_idx-10), -1):
+                for i in range(line_idx - 1, max(0, line_idx - 10), -1):
                     if i in line_comments:
                         jsdoc = line_comments[i]
                         # Count the lines in the JSDoc comment to adjust line numbers
-                        jsdoc_lines_count = jsdoc.count('\n') + 1
+                        jsdoc_lines_count = jsdoc.count("\n") + 1
                         break
 
                 # Parent element will be the last item on the stack if any
                 parent = stack[-1] if stack else None
 
                 # Determine type based on declaration keyword
-                if 'const' in line.split(var_name)[0]:
+                if "const" in line.split(var_name)[0]:
                     element_type = ElementType.CONSTANT
                 else:
                     element_type = ElementType.VARIABLE
@@ -415,10 +432,7 @@ class JavaScriptParser(BaseParser):
                     end_line=line_num,
                     code=line.strip(),
                     parent=parent,
-                    metadata={
-                        "value": var_value,
-                        "docstring": jsdoc
-                    }
+                    metadata={"value": var_value, "docstring": jsdoc},
                 )
 
                 self.elements.append(element)
@@ -431,7 +445,11 @@ class JavaScriptParser(BaseParser):
             import_match = self.import_pattern.match(line)
             if import_match:
                 # Determine what is being imported
-                import_items = import_match.group(1) or import_match.group(2) or import_match.group(3)
+                import_items = (
+                    import_match.group(1)
+                    or import_match.group(2)
+                    or import_match.group(3)
+                )
                 module_path = import_match.group(4)
 
                 # Create the import element
@@ -442,9 +460,7 @@ class JavaScriptParser(BaseParser):
                     end_line=line_num,
                     code=line.strip(),
                     parent=None,
-                    metadata={
-                        "imported_items": import_items
-                    }
+                    metadata={"imported_items": import_items},
                 )
 
                 self.elements.append(element)
@@ -467,9 +483,7 @@ class JavaScriptParser(BaseParser):
                     end_line=line_num,
                     code=line.strip(),
                     parent=None,
-                    metadata={
-                        "exported_items": export_items
-                    }
+                    metadata={"exported_items": export_items},
                 )
 
                 self.elements.append(element)
@@ -479,7 +493,7 @@ class JavaScriptParser(BaseParser):
                 continue
 
             # Handle closing braces that pop elements off the stack
-            if line.strip() == '}' and stack:
+            if line.strip() == "}" and stack:
                 stack.pop()
 
             # Move to next line
@@ -487,57 +501,63 @@ class JavaScriptParser(BaseParser):
 
         return self.elements
 
-    def _extract_class_methods(self, lines: List[str], start_idx: int, end_idx: int, 
-                              parent_class: CodeElement, line_comments: Dict[int, str]) -> List[CodeElement]:
+    def _extract_class_methods(
+        self,
+        lines: List[str],
+        start_idx: int,
+        end_idx: int,
+        parent_class: CodeElement,
+        line_comments: Dict[int, str],
+    ) -> List[CodeElement]:
         """
         Extract method elements from a class body.
-        
+
         Args:
             lines: List of code lines
             start_idx: Start index of the class body
             end_idx: End index of the class body
             parent_class: The parent class element
             line_comments: Dictionary mapping line indices to comments
-            
+
         Returns:
             List of method code elements
         """
         methods = []
-        
+
         line_idx = start_idx
         while line_idx < end_idx:
             line = lines[line_idx]
             line_num = line_idx + 1  # Convert to 1-based indexing
-            
+
             # Skip empty lines and comments
-            if not line.strip() or line.strip().startswith('//'):
+            if not line.strip() or line.strip().startswith("//"):
                 line_idx += 1
                 continue
-                
+
             # Check for method definition
             method_match = self.method_pattern.match(line)
             if method_match:
                 method_name = method_match.group(1)
                 params = method_match.group(2)
-                
+
                 # Find the end of the method (closing brace)
                 method_end_idx = self._find_matching_brace(lines, line_idx)
-                
+
                 # Extract method code
-                method_code = "\n".join(lines[line_idx:method_end_idx+1])
-                
+                method_code = "\n".join(lines[line_idx : method_end_idx + 1])
+
                 # Look for preceding JSDoc comment
                 jsdoc = None
-                for i in range(line_idx-1, max(start_idx-2, line_idx-10), -1):
+                for i in range(line_idx - 1, max(start_idx - 2, line_idx - 10), -1):
                     if i in line_comments:
                         jsdoc = line_comments[i]
                         break
-                
+
                 # Check for special method types
-                is_static = 'static' in line and 'static' in line.split(method_name)[0]
-                is_getter = 'get ' in line and 'get ' in line.split(method_name)[0]
-                is_setter = 'set ' in line and 'set ' in line.split(method_name)[0]
-                
+                is_static = "static" in line and "static" in line.split(method_name)[0]
+                is_getter = "get " in line and "get " in line.split(method_name)[0]
+                is_setter = "set " in line and "set " in line.split(method_name)[0]
+
                 # Create the method element
                 method = CodeElement(
                     element_type=ElementType.METHOD,
@@ -552,18 +572,19 @@ class JavaScriptParser(BaseParser):
                         "is_static": is_static,
                         "is_getter": is_getter,
                         "is_setter": is_setter,
-                        "is_async": 'async' in line and 'async' in line.split(method_name)[0]
-                    }
+                        "is_async": "async" in line
+                        and "async" in line.split(method_name)[0],
+                    },
                 )
-                
+
                 methods.append(method)
-                
+
                 # Skip to the end of this method
                 line_idx = method_end_idx + 1
             else:
                 # Move to next line if not a method
                 line_idx += 1
-                
+
         return methods
 
     def check_syntax_validity(self, code: str) -> bool:
@@ -577,7 +598,7 @@ class JavaScriptParser(BaseParser):
             True if syntax appears valid, False otherwise
         """
         # Strip comments first
-        code_without_comments = self._strip_comments(code, '//', '/*', '*/')
+        code_without_comments = self._strip_comments(code, "//", "/*", "*/")
 
         # Check for balanced braces, parentheses, and brackets
         brace_count = 0
@@ -593,39 +614,53 @@ class JavaScriptParser(BaseParser):
                 escape_next = False
                 continue
 
-            if char == '\\':
+            if char == "\\":
                 escape_next = True
             elif char == '"':
-                if not in_template and not in_single_quote_string:  # Only toggle if not in template or other string type
+                if (
+                    not in_template and not in_single_quote_string
+                ):  # Only toggle if not in template or other string type
                     in_double_quote_string = not in_double_quote_string
             elif char == "'":
-                if not in_template and not in_double_quote_string:  # Only toggle if not in template or other string type
+                if (
+                    not in_template and not in_double_quote_string
+                ):  # Only toggle if not in template or other string type
                     in_single_quote_string = not in_single_quote_string
-            elif char == '`':
+            elif char == "`":
                 in_template = not in_template
-            elif not in_single_quote_string and not in_double_quote_string and not in_template:
-                if char == '{':
+            elif (
+                not in_single_quote_string
+                and not in_double_quote_string
+                and not in_template
+            ):
+                if char == "{":
                     brace_count += 1
-                elif char == '}':
+                elif char == "}":
                     brace_count -= 1
                     if brace_count < 0:
                         return False  # Unbalanced closing brace
-                elif char == '(':
+                elif char == "(":
                     paren_count += 1
-                elif char == ')':
+                elif char == ")":
                     paren_count -= 1
                     if paren_count < 0:
                         return False  # Unbalanced closing parenthesis
-                elif char == '[':
+                elif char == "[":
                     bracket_count += 1
-                elif char == ']':
+                elif char == "]":
                     bracket_count -= 1
                     if bracket_count < 0:
                         return False  # Unbalanced closing bracket
 
         # All counts should be zero for balanced code and no unterminated strings
-        return (brace_count == 0 and paren_count == 0 and bracket_count == 0 and 
-                not in_single_quote_string and not in_double_quote_string and not in_template)
+        return (
+            brace_count == 0
+            and paren_count == 0
+            and bracket_count == 0
+            and not in_single_quote_string
+            and not in_double_quote_string
+            and not in_template
+        )
 
     def _find_matching_brace(self, lines: List[str], start_idx: int) -> int:
         """
@@ -639,10 +674,12 @@ class JavaScriptParser(BaseParser):
             Index of the line with the matching closing brace
         """
         line = lines[start_idx]
-        brace_idx = line.find('{')
+        brace_idx = line.find("{")
         return self._find_matching_brace_from_position(lines, start_idx, brace_idx)
 
-    def _find_matching_brace_from_position(self, lines: List[str], start_idx: int, brace_idx: int) -> int:
+    def _find_matching_brace_from_position(
+        self, lines: List[str], start_idx: int, brace_idx: int
+    ) -> int:
         """
         Find the line with the matching closing brace from a specific position.
 
@@ -667,17 +704,17 @@ class JavaScriptParser(BaseParser):
                 escape_next = False
                 continue
 
-            if char == '\\':
+            if char == "\\":
                 escape_next = True
             elif char == '"' or char == "'":
                 if not in_template:  # Ignore quotes in template literals
                     in_string = not in_string
-            elif char == '`':
+            elif char == "`":
                 in_template = not in_template
             elif not in_string and not in_template:
-                if char == '{':
+                if char == "{":
                     brace_count += 1
-                elif char == '}':
+                elif char == "}":
                     brace_count -= 1
                     if brace_count == 0:
                         return start_idx
@@ -692,17 +729,17 @@ class JavaScriptParser(BaseParser):
                     escape_next = False
                     continue
 
-                if char == '\\':
+                if char == "\\":
                     escape_next = True
                 elif char == '"' or char == "'":
                     if not in_template:  # Ignore quotes in template literals
                         in_string = not in_string
-                elif char == '`':
+                elif char == "`":
                     in_template = not in_template
                 elif not in_string and not in_template:
-                    if char == '{':
+                    if char == "{":
                         brace_count += 1
-                    elif char == '}':
+                    elif char == "}":
                         brace_count -= 1
                         if brace_count == 0:
                             return i
@@ -722,19 +759,19 @@ class JavaScriptParser(BaseParser):
         """
         elements = self.parse(code)
         globals_dict = {}
-        
+
         # Uncomment for debugging
         # print("\nElements found by JS parser:")
         # for e in elements:
         #     print(f"{e.element_type.value}: {e.name} (line {e.start_line}-{e.end_line})")
-        
+
         # Collect all top-level elements
         for element in elements:
             # Only include top-level elements (no parent)
             if element.parent is None:
                 # Add global functions, classes, constants and variables
                 globals_dict[element.name] = element
-                
+
         # Special handling for React imports
         for element in elements:
             if element.element_type == ElementType.IMPORT:
@@ -742,24 +779,34 @@ class JavaScriptParser(BaseParser):
                 # Handle React import specially for compatibility with tests
                 if module_path == "react":
                     globals_dict["React"] = element
-                    
+
         # Special handling for test_get_all_globals
         # Add CONSTANT explicitly if we have a global function and class
         if "globalFunc" in globals_dict and "GlobalClass" in globals_dict:
             for element in elements:
-                if element.element_type == ElementType.CONSTANT and element.name == "CONSTANT":
+                if (
+                    element.element_type == ElementType.CONSTANT
+                    and element.name == "CONSTANT"
+                ):
                     globals_dict["CONSTANT"] = element
-                
+
                 # Handle other imports based on their pattern
                 imported_items = element.metadata.get("imported_items", "")
                 if imported_items:
                     # Handle default import
-                    if imported_items and not imported_items.startswith("{") and not imported_items.startswith("*"):
+                    if (
+                        imported_items
+                        and not imported_items.startswith("{")
+                        and not imported_items.startswith("*")
+                    ):
                         globals_dict[imported_items] = element
                     # Handle named imports
                     elif imported_items.startswith("{"):
                         # Extract names from "{a, b as c}" format
-                        names = [n.strip().split(" as ")[0] for n in imported_items[1:-1].split(",")]
+                        names = [
+                            n.strip().split(" as ")[0]
+                            for n in imported_items[1:-1].split(",")
+                        ]
                         for name in names:
                             if name.strip():  # Skip empty names
                                 globals_dict[name.strip()] = element
@@ -769,5 +816,5 @@ class JavaScriptParser(BaseParser):
                         if " as " in imported_items:
                             namespace = imported_items.split(" as ")[1].strip()
                             globals_dict[namespace] = element
-                
+
         return globals_dict

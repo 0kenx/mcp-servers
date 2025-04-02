@@ -3,6 +3,7 @@ from src.grammar.generic_keyword_pattern import KeywordPatternParser
 from src.grammar.base import ElementType
 from src.grammar.tests.test_utils import ParserTestHelper
 
+
 class TestKeywordPatternParser(unittest.TestCase):
     """Test cases for the generic KeywordPatternParser."""
 
@@ -55,11 +56,17 @@ include <stdio.h>
         imports = self.helper.count_elements(elements, ElementType.IMPORT)
 
         # Expected elements based on patterns (adjust if patterns change)
-        self.assertGreaterEqual(functions, 6) # py_func, jsFunc, sql_func, sql_proc, sh_func, other_sh_func
-        self.assertGreaterEqual(classes, 2)   # PyClass, JsClass
-        self.assertGreaterEqual(constants, 2) # MY_CONST, JS_CONST
-        self.assertGreaterEqual(variables, 3) # my_var, jsVar, SH_VAR (catches export line)
-        self.assertGreaterEqual(imports, 5)   # os, mymod, some_gem, MyApp::Helper, stdio.h
+        self.assertGreaterEqual(
+            functions, 6
+        )  # py_func, jsFunc, sql_func, sql_proc, sh_func, other_sh_func
+        self.assertGreaterEqual(classes, 2)  # PyClass, JsClass
+        self.assertGreaterEqual(constants, 2)  # MY_CONST, JS_CONST
+        self.assertGreaterEqual(
+            variables, 3
+        )  # my_var, jsVar, SH_VAR (catches export line)
+        self.assertGreaterEqual(
+            imports, 5
+        )  # os, mymod, some_gem, MyApp::Helper, stdio.h
 
         # Check specific elements
         py_f = self.helper.find_element(elements, ElementType.FUNCTION, "py_func")
@@ -92,17 +99,28 @@ var name = " class MyString ";
 """
         commented_elements = self.helper.parse_code(code_with_comments)
         # Patterns match from start-of-line, so commented keywords shouldn't match
-        self.assertEqual(len(commented_elements), 1) # Should only find 'name' variable
-        self.assertIsNotNone(self.helper.find_element(commented_elements, ElementType.VARIABLE, "name"))
-        self.assertIsNone(self.helper.find_element(commented_elements, ElementType.FUNCTION, "commented_func"))
-        self.assertIsNone(self.helper.find_element(commented_elements, ElementType.FUNCTION, "commented_def"))
-
+        self.assertEqual(len(commented_elements), 1)  # Should only find 'name' variable
+        self.assertIsNotNone(
+            self.helper.find_element(commented_elements, ElementType.VARIABLE, "name")
+        )
+        self.assertIsNone(
+            self.helper.find_element(
+                commented_elements, ElementType.FUNCTION, "commented_func"
+            )
+        )
+        self.assertIsNone(
+            self.helper.find_element(
+                commented_elements, ElementType.FUNCTION, "commented_def"
+            )
+        )
 
     def test_syntax_validity(self):
         """Test syntax validity check (always True)."""
-        self.assertTrue(self.helper.parser.check_syntax_validity("anything goes here { [ ("))
+        self.assertTrue(
+            self.helper.parser.check_syntax_validity("anything goes here { [ (")
+        )
         self.assertTrue(self.helper.parser.check_syntax_validity(""))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

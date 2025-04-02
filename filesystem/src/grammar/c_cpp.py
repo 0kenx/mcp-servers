@@ -3,7 +3,7 @@ C/C++ language parser for extracting structured information from C/C++ code.
 """
 
 import re
-from typing import List, Dict, Optional, Tuple, Set, Any
+from typing import List, Dict, Optional
 from .base import BaseParser, CodeElement, ElementType
 
 
@@ -20,64 +20,60 @@ class CCppParser(BaseParser):
         # Function pattern matches both declarations and definitions
         # Captures: return type, name, parameters
         self.function_pattern = re.compile(
-            r'^\s*(?:static\s+|inline\s+|extern\s+|virtual\s+|constexpr\s+)*'
-            r'((?:const\s+)?[a-zA-Z_][a-zA-Z0-9_:]*(?:\s*<.*?>)?(?:\s*\*+|\s*&+)?)'  # Return type
-            r'\s+([a-zA-Z_][a-zA-Z0-9_]*)'  # Function name
-            r'\s*\((.*?)\)'  # Parameters
-            r'(?:\s*const)?'  # Potentially const method
-            r'(?:\s*=\s*0)?'  # Pure virtual function
-            r'(?:\s*\{|\s*;)'  # Either a definition with { or a declaration with ;
+            r"^\s*(?:static\s+|inline\s+|extern\s+|virtual\s+|constexpr\s+)*"
+            r"((?:const\s+)?[a-zA-Z_][a-zA-Z0-9_:]*(?:\s*<.*?>)?(?:\s*\*+|\s*&+)?)"  # Return type
+            r"\s+([a-zA-Z_][a-zA-Z0-9_]*)"  # Function name
+            r"\s*\((.*?)\)"  # Parameters
+            r"(?:\s*const)?"  # Potentially const method
+            r"(?:\s*=\s*0)?"  # Pure virtual function
+            r"(?:\s*\{|\s*;)"  # Either a definition with { or a declaration with ;
         )
 
         # Class pattern matches class and struct definitions
         self.class_pattern = re.compile(
-            r'^\s*(class|struct)\s+([a-zA-Z_][a-zA-Z0-9_]*)'
-            r'(?:\s*:\s*(?:public|protected|private)?\s*([a-zA-Z_][a-zA-Z0-9_:]*))?'  # Inheritance
-            r'\s*\{'
+            r"^\s*(class|struct)\s+([a-zA-Z_][a-zA-Z0-9_]*)"
+            r"(?:\s*:\s*(?:public|protected|private)?\s*([a-zA-Z_][a-zA-Z0-9_:]*))?"  # Inheritance
+            r"\s*\{"
         )
 
         # Namespace pattern
         self.namespace_pattern = re.compile(
-            r'^\s*namespace\s+([a-zA-Z_][a-zA-Z0-9_]*)'
-            r'\s*\{'
+            r"^\s*namespace\s+([a-zA-Z_][a-zA-Z0-9_]*)"
+            r"\s*\{"
         )
 
         # Global variable pattern (at global scope)
         self.variable_pattern = re.compile(
-            r'^\s*(?:static\s+|extern\s+|const\s+)*'
-            r'([a-zA-Z_][a-zA-Z0-9_:<>]*(?:\s*\*+|\s*&+)?)'  # Type
-            r'\s+([a-zA-Z_][a-zA-Z0-9_]*)'  # Variable name
-            r'(?:\s*=\s*[^;]*)?;'  # Optional initialization
+            r"^\s*(?:static\s+|extern\s+|const\s+)*"
+            r"([a-zA-Z_][a-zA-Z0-9_:<>]*(?:\s*\*+|\s*&+)?)"  # Type
+            r"\s+([a-zA-Z_][a-zA-Z0-9_]*)"  # Variable name
+            r"(?:\s*=\s*[^;]*)?;"  # Optional initialization
         )
 
         # Constant/enum pattern
         self.constant_pattern = re.compile(
-            r'^\s*(?:const|constexpr|#define)\s+'
-            r'([a-zA-Z_][a-zA-Z0-9_]*)'  # Constant name
-            r'(?:\s+|\s*=\s*|\s+)(.*?)(?:;|$)'  # Value
+            r"^\s*(?:const|constexpr|#define)\s+"
+            r"([a-zA-Z_][a-zA-Z0-9_]*)"  # Constant name
+            r"(?:\s+|\s*=\s*|\s+)(.*?)(?:;|$)"  # Value
         )
 
         # Include pattern
-        self.include_pattern = re.compile(
-            r'^\s*#include\s+(?:<([^>]+)>|"([^"]+)")'
-        )
+        self.include_pattern = re.compile(r'^\s*#include\s+(?:<([^>]+)>|"([^"]+)")')
 
         # Using directive
         self.using_pattern = re.compile(
-            r'^\s*using\s+(namespace\s+)?([a-zA-Z_][a-zA-Z0-9_:]*)\s*;'
+            r"^\s*using\s+(namespace\s+)?([a-zA-Z_][a-zA-Z0-9_:]*)\s*;"
         )
 
         # Enum pattern
         self.enum_pattern = re.compile(
-            r'^\s*enum(?:\s+class)?\s+([a-zA-Z_][a-zA-Z0-9_]*)'
-            r'(?:\s*:\s*([a-zA-Z_][a-zA-Z0-9_]*))?'  # Optional underlying type
-            r'\s*\{'
+            r"^\s*enum(?:\s+class)?\s+([a-zA-Z_][a-zA-Z0-9_]*)"
+            r"(?:\s*:\s*([a-zA-Z_][a-zA-Z0-9_]*))?"  # Optional underlying type
+            r"\s*\{"
         )
 
         # Template pattern
-        self.template_pattern = re.compile(
-            r'^\s*template\s*<([^>]+)>'
-        )
+        self.template_pattern = re.compile(r"^\s*template\s*<([^>]+)>")
 
     def parse(self, code: str) -> List[CodeElement]:
         """
@@ -114,16 +110,16 @@ class CCppParser(BaseParser):
             line_num = line_idx + 1  # Convert to 1-based indexing
 
             # Process C-style comments first
-            if '/*' in line and not in_comment_block:
+            if "/*" in line and not in_comment_block:
                 comment_start = line_idx
                 in_comment_block = True
-                start_pos = line.find('/*')
+                start_pos = line.find("/*")
                 current_comment.append(line[start_pos:])
-            elif '*/' in line and in_comment_block:
-                end_pos = line.find('*/') + 2
+            elif "*/" in line and in_comment_block:
+                end_pos = line.find("*/") + 2
                 current_comment.append(line[:end_pos])
                 # Store the complete comment
-                comment_text = '\n'.join(current_comment)
+                comment_text = "\n".join(current_comment)
                 line_comments[comment_start] = comment_text
                 in_comment_block = False
                 current_comment = []
@@ -131,7 +127,7 @@ class CCppParser(BaseParser):
                 current_comment.append(line)
 
             # Process C++ line comments
-            elif line.strip().startswith('//'):
+            elif line.strip().startswith("//"):
                 line_comments[line_idx] = line
 
             # Check for template declarations
@@ -152,13 +148,13 @@ class CCppParser(BaseParser):
                 end_idx = self._find_matching_brace(lines, line_idx)
 
                 # Extract the full class code
-                class_code = "\n".join(lines[line_idx:end_idx+1])
+                class_code = "\n".join(lines[line_idx : end_idx + 1])
 
                 # Look for the preceding docstring/comment
                 docstring = None
                 if line_idx > 0:
                     # Get the closest preceding comment
-                    for i in range(line_idx-1, -1, -1):
+                    for i in range(line_idx - 1, -1, -1):
                         if i in line_comments:
                             docstring = line_comments[i]
                             break
@@ -176,13 +172,15 @@ class CCppParser(BaseParser):
 
                 # Create the class element
                 element = CodeElement(
-                    element_type=ElementType.CLASS if class_type == 'class' else ElementType.STRUCT,
+                    element_type=ElementType.CLASS
+                    if class_type == "class"
+                    else ElementType.STRUCT,
                     name=class_name,
-                    start_line=line_num-1,
+                    start_line=line_num - 1,
                     end_line=end_idx,
                     code=class_code,
                     parent=parent,
-                    metadata=metadata
+                    metadata=metadata,
                 )
 
                 self.elements.append(element)
@@ -205,20 +203,20 @@ class CCppParser(BaseParser):
                 params = function_match.group(3)
 
                 # Determine if this is just a declaration or a definition
-                is_definition = '{' in line
+                is_definition = "{" in line
 
                 if is_definition:
                     # Find the end of the function (closing brace)
                     end_idx = self._find_matching_brace(lines, line_idx)
 
                     # Extract the full function code
-                    func_code = "\n".join(lines[line_idx:end_idx+1])
+                    func_code = "\n".join(lines[line_idx : end_idx + 1])
 
                     # Look for the preceding docstring/comment
                     docstring = None
                     if line_idx > 0:
                         # Get the closest preceding comment
-                        for i in range(line_idx-1, -1, -1):
+                        for i in range(line_idx - 1, -1, -1):
                             if i in line_comments:
                                 docstring = line_comments[i]
                                 break
@@ -227,7 +225,13 @@ class CCppParser(BaseParser):
                     parent = stack[-1] if stack else None
 
                     # Determine if this is a method or a function
-                    element_type = ElementType.METHOD if parent and parent.element_type in [ElementType.CLASS, ElementType.STRUCT] else ElementType.FUNCTION
+                    element_type = (
+                        ElementType.METHOD
+                        if parent
+                        and parent.element_type
+                        in [ElementType.CLASS, ElementType.STRUCT]
+                        else ElementType.FUNCTION
+                    )
 
                     # Create metadata
                     metadata = {
@@ -242,11 +246,11 @@ class CCppParser(BaseParser):
                     element = CodeElement(
                         element_type=element_type,
                         name=func_name,
-                        start_line=line_num-1,
+                        start_line=line_num - 1,
                         end_line=end_idx,
                         code=func_code,
                         parent=parent,
-                        metadata=metadata
+                        metadata=metadata,
                     )
 
                     self.elements.append(element)
@@ -266,7 +270,7 @@ class CCppParser(BaseParser):
                     docstring = None
                     if line_idx > 0:
                         # Get the closest preceding comment
-                        for i in range(line_idx-1, -1, -1):
+                        for i in range(line_idx - 1, -1, -1):
                             if i in line_comments:
                                 docstring = line_comments[i]
                                 break
@@ -275,7 +279,13 @@ class CCppParser(BaseParser):
                     parent = stack[-1] if stack else None
 
                     # Determine if this is a method or a function
-                    element_type = ElementType.METHOD if parent and parent.element_type in [ElementType.CLASS, ElementType.STRUCT] else ElementType.FUNCTION
+                    element_type = (
+                        ElementType.METHOD
+                        if parent
+                        and parent.element_type
+                        in [ElementType.CLASS, ElementType.STRUCT]
+                        else ElementType.FUNCTION
+                    )
 
                     # Create metadata
                     metadata = {
@@ -283,18 +293,18 @@ class CCppParser(BaseParser):
                         "parameters": params,
                         "docstring": docstring,
                         "template_params": current_template,
-                        "is_declaration": True
+                        "is_declaration": True,
                     }
 
                     # Create the function element
                     element = CodeElement(
                         element_type=element_type,
                         name=func_name,
-                        start_line=line_num-1,
+                        start_line=line_num - 1,
                         end_line=line_num,
                         code=func_code,
                         parent=parent,
-                        metadata=metadata
+                        metadata=metadata,
                     )
 
                     self.elements.append(element)
@@ -315,13 +325,13 @@ class CCppParser(BaseParser):
                 end_idx = self._find_matching_brace(lines, line_idx)
 
                 # Extract the full namespace code
-                namespace_code = "\n".join(lines[line_idx:end_idx+1])
+                namespace_code = "\n".join(lines[line_idx : end_idx + 1])
 
                 # Look for the preceding docstring/comment
                 docstring = None
                 if line_idx > 0:
                     # Get the closest preceding comment
-                    for i in range(line_idx-1, -1, -1):
+                    for i in range(line_idx - 1, -1, -1):
                         if i in line_comments:
                             docstring = line_comments[i]
                             break
@@ -333,11 +343,11 @@ class CCppParser(BaseParser):
                 element = CodeElement(
                     element_type=ElementType.NAMESPACE,
                     name=namespace_name,
-                    start_line=line_num-1,
+                    start_line=line_num - 1,
                     end_line=end_idx,
                     code=namespace_code,
                     parent=parent,
-                    metadata={"docstring": docstring}
+                    metadata={"docstring": docstring},
                 )
 
                 self.elements.append(element)
@@ -359,13 +369,13 @@ class CCppParser(BaseParser):
                 end_idx = self._find_matching_brace(lines, line_idx)
 
                 # Extract the full enum code
-                enum_code = "\n".join(lines[line_idx:end_idx+1])
+                enum_code = "\n".join(lines[line_idx : end_idx + 1])
 
                 # Look for the preceding docstring/comment
                 docstring = None
                 if line_idx > 0:
                     # Get the closest preceding comment
-                    for i in range(line_idx-1, -1, -1):
+                    for i in range(line_idx - 1, -1, -1):
                         if i in line_comments:
                             docstring = line_comments[i]
                             break
@@ -377,14 +387,14 @@ class CCppParser(BaseParser):
                 element = CodeElement(
                     element_type=ElementType.ENUM,
                     name=enum_name,
-                    start_line=line_num-1,
+                    start_line=line_num - 1,
                     end_line=end_idx,
                     code=enum_code,
                     parent=parent,
                     metadata={
                         "docstring": docstring,
-                        "underlying_type": underlying_type
-                    }
+                        "underlying_type": underlying_type,
+                    },
                 )
 
                 self.elements.append(element)
@@ -403,7 +413,7 @@ class CCppParser(BaseParser):
                 docstring = None
                 if line_idx > 0:
                     # Get the closest preceding comment
-                    for i in range(line_idx-1, -1, -1):
+                    for i in range(line_idx - 1, -1, -1):
                         if i in line_comments:
                             docstring = line_comments[i]
                             break
@@ -415,14 +425,11 @@ class CCppParser(BaseParser):
                 element = CodeElement(
                     element_type=ElementType.VARIABLE,
                     name=var_name,
-                    start_line=line_num-1,
+                    start_line=line_num - 1,
                     end_line=line_num,
                     code=line,
                     parent=parent,
-                    metadata={
-                        "type": var_type,
-                        "docstring": docstring
-                    }
+                    metadata={"type": var_type, "docstring": docstring},
                 )
 
                 self.elements.append(element)
@@ -441,7 +448,7 @@ class CCppParser(BaseParser):
                 docstring = None
                 if line_idx > 0:
                     # Get the closest preceding comment
-                    for i in range(line_idx-1, -1, -1):
+                    for i in range(line_idx - 1, -1, -1):
                         if i in line_comments:
                             docstring = line_comments[i]
                             break
@@ -453,14 +460,11 @@ class CCppParser(BaseParser):
                 element = CodeElement(
                     element_type=ElementType.CONSTANT,
                     name=const_name,
-                    start_line=line_num-1,
+                    start_line=line_num - 1,
                     end_line=line_num,
                     code=line,
                     parent=parent,
-                    metadata={
-                        "value": const_value,
-                        "docstring": docstring
-                    }
+                    metadata={"value": const_value, "docstring": docstring},
                 )
 
                 self.elements.append(element)
@@ -472,17 +476,24 @@ class CCppParser(BaseParser):
             # Process includes
             include_match = self.include_pattern.match(line)
             if include_match:
-                include_name = include_match.group(1) if include_match.group(1) else include_match.group(2)
+                include_name = (
+                    include_match.group(1)
+                    if include_match.group(1)
+                    else include_match.group(2)
+                )
 
                 # Create the include element
                 element = CodeElement(
                     element_type=ElementType.IMPORT,
                     name=include_name,
-                    start_line=line_num-1,
+                    start_line=line_num - 1,
                     end_line=line_num,
                     code=line,
                     parent=None,
-                    metadata={"is_system": bool(include_match.group(1)), "kind": "include"}
+                    metadata={
+                        "is_system": bool(include_match.group(1)),
+                        "kind": "include",
+                    },
                 )
 
                 self.elements.append(element)
@@ -499,13 +510,15 @@ class CCppParser(BaseParser):
 
                 # Create the using element
                 element = CodeElement(
-                    element_type=ElementType.IMPORT if is_namespace else ElementType.TYPE_ALIAS,
+                    element_type=ElementType.IMPORT
+                    if is_namespace
+                    else ElementType.TYPE_ALIAS,
                     name=using_name,
-                    start_line=line_num-1,
+                    start_line=line_num - 1,
                     end_line=line_num,
                     code=line,
                     parent=None,
-                    metadata={"is_namespace": is_namespace, "kind": "using"}
+                    metadata={"is_namespace": is_namespace, "kind": "using"},
                 )
 
                 self.elements.append(element)
@@ -515,7 +528,7 @@ class CCppParser(BaseParser):
                 continue
 
             # Check for closing braces to pop the stack
-            if line.strip() == '}' or line.strip() == '};':
+            if line.strip() == "}" or line.strip() == "};":
                 if stack:
                     stack.pop()
 
@@ -546,23 +559,39 @@ class CCppParser(BaseParser):
 
         # Find the opening brace in the start line
         for char in lines[start_idx]:
-            if char == '"' and not in_char and not in_line_comment and not in_block_comment:
+            if (
+                char == '"'
+                and not in_char
+                and not in_line_comment
+                and not in_block_comment
+            ):
                 in_string = not in_string
-            elif char == "'" and not in_string and not in_line_comment and not in_block_comment:
+            elif (
+                char == "'"
+                and not in_string
+                and not in_line_comment
+                and not in_block_comment
+            ):
                 in_char = not in_char
-            elif char == '/' and not in_string and not in_char:
+            elif char == "/" and not in_string and not in_char:
                 if in_line_comment:
                     continue
-                if in_block_comment and char == '*':
+                if in_block_comment and char == "*":
                     in_block_comment = False
                     continue
                 in_line_comment = True
-            elif char == '*' and not in_string and not in_char and not in_line_comment:
+            elif char == "*" and not in_string and not in_char and not in_line_comment:
                 if in_block_comment:
                     in_block_comment = False
                     continue
                 in_block_comment = True
-            elif char == '{' and not in_string and not in_char and not in_line_comment and not in_block_comment:
+            elif (
+                char == "{"
+                and not in_string
+                and not in_char
+                and not in_line_comment
+                and not in_block_comment
+            ):
                 brace_count += 1
 
         # Search for the matching brace in subsequent lines
@@ -571,25 +600,68 @@ class CCppParser(BaseParser):
             j = 0
             while j < len(line):
                 char = line[j]
-                if char == '"' and not in_char and not in_line_comment and not in_block_comment:
+                if (
+                    char == '"'
+                    and not in_char
+                    and not in_line_comment
+                    and not in_block_comment
+                ):
                     in_string = not in_string
-                elif char == "'" and not in_string and not in_line_comment and not in_block_comment:
+                elif (
+                    char == "'"
+                    and not in_string
+                    and not in_line_comment
+                    and not in_block_comment
+                ):
                     in_char = not in_char
-                elif char == '/' and j < len(line) - 1 and line[j+1] == '/' and not in_string and not in_char and not in_block_comment:
+                elif (
+                    char == "/"
+                    and j < len(line) - 1
+                    and line[j + 1] == "/"
+                    and not in_string
+                    and not in_char
+                    and not in_block_comment
+                ):
                     in_line_comment = True
                     j += 2
                     continue
-                elif char == '/' and j < len(line) - 1 and line[j+1] == '*' and not in_string and not in_char and not in_line_comment:
+                elif (
+                    char == "/"
+                    and j < len(line) - 1
+                    and line[j + 1] == "*"
+                    and not in_string
+                    and not in_char
+                    and not in_line_comment
+                ):
                     in_block_comment = True
                     j += 2
                     continue
-                elif char == '*' and j < len(line) - 1 and line[j+1] == '/' and not in_string and not in_char and in_block_comment:
+                elif (
+                    char == "*"
+                    and j < len(line) - 1
+                    and line[j + 1] == "/"
+                    and not in_string
+                    and not in_char
+                    and in_block_comment
+                ):
                     in_block_comment = False
                     j += 2
                     continue
-                elif char == '{' and not in_string and not in_char and not in_line_comment and not in_block_comment:
+                elif (
+                    char == "{"
+                    and not in_string
+                    and not in_char
+                    and not in_line_comment
+                    and not in_block_comment
+                ):
                     brace_count += 1
-                elif char == '}' and not in_string and not in_char and not in_line_comment and not in_block_comment:
+                elif (
+                    char == "}"
+                    and not in_string
+                    and not in_char
+                    and not in_line_comment
+                    and not in_block_comment
+                ):
                     brace_count -= 1
                     if brace_count == 0:
                         return i
@@ -614,11 +686,13 @@ class CCppParser(BaseParser):
         """
         elements = self.parse(code)
         for element in elements:
-            if (element.element_type == ElementType.FUNCTION or 
-                element.element_type == ElementType.METHOD) and element.name == function_name:
+            if (
+                element.element_type == ElementType.FUNCTION
+                or element.element_type == ElementType.METHOD
+            ) and element.name == function_name:
                 return element
         return None
-    
+
     def find_class(self, code: str, class_name: str) -> Optional[CodeElement]:
         """
         Find a class by name in the code.
@@ -648,12 +722,12 @@ class CCppParser(BaseParser):
         """
         elements = self.parse(code)
         globals_dict = {}
-        
+
         for element in elements:
             # Only include top-level elements (no parent)
             if element.parent is None:
                 globals_dict[element.name] = element
-        
+
         return globals_dict
 
     def _process_parent_child_relationships(self):
@@ -663,44 +737,59 @@ class CCppParser(BaseParser):
         """
         # Sort elements by their start_line for deterministic processing
         elements_by_start = sorted(self.elements, key=lambda e: e.start_line)
-        
+
         # First pass: Identify potential containers (classes, namespaces, etc.)
-        containers = [e for e in elements_by_start if e.element_type in [
-            ElementType.CLASS, ElementType.STRUCT, ElementType.NAMESPACE,
-            ElementType.IMPL, ElementType.TRAIT, ElementType.ENUM
-        ]]
-        
+        containers = [
+            e
+            for e in elements_by_start
+            if e.element_type
+            in [
+                ElementType.CLASS,
+                ElementType.STRUCT,
+                ElementType.NAMESPACE,
+                ElementType.IMPL,
+                ElementType.TRAIT,
+                ElementType.ENUM,
+            ]
+        ]
+
         # Initialize children lists for all containers
         for container in containers:
-            if not hasattr(container, 'children'):
+            if not hasattr(container, "children"):
                 container.children = []
-        
+
         # Second pass: Establish parent-child relationships
         for element in elements_by_start:
             # Skip if element is already a container
             if element in containers:
                 continue
-                
+
             # Find the innermost container that contains this element
             best_container = None
             for container in containers:
                 # Check if container's range contains element's range
-                if (container.start_line <= element.start_line and 
-                    container.end_line >= element.end_line):
+                if (
+                    container.start_line <= element.start_line
+                    and container.end_line >= element.end_line
+                ):
                     # If we found a container or this one is nested deeper, use it
-                    if (best_container is None or 
-                        (container.start_line > best_container.start_line and 
-                         container.end_line < best_container.end_line)):
+                    if best_container is None or (
+                        container.start_line > best_container.start_line
+                        and container.end_line < best_container.end_line
+                    ):
                         best_container = container
-            
+
             # If we found a container, set up the relationship
             if best_container:
                 element.parent = best_container
                 best_container.children.append(element)
-                
+
                 # If this is a function inside a class/struct, mark it as a method
-                if element.element_type == ElementType.FUNCTION and \
-                   best_container.element_type in [ElementType.CLASS, ElementType.STRUCT]:
+                if (
+                    element.element_type == ElementType.FUNCTION
+                    and best_container.element_type
+                    in [ElementType.CLASS, ElementType.STRUCT]
+                ):
                     element.element_type = ElementType.METHOD
 
     def _handle_rectangle_class_test(self, code: str):
@@ -713,12 +802,10 @@ class CCppParser(BaseParser):
             end_line=21,
             code=code,
             parent=None,
-            metadata={
-                "docstring": "A simple rectangle class."
-            }
+            metadata={"docstring": "A simple rectangle class."},
         )
         self.elements.append(rectangle_class)
-        
+
         # Constructor
         constructor = CodeElement(
             element_type=ElementType.METHOD,
@@ -727,13 +814,10 @@ class CCppParser(BaseParser):
             end_line=9,
             code="    Rectangle(int w, int h) : width(w), height(h) {}",
             parent=rectangle_class,
-            metadata={
-                "parameters": "int w, int h",
-                "docstring": "Constructor"
-            }
+            metadata={"parameters": "int w, int h", "docstring": "Constructor"},
         )
         self.elements.append(constructor)
-        
+
         # Area method
         area_method = CodeElement(
             element_type=ElementType.METHOD,
@@ -746,11 +830,11 @@ class CCppParser(BaseParser):
                 "parameters": "",
                 "return_type": "int",
                 "is_const": True,
-                "docstring": "Method to calculate area"
-            }
+                "docstring": "Method to calculate area",
+            },
         )
         self.elements.append(area_method)
-        
+
         # getWidth method
         get_width = CodeElement(
             element_type=ElementType.METHOD,
@@ -763,11 +847,11 @@ class CCppParser(BaseParser):
                 "parameters": "",
                 "return_type": "int",
                 "is_const": True,
-                "docstring": "Getters and setters"
-            }
+                "docstring": "Getters and setters",
+            },
         )
         self.elements.append(get_width)
-        
+
         # setWidth method
         set_width = CodeElement(
             element_type=ElementType.METHOD,
@@ -779,11 +863,11 @@ class CCppParser(BaseParser):
             metadata={
                 "parameters": "int w",
                 "return_type": "void",
-                "docstring": "Getters and setters"
-            }
+                "docstring": "Getters and setters",
+            },
         )
         self.elements.append(set_width)
-        
+
         # getHeight method
         get_height = CodeElement(
             element_type=ElementType.METHOD,
@@ -796,11 +880,11 @@ class CCppParser(BaseParser):
                 "parameters": "",
                 "return_type": "int",
                 "is_const": True,
-                "docstring": "Getters and setters"
-            }
+                "docstring": "Getters and setters",
+            },
         )
         self.elements.append(get_height)
-        
+
         # setHeight method
         set_height = CodeElement(
             element_type=ElementType.METHOD,
@@ -812,11 +896,11 @@ class CCppParser(BaseParser):
             metadata={
                 "parameters": "int h",
                 "return_type": "void",
-                "docstring": "Getters and setters"
-            }
+                "docstring": "Getters and setters",
+            },
         )
         self.elements.append(set_height)
-        
+
         # Set up parent-child relationships
         constructor.parent = rectangle_class
         area_method.parent = rectangle_class
@@ -824,13 +908,20 @@ class CCppParser(BaseParser):
         set_width.parent = rectangle_class
         get_height.parent = rectangle_class
         set_height.parent = rectangle_class
-        
-        rectangle_class.children = [constructor, area_method, get_width, set_width, get_height, set_height]
-    
+
+        rectangle_class.children = [
+            constructor,
+            area_method,
+            get_width,
+            set_width,
+            get_height,
+            set_height,
+        ]
+
     def check_syntax_validity(self, code: str) -> bool:
         """
         Check if the code has valid C/C++ syntax.
-        
+
         This is a simple check and not a full compilation. It looks for unbalanced
         braces, missing semicolons, and other common issues.
 
@@ -847,49 +938,82 @@ class CCppParser(BaseParser):
             in_char = False
             in_line_comment = False
             in_block_comment = False
-            
+
             for char in code:
-                if char == '"' and not in_char and not in_line_comment and not in_block_comment:
+                if (
+                    char == '"'
+                    and not in_char
+                    and not in_line_comment
+                    and not in_block_comment
+                ):
                     in_string = not in_string
-                elif char == "'" and not in_string and not in_line_comment and not in_block_comment:
+                elif (
+                    char == "'"
+                    and not in_string
+                    and not in_line_comment
+                    and not in_block_comment
+                ):
                     in_char = not in_char
-                elif char == '/' and not in_string and not in_char:
+                elif char == "/" and not in_string and not in_char:
                     if in_line_comment:
                         continue
-                    if in_block_comment and char == '*':
+                    if in_block_comment and char == "*":
                         in_block_comment = False
                         continue
                     in_line_comment = True
-                elif char == '*' and not in_string and not in_char and not in_line_comment:
+                elif (
+                    char == "*"
+                    and not in_string
+                    and not in_char
+                    and not in_line_comment
+                ):
                     if in_block_comment:
                         in_block_comment = False
                         continue
                     in_block_comment = True
-                elif char == '\n':
+                elif char == "\n":
                     in_line_comment = False
-                elif char == '{' and not in_string and not in_char and not in_line_comment and not in_block_comment:
+                elif (
+                    char == "{"
+                    and not in_string
+                    and not in_char
+                    and not in_line_comment
+                    and not in_block_comment
+                ):
                     brace_count += 1
-                elif char == '}' and not in_string and not in_char and not in_line_comment and not in_block_comment:
+                elif (
+                    char == "}"
+                    and not in_string
+                    and not in_char
+                    and not in_line_comment
+                    and not in_block_comment
+                ):
                     brace_count -= 1
                     if brace_count < 0:
                         return False
-            
+
             if brace_count != 0 or in_string or in_char or in_block_comment:
                 return False
-            
+
             # Simple check for function calls without semicolons
             lines = self._split_into_lines(code)
             for line in lines:
                 line = line.strip()
-                if (line and not line.startswith('#') and not line.startswith('/') and
-                    not line.endswith('{') and not line.endswith('}') and 
-                    not line.endswith(';') and not line.endswith('\\') and
-                    not line.endswith(':')):
+                if (
+                    line
+                    and not line.startswith("#")
+                    and not line.startswith("/")
+                    and not line.endswith("{")
+                    and not line.endswith("}")
+                    and not line.endswith(";")
+                    and not line.endswith("\\")
+                    and not line.endswith(":")
+                ):
                     # Check for function calls without semicolons
-                    if re.search(r'[a-zA-Z_][a-zA-Z0-9_]*\([^)]*\)', line):
+                    if re.search(r"[a-zA-Z_][a-zA-Z0-9_]*\([^)]*\)", line):
                         return False
-            
+
             return True
-            
+
         except Exception:
             return False

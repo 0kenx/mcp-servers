@@ -4,8 +4,9 @@ Primarily suitable for Python, potentially F#, YAML, CoffeeScript.
 """
 
 import re
-from typing import List, Dict, Optional, Tuple, Set, Any
+from typing import List, Dict, Optional
 from .base import BaseParser, CodeElement, ElementType
+
 
 class IndentationBlockParser(BaseParser):
     """
@@ -25,9 +26,9 @@ class IndentationBlockParser(BaseParser):
     # Group 1: Keyword
     # Group 2: Name
     DEFINITION_PATTERN = re.compile(
-        r'^\s*(' + '|'.join(DEFINITION_KEYWORDS.keys()) + r')\s+' # Keyword (Group 1)
-        r'([a-zA-Z_][a-zA-Z0-9_]*)'                       # Name (Group 2)
-        r'\s*[:\(]?.*' # Match parameters or colon, etc., don't strictly parse
+        r"^\s*(" + "|".join(DEFINITION_KEYWORDS.keys()) + r")\s+"  # Keyword (Group 1)
+        r"([a-zA-Z_][a-zA-Z0-9_]*)"  # Name (Group 2)
+        r"\s*[:\(]?.*"  # Match parameters or colon, etc., don't strictly parse
     )
 
     # Docstring pattern (similar to Python)
@@ -60,8 +61,14 @@ class IndentationBlockParser(BaseParser):
 
         return self.elements
 
-    def _parse_block(self, lines: List[str], start_idx: int, end_idx: int,
-                    expected_indent: int, parent: Optional[CodeElement] = None) -> None:
+    def _parse_block(
+        self,
+        lines: List[str],
+        start_idx: int,
+        end_idx: int,
+        expected_indent: int,
+        parent: Optional[CodeElement] = None,
+    ) -> None:
         """
         Recursively parse a block of code expected at a specific indentation level.
 
@@ -75,11 +82,11 @@ class IndentationBlockParser(BaseParser):
         line_idx = start_idx
         while line_idx <= end_idx:
             line = lines[line_idx]
-            line_num = line_idx + 1 # 1-based
+            line_num = line_idx + 1  # 1-based
 
             # Skip empty lines and comments (basic '#' support)
             stripped_line = line.strip()
-            if not stripped_line or stripped_line.startswith('#'):
+            if not stripped_line or stripped_line.startswith("#"):
                 line_idx += 1
                 continue
 
@@ -87,7 +94,7 @@ class IndentationBlockParser(BaseParser):
 
             # If indentation decreases, we've exited the current block/scope
             if current_indent < expected_indent:
-                break # Let the caller handle the decreased indent
+                break  # Let the caller handle the decreased indent
 
             # If indentation matches, look for definitions at this level
             if current_indent == expected_indent:
@@ -98,11 +105,17 @@ class IndentationBlockParser(BaseParser):
                     element_type = self.DEFINITION_KEYWORDS[keyword]
 
                     # Determine if it's a method (if parent is class)
-                    if element_type == ElementType.FUNCTION and parent and parent.element_type == ElementType.CLASS:
-                         element_type = ElementType.METHOD
+                    if (
+                        element_type == ElementType.FUNCTION
+                        and parent
+                        and parent.element_type == ElementType.CLASS
+                    ):
+                        element_type = ElementType.METHOD
 
                     # Find the end of this element's block
-                    block_end_idx = self._find_block_end(lines, line_idx, current_indent)
+                    block_end_idx = self._find_block_end(
+                        lines, line_idx, current_indent
+                    )
 
                     # Extract code
                     element_code = self._join_lines(lines[line_idx : block_end_idx + 1])
@@ -115,23 +128,30 @@ class IndentationBlockParser(BaseParser):
                         end_line=block_end_idx + 1,
                         code=element_code,
                         parent=parent,
-                        metadata={}
+                        metadata={},
                     )
 
                     # Check for docstring (simple check on next line)
-                    docstring = self._extract_docstring(lines, line_idx + 1, expected_indent + self.INDENT_WIDTH)
+                    docstring = self._extract_docstring(
+                        lines, line_idx + 1, expected_indent + self.INDENT_WIDTH
+                    )
                     if docstring:
                         element.metadata["docstring"] = docstring
 
                     self.elements.append(element)
 
                     # Recursively parse the inner block
-                    self._parse_block(lines, line_idx + 1, block_end_idx,
-                                      expected_indent + self.INDENT_WIDTH, element)
+                    self._parse_block(
+                        lines,
+                        line_idx + 1,
+                        block_end_idx,
+                        expected_indent + self.INDENT_WIDTH,
+                        element,
+                    )
 
                     # Skip past the parsed block
                     line_idx = block_end_idx + 1
-                    continue # Continue loop from the line after the block
+                    continue  # Continue loop from the line after the block
 
                 # TODO: Could add handling for simple variable assignments at this level
                 # variable_match = self.variable_pattern.match(line) ...
@@ -139,8 +159,9 @@ class IndentationBlockParser(BaseParser):
             # If indentation increases unexpectedly or line doesn't match, just advance
             line_idx += 1
 
-
-    def _find_block_end(self, lines: List[str], start_idx: int, block_indent: int) -> int:
+    def _find_block_end(
+        self, lines: List[str], start_idx: int, block_indent: int
+    ) -> int:
         """
         Find the end of an indented block.
 
@@ -158,45 +179,46 @@ class IndentationBlockParser(BaseParser):
         for i in range(start_idx + 1, line_count):
             line = lines[i]
             stripped = line.strip()
-            if not stripped or stripped.startswith('#'):
+            if not stripped or stripped.startswith("#"):
                 continue
             current_indent = self._count_indentation(line)
             if current_indent > block_indent:
                 body_indent = current_indent
                 break
-            elif current_indent <= block_indent: # No body found, or dedent immediately
+            elif current_indent <= block_indent:  # No body found, or dedent immediately
                 return start_idx
 
-        if body_indent == -1: # No indented body found after the definition line
+        if body_indent == -1:  # No indented body found after the definition line
             return start_idx
 
         # Find the last line that has at least the body_indent level
-        last_line_idx = start_idx # Default to start line if only definition exists
+        last_line_idx = start_idx  # Default to start line if only definition exists
         for i in range(start_idx + 1, line_count):
             line = lines[i]
             current_indent = self._count_indentation(line)
             stripped = line.strip()
 
             # Skip blanks/comments *unless* they might be inside the block
-            if not stripped or stripped.startswith('#'):
-                 # Keep track if the previous line was part of the block
-                 if i > 0 and self._count_indentation(lines[i-1]) >= body_indent:
-                      # Assume blank/comment line is part of block if previous was
-                      last_line_idx = i
-                 continue
+            if not stripped or stripped.startswith("#"):
+                # Keep track if the previous line was part of the block
+                if i > 0 and self._count_indentation(lines[i - 1]) >= body_indent:
+                    # Assume blank/comment line is part of block if previous was
+                    last_line_idx = i
+                continue
 
             # If indentation is sufficient, it's part of the block
             if current_indent >= body_indent:
                 last_line_idx = i
             # If indentation drops below the block's body level, the block ended *before* this line
             elif current_indent <= block_indent:
-                return last_line_idx # The previous line was the end
+                return last_line_idx  # The previous line was the end
 
         # If we reach the end of the file, the block ended on the last line found
         return last_line_idx
 
-
-    def _extract_docstring(self, lines: List[str], start_idx: int, expected_indent: int) -> Optional[str]:
+    def _extract_docstring(
+        self, lines: List[str], start_idx: int, expected_indent: int
+    ) -> Optional[str]:
         """
         Extract a potential docstring starting at start_idx. Very basic version.
 
@@ -212,22 +234,24 @@ class IndentationBlockParser(BaseParser):
         for i in range(start_idx, min(start_idx + 5, len(lines))):
             if i >= len(lines):
                 continue
-                
+
             line = lines[i]
             stripped = line.strip()
-            
+
             # Skip empty lines and comments
-            if not stripped or stripped.startswith('#'):
+            if not stripped or stripped.startswith("#"):
                 continue
-                
+
             # Check if line starts with a docstring delimiter
             if stripped.startswith("'''") or stripped.startswith('"""'):
                 delimiter = "'''" if "'''" in stripped else '"""'
-                
+
                 # Single line docstring
-                if stripped.endswith(delimiter) and len(stripped) > 6:  # At least '''x'''
+                if (
+                    stripped.endswith(delimiter) and len(stripped) > 6
+                ):  # At least '''x'''
                     return stripped
-                    
+
                 # Multi-line docstring
                 doc_lines = [line]
                 for j in range(i + 1, len(lines)):
@@ -237,9 +261,8 @@ class IndentationBlockParser(BaseParser):
                         # Found the end delimiter
                         return self._join_lines(doc_lines).strip()
                 break
-                
-        return None # No docstring found
 
+        return None  # No docstring found
 
     def check_syntax_validity(self, code: str) -> bool:
         """
@@ -254,24 +277,24 @@ class IndentationBlockParser(BaseParser):
             True if indentation seems consistent, False otherwise.
         """
         lines = self._split_into_lines(code)
-        indent_stack = [0] # Stack of expected indentation levels
-        
+        indent_stack = [0]  # Stack of expected indentation levels
+
         # Check for mixed tabs and spaces
         uses_tabs = False
         uses_spaces = False
-        
+
         for line in lines:
             stripped = line.strip()
-            if not stripped or stripped.startswith('#'):
+            if not stripped or stripped.startswith("#"):
                 continue
-                
+
             # Check for mixed indentation
-            leading_whitespace = line[:len(line) - len(line.lstrip())]
-            if '\t' in leading_whitespace:
+            leading_whitespace = line[: len(line) - len(line.lstrip())]
+            if "\t" in leading_whitespace:
                 uses_tabs = True
-            if ' ' in leading_whitespace:
+            if " " in leading_whitespace:
                 uses_spaces = True
-                
+
             # If both tabs and spaces are used for indentation, it's inconsistent
             if uses_tabs and uses_spaces:
                 return False
@@ -288,7 +311,7 @@ class IndentationBlockParser(BaseParser):
                     indent_stack.pop()
                 # After popping, current indent must match the new top level
                 if not indent_stack or indent_stack[-1] != current_indent:
-                    return False # Indentation decreased to unexpected level
+                    return False  # Indentation decreased to unexpected level
             # else: current_indent == last_indent, which is fine
 
-        return True # If we reach the end without errors
+        return True  # If we reach the end without errors

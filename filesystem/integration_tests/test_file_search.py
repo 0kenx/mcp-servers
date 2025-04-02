@@ -24,9 +24,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import the patched filesystem functions
 from integration_tests.patched_filesystem import (
-    _resolve_path,
-    validate_path,
-    _get_or_create_conversation_id,
     read_file_by_keyword,
     read_function_by_keyword,
     get_symbols,
@@ -45,7 +42,11 @@ class TestFileSearchMCP(unittest.TestCase):
         print(f"Test directory: {cls.test_dir}")
 
         # Set up the global variables needed by the server
-        from integration_tests.patched_filesystem import SERVER_ALLOWED_DIRECTORIES, WORKING_DIRECTORY
+        from integration_tests.patched_filesystem import (
+            SERVER_ALLOWED_DIRECTORIES,
+            WORKING_DIRECTORY,
+        )
+
         SERVER_ALLOWED_DIRECTORIES.append(cls.test_dir)
         WORKING_DIRECTORY = cls.test_dir
 
@@ -242,7 +243,7 @@ Final line.
             self.text_file,
             "IMPORTANT",
             include_lines_before=1,
-            include_lines_after=1
+            include_lines_after=1,
         )
 
         # Check the result contains the expected content and context
@@ -252,10 +253,7 @@ Final line.
         """Test reading a file by regex pattern."""
         # Read the text file by regex pattern
         result = read_file_by_keyword(
-            self.ctx,
-            self.text_file,
-            ".*IMPORTANT|ERROR.*",
-            use_regex=True
+            self.ctx, self.text_file, ".*IMPORTANT|ERROR.*", use_regex=True
         )
 
         # Check the result contains the expected content
@@ -265,10 +263,7 @@ Final line.
         """Test reading a file by keyword with case insensitivity."""
         # Read the text file by keyword case insensitive
         result = read_file_by_keyword(
-            self.ctx,
-            self.text_file,
-            "important",
-            ignore_case=True
+            self.ctx, self.text_file, "important", ignore_case=True
         )
 
         # Check the result contains the expected content
@@ -277,7 +272,9 @@ Final line.
     def test_read_function_by_keyword(self):
         """Test reading a function by keyword from a Python file."""
         # Read a function by keyword
-        result = read_function_by_keyword(self.ctx, self.python_file, "function_with_arguments")
+        result = read_function_by_keyword(
+            self.ctx, self.python_file, "function_with_arguments"
+        )
 
         # Check the result contains the expected function
         self.assertIn("matching function_with_arguments", result)
@@ -285,7 +282,9 @@ Final line.
     def test_read_function_by_keyword_from_js(self):
         """Test reading a function by keyword from a JavaScript file."""
         # Read a function by keyword from JavaScript
-        result = read_function_by_keyword(self.ctx, self.js_file, "functionWithArguments")
+        result = read_function_by_keyword(
+            self.ctx, self.js_file, "functionWithArguments"
+        )
 
         # Check the result contains the expected function
         self.assertIn("matching functionWithArguments", result)
@@ -309,7 +308,9 @@ Final line.
     def test_get_function_code(self):
         """Test getting the code for a specific function."""
         # Get the code for a specific function
-        result = get_function_code(self.ctx, self.python_file, "function_with_arguments")
+        result = get_function_code(
+            self.ctx, self.python_file, "function_with_arguments"
+        )
 
         # Check the result contains only the expected function
         self.assertIn("function_with_arguments", result)

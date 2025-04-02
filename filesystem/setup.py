@@ -1,5 +1,4 @@
 from setuptools import setup, find_packages
-import os
 
 # Read the README.md for the long description
 with open("README.md", "r", encoding="utf-8") as fh:
@@ -9,7 +8,7 @@ setup(
     name="filesystem",
     version="0.1.0",
     packages=find_packages(where="."),
-    package_dir={"":"."},
+    package_dir={"": "."},
     install_requires=[
         "argparse>=1.4.0",
         "filelock>=3.18.0",

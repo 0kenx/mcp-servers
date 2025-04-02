@@ -21,7 +21,6 @@ from integration_tests.test_init import MockContext
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-
 # Import necessary modules
 # Import a mock version since we don't need the actual functionality
 def full_directory_tree(path, **kwargs):
@@ -62,10 +61,7 @@ class TestGitDirectoryTree(unittest.TestCase):
 
         # Initialize git repository
         subprocess.run(
-            ["git", "init"], 
-            cwd=cls.test_dir, 
-            check=True, 
-            capture_output=True
+            ["git", "init"], cwd=cls.test_dir, check=True, capture_output=True
         )
 
         # Configure git user
@@ -73,20 +69,20 @@ class TestGitDirectoryTree(unittest.TestCase):
             ["git", "config", "user.email", "test@example.com"],
             cwd=cls.test_dir,
             check=True,
-            capture_output=True
+            capture_output=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "Test User"],
             cwd=cls.test_dir,
             check=True,
-            capture_output=True
+            capture_output=True,
         )
 
         # Add git repository to safe.directory to avoid Git security warnings
         subprocess.run(
             ["git", "config", "--global", "--add", "safe.directory", cls.test_dir],
             check=False,
-            capture_output=True
+            capture_output=True,
         )
 
     def setUp(self):
@@ -102,23 +98,20 @@ class TestGitDirectoryTree(unittest.TestCase):
         # Create subdirectory with a file
         self.test_subdir = os.path.join(self.test_dir, "test_subdir")
         os.makedirs(self.test_subdir, exist_ok=True)
-        
+
         self.tracked_file2 = os.path.join(self.test_subdir, "tracked_file2.txt")
         with open(self.tracked_file2, "w") as f:
             f.write("This is another tracked file\n")
 
         # Add and commit test files
         subprocess.run(
-            ["git", "add", "."],
-            cwd=self.test_dir,
-            check=True,
-            capture_output=True
+            ["git", "add", "."], cwd=self.test_dir, check=True, capture_output=True
         )
         subprocess.run(
             ["git", "commit", "-m", "Add test files"],
             cwd=self.test_dir,
             check=True,
-            capture_output=True
+            capture_output=True,
         )
 
         # Create an untracked file
@@ -134,11 +127,11 @@ class TestGitDirectoryTree(unittest.TestCase):
         # Create ignored directory and file
         self.ignored_dir = os.path.join(self.test_dir, "ignored_dir")
         os.makedirs(self.ignored_dir, exist_ok=True)
-        
+
         self.ignored_file = os.path.join(self.ignored_dir, "ignored_file.txt")
         with open(self.ignored_file, "w") as f:
             f.write("This is an ignored file\n")
-            
+
         self.ignored_file2 = os.path.join(self.test_dir, "file.ignored")
         with open(self.ignored_file2, "w") as f:
             f.write("This is another ignored file\n")
@@ -148,13 +141,13 @@ class TestGitDirectoryTree(unittest.TestCase):
             ["git", "add", ".gitignore"],
             cwd=self.test_dir,
             check=True,
-            capture_output=True
+            capture_output=True,
         )
         subprocess.run(
             ["git", "commit", "-m", "Add gitignore"],
             cwd=self.test_dir,
             check=True,
-            capture_output=True
+            capture_output=True,
         )
 
     def tearDown(self):
@@ -165,7 +158,7 @@ class TestGitDirectoryTree(unittest.TestCase):
             for item in os.listdir(self.test_dir):
                 if item == ".git":
                     continue  # Don't remove the .git directory
-                    
+
                 item_path = os.path.join(self.test_dir, item)
                 try:
                     if os.path.isdir(item_path):
@@ -191,16 +184,16 @@ class TestGitDirectoryTree(unittest.TestCase):
         """Test directory_tree function inside a git repository."""
         # Call directory_tree on the root of the git repository
         result = self.directory_tree(self.test_dir)
-        
+
         # Check that tracked files are included
         self.assertIn("tracked_file.txt", result)
         self.assertIn("test_subdir", result)
         self.assertIn("tracked_file2.txt", result)
         self.assertIn(".gitignore", result)
-        
+
         # Check that untracked files are NOT included by default
         self.assertNotIn("untracked_file.txt", result)
-        
+
         # Check that ignored files are NOT included by default
         self.assertNotIn("ignored_dir", result)
         self.assertNotIn("ignored_file.txt", result)
@@ -210,7 +203,7 @@ class TestGitDirectoryTree(unittest.TestCase):
         """Test directory_tree with show_files_ignored_by_git=True."""
         # Call directory_tree with show_files_ignored_by_git=True
         result = self.directory_tree(self.test_dir, show_files_ignored_by_git=True)
-        
+
         # Now all files should be included
         self.assertIn("tracked_file.txt", result)
         self.assertIn("untracked_file.txt", result)
@@ -221,7 +214,7 @@ class TestGitDirectoryTree(unittest.TestCase):
         """Test directory_tree on a subdirectory of a git repository."""
         # Call directory_tree on a subdirectory
         result = self.directory_tree(self.test_subdir)
-        
+
         # Check that only files in the subdirectory are included
         self.assertIn("tracked_file2.txt", result)
         self.assertNotIn("tracked_file.txt", result)
@@ -230,11 +223,9 @@ class TestGitDirectoryTree(unittest.TestCase):
         """Test directory_tree with various metadata options."""
         # Call directory_tree with metadata options
         result = self.directory_tree(
-            self.test_dir,
-            show_line_count=True,
-            show_size=True
+            self.test_dir, show_line_count=True, show_size=True
         )
-        
+
         # Check that tracked files are included with metadata
         self.assertIn("tracked_file.txt", result)
         self.assertIn("lines", result.lower())  # Line count metadata
@@ -245,11 +236,11 @@ class TestGitDirectoryTree(unittest.TestCase):
         # Change the working directory to a subdirectory
         original_cwd = os.getcwd()
         os.chdir(self.test_subdir)
-        
+
         try:
             # Call directory_tree on the root of the git repository
             result = self.directory_tree(self.test_dir)
-            
+
             # Check that tracked files are still included
             self.assertIn("tracked_file.txt", result)
             self.assertIn("test_subdir", result)
@@ -257,6 +248,7 @@ class TestGitDirectoryTree(unittest.TestCase):
         finally:
             # Restore original working directory
             os.chdir(original_cwd)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,11 +9,11 @@ from src.grammar.base import ElementType
 
 class TestPythonParser(unittest.TestCase):
     """Test cases for the Python parser."""
-    
+
     def setUp(self):
         """Set up test cases."""
         self.parser = PythonParser()
-    
+
     def test_parse_function(self):
         """Test parsing a simple Python function."""
         code = '''
@@ -22,10 +22,10 @@ def hello_world(name: str = "World") -> str:
     return f"Hello, {name}!"
 '''
         elements = self.parser.parse(code)
-        
+
         # Should find one function
         self.assertEqual(len(elements), 1)
-        
+
         # Check the function properties
         func = elements[0]
         self.assertEqual(func.element_type, ElementType.FUNCTION)
@@ -33,7 +33,7 @@ def hello_world(name: str = "World") -> str:
         self.assertEqual(func.start_line, 2)
         self.assertEqual(func.end_line, 4)
         self.assertIn("Say hello to someone", func.metadata.get("docstring", ""))
-    
+
     def test_parse_class(self):
         """Test parsing a Python class with methods."""
         code = '''
@@ -50,24 +50,26 @@ class Person:
         return f"Hello, my name is {self.name}!"
 '''
         elements = self.parser.parse(code)
-        
+
         # Should find one class and two methods
         self.assertEqual(len(elements), 3)
-        
+
         # Check class
         class_element = next(e for e in elements if e.element_type == ElementType.CLASS)
         self.assertEqual(class_element.name, "Person")
-        self.assertIn("simple person class", class_element.metadata.get("docstring", ""))
-        
+        self.assertIn(
+            "simple person class", class_element.metadata.get("docstring", "")
+        )
+
         # Check methods
         init_method = next(e for e in elements if e.name == "__init__")
         self.assertEqual(init_method.element_type, ElementType.METHOD)
         self.assertEqual(init_method.parent, class_element)
-        
+
         greet_method = next(e for e in elements if e.name == "greet")
         self.assertEqual(greet_method.element_type, ElementType.METHOD)
         self.assertEqual(greet_method.parent, class_element)
-    
+
     def test_parse_decorated_function(self):
         """Test parsing a function with decorators."""
         code = '''
@@ -78,10 +80,10 @@ def index():
     return "Welcome!"
 '''
         elements = self.parser.parse(code)
-        
+
         # Should find one function
         self.assertEqual(len(elements), 1)
-        
+
         # Check function and decorators
         func = elements[0]
         self.assertEqual(func.name, "index")
@@ -89,7 +91,7 @@ def index():
         self.assertEqual(len(decorators), 2)
         self.assertIn("app.route", decorators[0])
         self.assertIn("login_required", decorators[1])
-    
+
     def test_parse_nested_elements(self):
         """Test parsing nested functions and classes."""
         code = '''
@@ -108,30 +110,30 @@ def outer_function():
     return inner_function() + InnerClass().method()
 '''
         elements = self.parser.parse(code)
-        
+
         # Should find outer function, inner function, inner class, and inner method
         self.assertEqual(len(elements), 4)
-        
+
         # Check outer function
         outer_func = next(e for e in elements if e.name == "outer_function")
         self.assertEqual(outer_func.element_type, ElementType.FUNCTION)
         self.assertIsNone(outer_func.parent)
-        
+
         # Check inner function
         inner_func = next(e for e in elements if e.name == "inner_function")
         self.assertEqual(inner_func.element_type, ElementType.FUNCTION)
         self.assertEqual(inner_func.parent, outer_func)
-        
+
         # Check inner class
         inner_class = next(e for e in elements if e.name == "InnerClass")
         self.assertEqual(inner_class.element_type, ElementType.CLASS)
         self.assertEqual(inner_class.parent, outer_func)
-        
+
         # Check inner method
         inner_method = next(e for e in elements if e.name == "method")
         self.assertEqual(inner_method.element_type, ElementType.METHOD)
         self.assertEqual(inner_method.parent, inner_class)
-    
+
     def test_parse_module_elements(self):
         """Test parsing module-level elements like imports and variables."""
         code = '''
@@ -150,17 +152,47 @@ class Config:
         self.debug = False
 '''
         elements = self.parser.parse(code)
-        
+
         # Should find imports, variables, class, and method
-        self.assertTrue(any(e.element_type == ElementType.IMPORT and "os" in e.name for e in elements))
-        self.assertTrue(any(e.element_type == ElementType.IMPORT and "sys" in e.name for e in elements))
-        self.assertTrue(any(e.element_type == ElementType.IMPORT and "typing" in e.name for e in elements))
-        
-        self.assertTrue(any(e.element_type == ElementType.VARIABLE and e.name == "MAX_RETRIES" for e in elements))
-        self.assertTrue(any(e.element_type == ElementType.VARIABLE and e.name == "DEFAULT_TIMEOUT" for e in elements))
-        
-        self.assertTrue(any(e.element_type == ElementType.CLASS and e.name == "Config" for e in elements))
-    
+        self.assertTrue(
+            any(
+                e.element_type == ElementType.IMPORT and "os" in e.name
+                for e in elements
+            )
+        )
+        self.assertTrue(
+            any(
+                e.element_type == ElementType.IMPORT and "sys" in e.name
+                for e in elements
+            )
+        )
+        self.assertTrue(
+            any(
+                e.element_type == ElementType.IMPORT and "typing" in e.name
+                for e in elements
+            )
+        )
+
+        self.assertTrue(
+            any(
+                e.element_type == ElementType.VARIABLE and e.name == "MAX_RETRIES"
+                for e in elements
+            )
+        )
+        self.assertTrue(
+            any(
+                e.element_type == ElementType.VARIABLE and e.name == "DEFAULT_TIMEOUT"
+                for e in elements
+            )
+        )
+
+        self.assertTrue(
+            any(
+                e.element_type == ElementType.CLASS and e.name == "Config"
+                for e in elements
+            )
+        )
+
     def test_find_function_by_name(self):
         """Test finding a function by name."""
         code = '''
@@ -178,19 +210,19 @@ def func3():
     pass
 '''
         elements = self.parser.parse(code)
-        
+
         # Use the find_function method
         target = self.parser.find_function(code, "find_me")
-        
+
         # Should find the function
         self.assertIsNotNone(target)
         self.assertEqual(target.name, "find_me")
         self.assertEqual(target.element_type, ElementType.FUNCTION)
         self.assertIn("function to find", target.metadata.get("docstring", ""))
-    
+
     def test_get_all_globals(self):
         """Test getting all global elements."""
-        code = '''
+        code = """
 import os
 
 def global_func():
@@ -201,28 +233,27 @@ class GlobalClass:
         pass
 
 CONSTANT = 42
-'''
+"""
         globals_dict = self.parser.get_all_globals(code)
-        
+
         # Should find global function, class, and constant
         self.assertIn("global_func", globals_dict)
         self.assertIn("GlobalClass", globals_dict)
         self.assertIn("CONSTANT", globals_dict)
         self.assertIn("os", globals_dict)  # Import
-        
+
         # Method should not be in globals
         self.assertNotIn("method", globals_dict)
-    
+
     def test_check_syntax_validity(self):
         """Test syntax validity checker."""
         # Valid Python
         valid_code = "def valid():\n    return 42\n"
         self.assertTrue(self.parser.check_syntax_validity(valid_code))
-        
+
         # Invalid Python
         invalid_code = "def invalid():\n    return 42\n}"
         self.assertFalse(self.parser.check_syntax_validity(invalid_code))
-
 
     def test_complex_in_progress_file(self):
         """Test parsing a complex, incomplete, in-progress file with errors."""
@@ -530,48 +561,70 @@ if __name__ == "__main__":
         # Parse the complex code
         try:
             elements = self.parser.parse(complex_code)
-            
+
             # Test that we found various elements despite the errors
             # Test classes
             classes = [e for e in elements if e.element_type == ElementType.CLASS]
-            self.assertGreaterEqual(len(classes), 2)  # Should find at least some classes
-            
+            self.assertGreaterEqual(
+                len(classes), 2
+            )  # Should find at least some classes
+
             # Test functions
             functions = [e for e in elements if e.element_type == ElementType.FUNCTION]
-            self.assertGreaterEqual(len(functions), 2)  # Should find at least initialize_logging, main
-            
+            self.assertGreaterEqual(
+                len(functions), 2
+            )  # Should find at least initialize_logging, main
+
             # Test variables
             variables = [e for e in elements if e.element_type == ElementType.VARIABLE]
-            self.assertGreaterEqual(len(variables), 2)  # Should find DEBUG_MODE, MAX_ITERATIONS, etc.
-            
+            self.assertGreaterEqual(
+                len(variables), 2
+            )  # Should find DEBUG_MODE, MAX_ITERATIONS, etc.
+
             # Test methods
             methods = [e for e in elements if e.element_type == ElementType.METHOD]
             self.assertGreaterEqual(len(methods), 3)  # Various class methods
-            
+
             # Don't strictly test for nested functions as they're hard to parse in erroneous code
-            nested_functions = [e for e in functions if e.parent is not None]  # Functions with parents
-            
+            nested_functions = [
+                e for e in functions if e.parent is not None
+            ]  # Functions with parents
+
             # Test that the parser handled imports
             imports = [e for e in elements if e.element_type == ElementType.IMPORT]
             self.assertGreaterEqual(len(imports), 2)  # At least some imports
-            
+
             # LIMITATION: Check for nested imports
             # The parser can detect some imports inside functions (like 'import logging' in initialize_logging)
             # But it struggles with deeply nested imports (like 'import lark' inside the main function)
-            print("\nChecking for import statements inside functions (known limitation):")
-            nested_imports = [e for e in elements if e.element_type == ElementType.IMPORT and e.parent is not None]
+            print(
+                "\nChecking for import statements inside functions (known limitation):"
+            )
+            nested_imports = [
+                e
+                for e in elements
+                if e.element_type == ElementType.IMPORT and e.parent is not None
+            ]
             nested_import_names = [i.name for i in nested_imports]
-            print(f"Nested imports found: {len(nested_imports)} - {nested_import_names}")
-            
+            print(
+                f"Nested imports found: {len(nested_imports)} - {nested_import_names}"
+            )
+
             # The parser detects 'import logging' in initialize_logging function
-            self.assertIn('logging', nested_import_names, "Parser should detect 'import logging' in initialize_logging function")
-            
+            self.assertIn(
+                "logging",
+                nested_import_names,
+                "Parser should detect 'import logging' in initialize_logging function",
+            )
+
             # But misses 'import lark' in the deeply nested code within main function
-            print("Note: The parser doesn't detect 'import lark' at line 474 due to deep nesting")
-            
+            print(
+                "Note: The parser doesn't detect 'import lark' at line 474 due to deep nesting"
+            )
+
             # We'll document this as a TODO rather than fail the test
             # self.assertIn('lark', import_names, "Parser should detect 'import lark' statement")
-            
+
             # Print detailed information about what was found
             print("\nComplex Code Parsing Results:")
             print(f"Total elements found: {len(elements)}")
@@ -580,19 +633,20 @@ if __name__ == "__main__":
             print(f"Methods found: {len(methods)} - {[m.name for m in methods]}")
             print(f"Variables found: {len(variables)} - {[v.name for v in variables]}")
             print(f"Imports found: {len(imports)} - {[i.name for i in imports]}")
-            print(f"Nested functions found: {len(nested_functions)} - {[f.name for f in nested_functions]}")
-            
+            print(
+                f"Nested functions found: {len(nested_functions)} - {[f.name for f in nested_functions]}"
+            )
+
             # Check that we found at least some valid elements despite errors
             # Prevent test from failing if main isn't found or doesn't have children
             main_func = next((f for f in functions if f.name == "main"), None)
             if main_func is not None:
                 # Check if it has any children, but don't fail the test if it doesn't
                 self.assertIsNotNone(main_func)
-            
+
         except Exception as e:
             self.fail(f"Parser failed to handle complex code: {e}")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()
-
-

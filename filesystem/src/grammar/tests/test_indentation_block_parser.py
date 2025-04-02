@@ -3,6 +3,7 @@ from src.grammar.generic_indentation_block import IndentationBlockParser
 from src.grammar.base import ElementType
 from src.grammar.tests.test_utils import ParserTestHelper
 
+
 class TestIndentationBlockParser(unittest.TestCase):
     """Test cases for the generic IndentationBlockParser."""
 
@@ -27,14 +28,22 @@ def another_func():
         elements = self.helper.parse_code(code)
         self.assertEqual(len(elements), 2)
 
-        calc_func = self.helper.find_element(elements, ElementType.FUNCTION, "calculate")
+        calc_func = self.helper.find_element(
+            elements, ElementType.FUNCTION, "calculate"
+        )
         self.assertIsNotNone(calc_func)
         self.assertEqual(calc_func.start_line, 3)
-        self.assertEqual(calc_func.end_line, 8) # Includes return line and following blank line
-        self.assertEqual(calc_func.metadata.get("docstring"), '"""Calculates square."""')
+        self.assertEqual(
+            calc_func.end_line, 8
+        )  # Includes return line and following blank line
+        self.assertEqual(
+            calc_func.metadata.get("docstring"), '"""Calculates square."""'
+        )
         self.assertIsNone(calc_func.parent)
 
-        another_func = self.helper.find_element(elements, ElementType.FUNCTION, "another_func")
+        another_func = self.helper.find_element(
+            elements, ElementType.FUNCTION, "another_func"
+        )
         self.assertIsNotNone(another_func)
         self.assertEqual(another_func.start_line, 9)
         self.assertEqual(another_func.end_line, 10)
@@ -87,7 +96,7 @@ def outer(a):
     return inner(a)
 """
         elements = self.helper.parse_code(code)
-        self.assertEqual(len(elements), 2) # outer, inner
+        self.assertEqual(len(elements), 2)  # outer, inner
 
         outer_func = self.helper.find_element(elements, ElementType.FUNCTION, "outer")
         self.assertIsNotNone(outer_func)
@@ -127,8 +136,11 @@ def func1():
         # Mixed tabs/spaces might pass or fail depending on how _count_indentation works
         # The default _count_indentation only counts spaces, so tabs are indent 0.
         # This will likely cause the validity check to fail if tabs are used for indentation.
-        self.assertFalse(self.helper.parser.check_syntax_validity(mixed_indent_code), "Mixed tabs/spaces should fail basic check")
+        self.assertFalse(
+            self.helper.parser.check_syntax_validity(mixed_indent_code),
+            "Mixed tabs/spaces should fail basic check",
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

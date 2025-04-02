@@ -14,13 +14,11 @@ import sys
 import unittest
 import tempfile
 import shutil
+
 # Import for git tests disabled due to module dependency issues
 # Run test_git_directory_tree_fix.py separately:
 # python -m integration_tests.test_git_directory_tree_fix
 from pathlib import Path
-import re
-import random
-import string
 
 # Initialize the test environment first
 from integration_tests.test_init import MockContext
@@ -29,12 +27,6 @@ from integration_tests.test_init import MockContext
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import the necessary modules
-from integration_tests.patched_filesystem import (
-    _resolve_path,
-    validate_path, 
-    _get_or_create_conversation_id,
-    generate_diff,
-)
 
 
 class TestFilesystemMCPServer(unittest.TestCase):
@@ -75,7 +67,7 @@ class TestFilesystemMCPServer(unittest.TestCase):
         cls.read_multiple_files = read_multiple_files
         cls.edit_file_diff = edit_file_diff
         cls.directory_tree = directory_tree
-        
+
     def setUp(self):
         """Set up the test environment for each test."""
         # Create a mock context for the MCP tools
@@ -266,7 +258,9 @@ class TestFilesystemMCPServer(unittest.TestCase):
         replacements = {"Line 2": "Modified Line 2"}
 
         # Edit the file
-        result = self.edit_file_diff(self.ctx, self.test_file, replacements=replacements)
+        result = self.edit_file_diff(
+            self.ctx, self.test_file, replacements=replacements
+        )
 
         # Check the result message
         self.assertIn("Applied", result)
@@ -285,9 +279,7 @@ class TestFilesystemMCPServer(unittest.TestCase):
         """Test editing a file using edit_file_diff with insertions."""
 
         # Define insertions to make
-        inserts = {
-            "Line 3\n": "Additional line after Line 3\n"
-        }
+        inserts = {"Line 3\n": "Additional line after Line 3\n"}
 
         # Edit the file
         result = self.edit_file_diff(self.ctx, self.test_file, inserts=inserts)
@@ -302,7 +294,7 @@ class TestFilesystemMCPServer(unittest.TestCase):
         with open(self.test_file, "r") as f:
             content = f.read()
         self.assertIn("Additional line after Line 3", content)
-        
+
     def test_write_file_new(self):
         """Test writing to a new file."""
         # Define a new file path
@@ -339,7 +331,9 @@ class TestFilesystemMCPServer(unittest.TestCase):
         with open(self.test_file, "r") as f:
             file_content = f.read()
         self.assertEqual(file_content, new_content)
-        self.assertNotEqual(file_content, self.test_content)  # Should be different from original
+        self.assertNotEqual(
+            file_content, self.test_content
+        )  # Should be different from original
 
     def test_write_file_invalid_path(self):
         """Test writing to an invalid path."""
@@ -416,7 +410,7 @@ class TestFilesystemMCPServer(unittest.TestCase):
         # Create a list with one existing and one nonexistent file
         nonexistent_file = os.path.join(self.test_dir, "nonexistent.txt")
         paths = [self.test_file, nonexistent_file]
-        
+
         # Read multiple files
         result = self.read_multiple_files(self.ctx, paths)
 
@@ -431,15 +425,17 @@ class TestFilesystemMCPServer(unittest.TestCase):
         # Create a nested directory structure
         nested_dir = os.path.join(self.test_dir, "tree_test/level1/level2")
         os.makedirs(nested_dir, exist_ok=True)
-        
+
         # Create some files at different levels
         with open(os.path.join(self.test_dir, "tree_test/root.txt"), "w") as f:
             f.write("Root level file\n")
-        
+
         with open(os.path.join(self.test_dir, "tree_test/level1/mid.txt"), "w") as f:
             f.write("Mid level file\n")
-        
-        with open(os.path.join(self.test_dir, "tree_test/level1/level2/leaf.txt"), "w") as f:
+
+        with open(
+            os.path.join(self.test_dir, "tree_test/level1/level2/leaf.txt"), "w"
+        ) as f:
             f.write("Leaf level file\n")
 
         # Get directory tree
@@ -462,9 +458,7 @@ class TestFilesystemMCPServer(unittest.TestCase):
 
         # Get directory tree with metadata
         result = self.directory_tree(
-            self.test_dir,
-            show_line_count=True,
-            show_size=True
+            self.test_dir, show_line_count=True, show_size=True
         )
 
         # Check that metadata is included

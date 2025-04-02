@@ -7,7 +7,7 @@ import inspect
 import uuid
 import fnmatch
 from pathlib import Path
-from typing import List, Dict, Optional, Any, Callable, Union
+from typing import List, Dict, Optional, Any, Callable
 from datetime import datetime, timezone
 from functools import wraps
 from mcp.server.fastmcp import FastMCP, Context
@@ -18,26 +18,26 @@ import json
 try:
     # Try to import from the local module first
     from .mcp_edit_utils import (
-    normalize_path,
-    expand_home,
-    get_file_stats,
-    get_metadata,
-    get_history_root,
-    sanitize_path_for_filename,
-    acquire_lock,
-    release_lock,
-    calculate_hash,
-    generate_diff,
-    read_log_file,
-    write_log_file,
-    HistoryError,
-    log,
-    get_next_tool_call_index,
-    validate_path,
-    LOGS_DIR,
-    DIFFS_DIR,
-    CHECKPOINTS_DIR,
-)
+        normalize_path,
+        expand_home,
+        get_file_stats,
+        get_metadata,
+        get_history_root,
+        sanitize_path_for_filename,
+        acquire_lock,
+        release_lock,
+        calculate_hash,
+        generate_diff,
+        read_log_file,
+        write_log_file,
+        HistoryError,
+        log,
+        get_next_tool_call_index,
+        validate_path,
+        LOGS_DIR,
+        DIFFS_DIR,
+        CHECKPOINTS_DIR,
+    )
 except ImportError:
     # This branch is for when running as a module
     from mcp_edit_utils import (
@@ -67,10 +67,10 @@ try:
     from .grammar import get_parser_for_file, BaseParser, CodeElement, ElementType
 except ImportError:
     # Fall back to direct import for when running as src/filesystem.py
-    from src.grammar import get_parser_for_file, BaseParser, CodeElement, ElementType
+    from src.grammar import get_parser_for_file, ElementType
 
 
-from src.grammar import get_parser_for_file, BaseParser, CodeElement, ElementType
+from src.grammar import get_parser_for_file, ElementType
 
 
 SYSTEM_PROMPT = """
@@ -426,7 +426,11 @@ def track_edit_history(func: Callable) -> Callable:
                 return f"Error: File to delete not found at {file_path_str}"
         elif tool_name == "write_file":
             operation = "create" if not file_existed_before else "replace"
-        elif tool_name == "edit_file_diff":
+        elif tool_name in [
+            "edit_file_diff",
+            "replace_lines_in_file",
+            "replace_symbol_in_file",
+        ]:
             operation = "edit"
             if not file_existed_before:
                 # Fail early if editing non-existent file
@@ -601,12 +605,12 @@ def track_edit_history(func: Callable) -> Callable:
             # (only for operations that modify files)
             if operation in ["edit", "replace", "create", "delete"] and diff_content:
                 # Count the number of lines in the diff
-                diff_lines = diff_content.count('\n')
+                diff_lines = diff_content.count("\n")
                 if diff_lines < 200:  # Check if the diff is less than 200 lines
                     # Add the diff to the result
                     modified_result = result
-                    if not modified_result.endswith('\n'):
-                        modified_result += '\n'
+                    if not modified_result.endswith("\n"):
+                        modified_result += "\n"
                     modified_result += f"\nDiff ({diff_lines} lines):\n{diff_content}"
                     return modified_result
 
@@ -816,6 +820,7 @@ def read_file_by_keyword(
 
     return "\n".join(result)
 
+
 @mcp.tool()
 def read_function_by_keyword(
     path: str, keyword: str, include_lines_before: int = 0, use_regex: bool = False
@@ -840,22 +845,25 @@ def read_function_by_keyword(
             lines = code.splitlines()
     except (ValueError, FileNotFoundError, Exception) as e:
         return f"Error accessing file {path}: {str(e)}"
-    
+
     # Get the appropriate parser for this file type
     parser = get_parser_for_file(validated_path)
-    
+
     # Try first to find the function using a grammar parser
     found_element = None
-    
+
     if parser:
         try:
             if use_regex:
                 # Parse all elements and then search for regex match in function names
                 elements = parser.parse(code)
                 pattern = re.compile(keyword)
-                
+
                 for element in elements:
-                    if element.element_type in (ElementType.FUNCTION, ElementType.METHOD):
+                    if element.element_type in (
+                        ElementType.FUNCTION,
+                        ElementType.METHOD,
+                    ):
                         if pattern.search(element.name):
                             found_element = element
                             break
@@ -864,24 +872,26 @@ def read_function_by_keyword(
                 found_element = parser.find_function(code, keyword)
         except Exception as e:
             log.warning(f"Parser failed: {str(e)}. Falling back to simple search.")
-    
+
     # If we found a function using the parser, format and return it
     if found_element:
         # Calculate line numbers for including context
         start_line = max(1, found_element.start_line - include_lines_before)
         result_lines = []
-        
+
         # Add the function code with line numbers
         for i in range(start_line - 1, found_element.end_line):
             line_num = i + 1  # Convert to 1-indexed line numbers
             if i < len(lines):
                 line_text = lines[i].rstrip()
-                is_match_line = found_element.start_line <= line_num <= found_element.end_line
+                is_match_line = (
+                    found_element.start_line <= line_num <= found_element.end_line
+                )
                 prefix = ">" if is_match_line else " "
                 result_lines.append(f"{line_num}{prefix} {line_text}")
-        
+
         return "\n".join(result_lines)
-    
+
     # Fall back to the original implementation if no parser is available
     # or if the parser didn't find the function
     matches = []
@@ -895,7 +905,9 @@ def read_function_by_keyword(
         matches = [i for i, line in enumerate(lines) if keyword in line]
 
     if not matches:
-        return f"No matches found for {'pattern' if use_regex else 'keyword'} '{keyword}'."
+        return (
+            f"No matches found for {'pattern' if use_regex else 'keyword'} '{keyword}'."
+        )
 
     for match_idx in matches:
         line_idx = match_idx
@@ -903,21 +915,21 @@ def read_function_by_keyword(
         file_ext = os.path.splitext(validated_path)[1].lower()
 
         # Handle Python-style functions (by indentation)
-        if file_ext in ('.py', '.pyx', '.pyw'):
+        if file_ext in (".py", ".pyx", ".pyw"):
             # Check if this line could be a function definition
             line = lines[line_idx].strip()
-            if not (line.startswith('def ') or 'def ' in line):
+            if not (line.startswith("def ") or "def " in line):
                 continue  # Not a function definition
 
             # Find where function body starts (line with colon)
             func_start = line_idx
-            colon_found = ':' in line
+            colon_found = ":" in line
             i = line_idx
 
             # Look for colon if not on the same line
             while not colon_found and i < min(line_idx + 5, len(lines) - 1):
                 i += 1
-                if ':' in lines[i]:
+                if ":" in lines[i]:
                     colon_found = True
 
             if not colon_found:
@@ -930,7 +942,7 @@ def read_function_by_keyword(
             for i in range(func_start + 1, len(lines)):
                 # Skip empty lines or comments at the beginning
                 line_content = lines[i].strip()
-                if not line_content or line_content.startswith('#'):
+                if not line_content or line_content.startswith("#"):
                     continue
 
                 # Get indentation of first non-empty line after function definition
@@ -940,13 +952,27 @@ def read_function_by_keyword(
 
                 # Check if we're back to base indentation level or less
                 current_indent = len(lines[i]) - len(lines[i].lstrip())
-                if current_indent <= base_indent and line_content and not line_content.startswith('#'):
+                if (
+                    current_indent <= base_indent
+                    and line_content
+                    and not line_content.startswith("#")
+                ):
                     # We found a line with same or less indentation - this is the end of the function
                     end_idx = i - 1
                     break
 
         # Handle C-style functions (with braces)
-        elif file_ext in ('.c', '.cpp', '.h', '.hpp', '.java', '.js', '.ts', '.php', '.cs'):
+        elif file_ext in (
+            ".c",
+            ".cpp",
+            ".h",
+            ".hpp",
+            ".java",
+            ".js",
+            ".ts",
+            ".php",
+            ".cs",
+        ):
             brace_idx = -1
 
             # Look for opening brace on the same line or the next few lines
@@ -1012,18 +1038,18 @@ def get_symbols(path: str, symbol_type: Optional[str] = None) -> str:
             code = f.read()
     except (ValueError, FileNotFoundError, Exception) as e:
         return f"Error accessing file {path}: {str(e)}"
-    
+
     # Get the appropriate parser for this file type
     parser = get_parser_for_file(validated_path)
     if not parser:
         return f"No suitable parser available for file type: {path}"
-    
+
     # Parse the code to get all elements
     try:
         elements = parser.parse(code)
     except Exception as e:
         return f"Error parsing file {path}: {str(e)}"
-    
+
     # Filter by symbol type if specified
     if symbol_type:
         try:
@@ -1032,54 +1058,91 @@ def get_symbols(path: str, symbol_type: Optional[str] = None) -> str:
             elements = [e for e in elements if e.element_type == enum_type]
         except (ValueError, Exception):
             # If not a valid ElementType, use string match
-            elements = [e for e in elements if symbol_type.lower() in e.element_type.value.lower()]
-    
+            elements = [
+                e
+                for e in elements
+                if symbol_type.lower() in e.element_type.value.lower()
+            ]
+
     # Format the results
     if not elements:
-        return f"No symbols found in {path}" + (f" with type '{symbol_type}'" if symbol_type else "")
-    
+        return f"No symbols found in {path}" + (
+            f" with type '{symbol_type}'" if symbol_type else ""
+        )
+
     result = [f"Symbols in {path}:"]
     for elem in sorted(elements, key=lambda e: e.start_line):
         parent_info = f" (in {elem.parent.name})" if elem.parent else ""
-        result.append(f"{elem.element_type.value}: {elem.name}{parent_info} (lines {elem.start_line}-{elem.end_line})")
-    
+        result.append(
+            f"{elem.element_type.value}: {elem.name}{parent_info} (lines {elem.start_line}-{elem.end_line})"
+        )
+
     return "\n".join(result)
 
 
 @mcp.tool()
-def get_function_code(path: str, function_name: str) -> str:
+def get_code_of_symbol(
+    path: str, symbol_name: str, symbol_type: Optional[str] = None
+) -> str:
     """
-    Get the complete code of a specific function from a file.
+    Get the complete code of a specific symbol (function, class, method, etc.) from a file.
+    Ensures the symbol name is unique for the given type or returns an error with matches.
 
     Args:
         path: Path to the file
-        function_name: Name of the function to retrieve
+        symbol_name: Name of the symbol to retrieve
+        symbol_type: Optional type to filter by (e.g., 'function', 'class'). If None, searches all types.
 
     Returns:
-        The complete function code or an error message
+        The complete code of the symbol or an error message if not found or ambiguous.
     """
     try:
         resolved_path = _resolve_path(path)
         validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
         with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
             code = f.read()
-    except (ValueError, FileNotFoundError, Exception) as e:
+    except (ValueError, FileNotFoundError, OSError, Exception) as e:
         return f"Error accessing file {path}: {str(e)}"
-    
+
     # Get the appropriate parser for this file type
     parser = get_parser_for_file(validated_path)
     if not parser:
         return f"No suitable parser available for file type: {path}"
-    
-    # Find the specified function
+
+    # Find all symbols and filter
     try:
-        function = parser.find_function(code, function_name)
-        if not function:
-            return f"Function '{function_name}' not found in {path}"
-        
-        return function.code
+        all_elements = parser.parse(code)
+        matching_elements = []
+        for elem in all_elements:
+            type_matches = True
+            if symbol_type:
+                try:
+                    enum_type = ElementType(symbol_type.lower())
+                    type_matches = elem.element_type == enum_type
+                except ValueError:
+                    type_matches = (
+                        symbol_type.lower() in elem.element_type.value.lower()
+                    )
+
+            if elem.name == symbol_name and type_matches:
+                matching_elements.append(elem)
+
     except Exception as e:
-        return f"Error retrieving function '{function_name}' from {path}: {str(e)}"
+        return f"Error parsing symbols in {path}: {str(e)}"
+
+    # Check results
+    if not matching_elements:
+        type_str = f" of type '{symbol_type}'" if symbol_type else ""
+        return f"Symbol '{symbol_name}'{type_str} not found in {path}"
+    elif len(matching_elements) > 1:
+        error_msg = f"Ambiguous symbol name '{symbol_name}' found in {path}. Multiple matches:\n"
+        for elem in matching_elements:
+            parent_info = f" (in {elem.parent.name})" if elem.parent else ""
+            error_msg += f"- {elem.element_type.value}: {elem.name}{parent_info} (lines {elem.start_line}-{elem.end_line})\n"
+        return error_msg.strip()
+    else:
+        # Exactly one match found
+        return matching_elements[0].code
 
 
 @mcp.tool()
@@ -1088,12 +1151,12 @@ def create_directory(path: str) -> str:
     try:
         resolved_path = _resolve_path(path)
         validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
-        
+
         # Check if directory already exists
         if os.path.isdir(validated_path):
             # Return the directory listing
             return list_directory(path)
-            
+
         # Create the directory
         os.makedirs(validated_path, exist_ok=True)
         return f"Successfully created directory {path}"
@@ -1186,11 +1249,9 @@ def full_directory_tree(
                 display_name = path
             else:
                 display_name = str(current_path)
-              
+
             output_lines.append(
-                f"{display_name}/ [{metadata}]"
-                if metadata
-                else f"{display_name}/"
+                f"{display_name}/ [{metadata}]" if metadata else f"{display_name}/"
             )
 
             try:
@@ -1288,7 +1349,12 @@ def directory_tree(
 
     if not git_root or show_files_ignored_by_git:
         return full_directory_tree(
-            path, show_line_count, show_permissions, show_owner, show_size, show_files_ignored_by_git
+            path,
+            show_line_count,
+            show_permissions,
+            show_owner,
+            show_size,
+            show_files_ignored_by_git,
         )
 
     # Find git executable
@@ -1732,7 +1798,7 @@ def changes_since_last_commit(path: str = ".") -> str:
 @mcp.tool()
 @track_edit_history
 def write_file(ctx: Context, path: str, content: str) -> str:
-    """Create a new file or completely overwrite an existing file with new content. Use with caution as it will overwrite existing files without warning. Prefer using edit_file_diff if the lines changed account for less than 25% of the file."""
+    """Create a new file or completely overwrite an existing file with new content. Use with caution as it will overwrite existing files without warning. Prefer using edit_file_diff if the lines changed account for less than 25% of the file. If you need to write more than 700 lines at a time write it in chunks."""
     try:
         resolved_path = _resolve_path(path)
         validated_path = validate_path(resolved_path, WORKING_DIRECTORY)
@@ -1754,7 +1820,7 @@ def write_file(ctx: Context, path: str, content: str) -> str:
             except json.JSONDecodeError:
                 # If all attempts fail, write the original string content
                 content_to_write = content
-        
+
         with open(validated_path, "w", encoding="utf-8") as f:
             f.write(content_to_write)
         return f"Successfully wrote to {path}"
@@ -1942,6 +2008,188 @@ def edit_file_diff(
 
 @mcp.tool()
 @track_edit_history
+def replace_lines_in_file(
+    ctx: Context, path: str, line_start: int, line_end: int, new_content: str
+) -> str:
+    """
+    Replace a specific range of lines in a file with new content.
+    Line numbers are 1-based and inclusive.
+
+    Args:
+        path: Path to the file to edit.
+        line_start: The starting line number to replace (1-based).
+        line_end: The ending line number to replace (1-based).
+        new_content: The new text content to insert in place of the specified lines.
+
+    Returns:
+        A message indicating success or failure.
+    """
+    try:
+        resolved_path = _resolve_path(path)
+        validated_path = validate_path(resolved_path, WORKING_DIRECTORY)
+
+        # Validate line numbers
+        if not isinstance(line_start, int) or not isinstance(line_end, int):
+            return "Error: line_start and line_end must be integers."
+        if line_start < 1:
+            return "Error: line_start must be 1 or greater."
+        if line_end < line_start:
+            return "Error: line_end must be greater than or equal to line_start."
+
+        # Read current lines
+        with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()  # Readlines keeps trailing newlines
+
+        total_lines = len(lines)
+        if line_start > total_lines:
+            return f"Error: line_start ({line_start}) is beyond the end of the file ({total_lines} lines)."
+        # Allow line_end to be beyond the end, effectively replacing until the end
+        line_end_actual = min(line_end, total_lines)
+
+        # Prepare new content lines (ensure they end with newline)
+        new_lines = new_content.splitlines(keepends=True)
+        if not new_content.endswith("\n") and new_lines:
+            # Add newline to last line if original content didn't end with one
+            # and the replacement content isn't empty
+            new_lines[-1] += "\n"
+        elif not new_lines and new_content:
+            # Handle case where new_content is a single line without newline
+            new_lines = [new_content + "\n"]
+
+        # Construct the new file content
+        # Lines before the start (0-based index: line_start - 1)
+        content_before = lines[: line_start - 1]
+        # Lines after the end (0-based index: line_end_actual)
+        content_after = lines[line_end_actual:]
+
+        final_content_lines = content_before + new_lines + content_after
+        final_content = "".join(final_content_lines)
+
+        # Write the modified content back
+        with open(validated_path, "w", encoding="utf-8") as f:
+            f.write(final_content)
+
+        return f"Successfully replaced lines {line_start}-{line_end} in {path}."
+
+    except FileNotFoundError:
+        return f"Error: File not found at {path}"
+    except ValueError as ve:  # Catch specific validation errors
+        return f"Error: {str(ve)}"
+    except Exception as e:
+        log.error(f"replace_lines_in_file failed for {path}: {e}", exc_info=True)
+        return f"Error replacing lines in file {path}: {str(e)}"
+
+
+@mcp.tool()
+@track_edit_history
+def replace_symbol_in_file(
+    ctx: Context,
+    path: str,
+    new_content: str,
+    symbol_name: str,
+    symbol_type: Optional[str] = None,
+) -> str:
+    """
+    Replace the code of a uniquely identified symbol (function, class, etc.) in a file.
+    Uses get_symbols to find the symbol's location first.
+
+    Args:
+        path: Path to the file.
+        new_content: The new code content for the symbol.
+        symbol_name: Name of the symbol to replace.
+        symbol_type: Optional type to filter by (e.g., 'function', 'class').
+
+    Returns:
+        Success message or error if the symbol is not found or ambiguous.
+    """
+    # 1. Find the unique symbol using logic similar to get_code_of_symbol
+    try:
+        resolved_path = _resolve_path(path)
+        validated_path = validate_path(
+            resolved_path, WORKING_DIRECTORY
+        )  # Validate against working dir for modification
+        with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
+            code = f.read()
+    except (ValueError, FileNotFoundError, OSError, Exception) as e:
+        return f"Error accessing file {path} for symbol replacement: {str(e)}"
+
+    parser = get_parser_for_file(validated_path)
+    if not parser:
+        return f"No suitable parser available for file type: {path}"
+
+    try:
+        all_elements = parser.parse(code)
+        matching_elements = []
+        for elem in all_elements:
+            type_matches = True
+            if symbol_type:
+                try:
+                    enum_type = ElementType(symbol_type.lower())
+                    type_matches = elem.element_type == enum_type
+                except ValueError:
+                    type_matches = (
+                        symbol_type.lower() in elem.element_type.value.lower()
+                    )
+
+            if elem.name == symbol_name and type_matches:
+                matching_elements.append(elem)
+
+    except Exception as e:
+        return f"Error parsing symbols in {path} for replacement: {str(e)}"
+
+    # Check results
+    if not matching_elements:
+        type_str = f" of type '{symbol_type}'" if symbol_type else ""
+        return f"Error replacing symbol: Symbol '{symbol_name}'{type_str} not found in {path}"
+    elif len(matching_elements) > 1:
+        error_msg = f"Error replacing symbol: Ambiguous symbol name '{symbol_name}' found in {path}. Multiple matches:\n"
+        for elem in matching_elements:
+            parent_info = f" (in {elem.parent.name})" if elem.parent else ""
+            error_msg += f"- {elem.element_type.value}: {elem.name}{parent_info} (lines {elem.start_line}-{elem.end_line})\n"
+        return error_msg.strip()
+    else:
+        # Exactly one match found - get line numbers
+        symbol_to_replace = matching_elements[0]
+        line_start = symbol_to_replace.start_line
+        line_end = symbol_to_replace.end_line
+
+        # 2. Call replace_lines_in_file (but perform logic directly for atomicity)
+        try:
+            # Read lines again within this function scope
+            with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+
+            # Prepare new content lines
+            new_lines = new_content.splitlines(keepends=True)
+            if not new_content.endswith("\n") and new_lines:
+                new_lines[-1] += "\n"
+            elif not new_lines and new_content:
+                new_lines = [new_content + "\n"]
+
+            # Construct the new file content
+            content_before = lines[: line_start - 1]
+            content_after = lines[line_end:]  # Use original line_end from symbol
+            final_content_lines = content_before + new_lines + content_after
+            final_content = "".join(final_content_lines)
+
+            # Write the modified content back
+            with open(validated_path, "w", encoding="utf-8") as f:
+                f.write(final_content)
+
+            type_str = f" ({symbol_to_replace.element_type.value})"
+            return f"Successfully replaced symbol '{symbol_name}'{type_str} in {path} (lines {line_start}-{line_end})."
+
+        except Exception as e:
+            # Catch errors during the file modification phase
+            log.error(
+                f"replace_symbol_in_file modification failed for {path}: {e}",
+                exc_info=True,
+            )
+            return f"Error replacing symbol content in {path}: {str(e)}"
+
+
+@mcp.tool()
+@track_edit_history
 def move_file(ctx: Context, source: str, destination: str) -> str:
     """Move/rename a file."""
     try:
@@ -1953,16 +2201,18 @@ def move_file(ctx: Context, source: str, destination: str) -> str:
         if os.path.exists(validated_dest_path):
             return f"Error: Destination path {destination} already exists."
         Path(validated_dest_path).parent.mkdir(parents=True, exist_ok=True)
-        
+
         # Using shutil.move instead of os.rename to better handle cross-device moves
         shutil.move(validated_source_path, validated_dest_path)
-        
+
         # Verify the operation succeeded
         if not os.path.exists(validated_dest_path):
             return f"Error: Move operation failed. Destination file {destination} does not exist."
         if os.path.exists(validated_source_path):
-            return f"Error: Move operation incomplete. Source file {source} still exists."
-            
+            return (
+                f"Error: Move operation incomplete. Source file {source} still exists."
+            )
+
         return f"Successfully moved {source} to {destination}"
     except (ValueError, Exception) as e:
         return f"Error moving file: {str(e)}"
@@ -1997,4 +2247,3 @@ def delete_file(ctx: Context, path: str) -> str:
 if __name__ == "__main__":
     print("Secure MCP Filesystem Server running", file=sys.stderr)
     mcp.run()
-

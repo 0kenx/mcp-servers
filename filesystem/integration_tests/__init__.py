@@ -7,4 +7,4 @@ This package contains integration tests for the MCP filesystem server.
 from integration_tests.mock_imports import MockContext
 
 # Export MockContext for convenience
-__all__ = ['MockContext']
+__all__ = ["MockContext"]

@@ -9,14 +9,14 @@ from src.grammar.base import ElementType
 
 class TestJavaScriptParser(unittest.TestCase):
     """Test cases for the JavaScript parser."""
-    
+
     def setUp(self):
         """Set up test cases."""
         self.parser = JavaScriptParser()
-    
+
     def test_parse_function_declaration(self):
         """Test parsing a function declaration."""
-        code = '''
+        code = """
 /**
  * Says hello to someone.
  * @param {string} name - The name to greet
@@ -25,12 +25,12 @@ class TestJavaScriptParser(unittest.TestCase):
 function helloWorld(name = "World") {
     return `Hello, ${name}!`;
 }
-'''
+"""
         elements = self.parser.parse(code)
-        
+
         # Should find one function
         self.assertEqual(len(elements), 1)
-        
+
         # Check function properties
         func = elements[0]
         self.assertEqual(func.element_type, ElementType.FUNCTION)
@@ -38,10 +38,10 @@ function helloWorld(name = "World") {
         self.assertEqual(func.start_line, 6)
         self.assertEqual(func.end_line, 8)
         self.assertIn("Says hello to someone", func.metadata.get("docstring", ""))
-    
+
     def test_parse_arrow_function(self):
         """Test parsing an arrow function assigned to a variable."""
-        code = '''
+        code = """
 // Greeting function
 const greet = (name = "World") => {
     return `Hello, ${name}!`;
@@ -49,27 +49,27 @@ const greet = (name = "World") => {
 
 // One-liner
 const square = x => x * x;
-'''
+"""
         elements = self.parser.parse(code)
-        
+
         # Should find two functions
         self.assertEqual(len(elements), 2)
-        
+
         # Check first function
         greet_func = elements[0]
         self.assertEqual(greet_func.element_type, ElementType.FUNCTION)
         self.assertEqual(greet_func.name, "greet")
         self.assertTrue(greet_func.metadata.get("is_arrow", False))
-        
+
         # Check second function
         square_func = elements[1]
         self.assertEqual(square_func.element_type, ElementType.FUNCTION)
         self.assertEqual(square_func.name, "square")
         self.assertTrue(square_func.metadata.get("is_arrow", False))
-    
+
     def test_parse_class(self):
         """Test parsing a class with methods."""
-        code = '''
+        code = """
 /**
  * Represents a person.
  */
@@ -94,35 +94,37 @@ class Person {
         return new Person(name, age);
     }
 }
-'''
+"""
         elements = self.parser.parse(code)
-        
+
         # Should find one class and three methods
         class_elements = [e for e in elements if e.element_type == ElementType.CLASS]
         method_elements = [e for e in elements if e.element_type == ElementType.METHOD]
-        
+
         self.assertEqual(len(class_elements), 1)
         self.assertEqual(len(method_elements), 3)
-        
+
         # Check class
         class_element = class_elements[0]
         self.assertEqual(class_element.name, "Person")
-        self.assertIn("Represents a person", class_element.metadata.get("docstring", ""))
-        
+        self.assertIn(
+            "Represents a person", class_element.metadata.get("docstring", "")
+        )
+
         # Check methods
         constructor = next(e for e in method_elements if e.name == "constructor")
         self.assertEqual(constructor.parent, class_element)
-        
+
         greet_method = next(e for e in method_elements if e.name == "greet")
         self.assertEqual(greet_method.parent, class_element)
-        
+
         static_method = next(e for e in method_elements if e.name == "create")
         self.assertEqual(static_method.parent, class_element)
         self.assertTrue(static_method.metadata.get("is_static", False))
-    
+
     def test_parse_async_functions(self):
         """Test parsing async functions."""
-        code = '''
+        code = """
 // Async function declaration
 async function fetchData() {
     const response = await fetch('/api/data');
@@ -134,22 +136,22 @@ const getData = async () => {
     const data = await fetchData();
     return data.filter(item => item.active);
 };
-'''
+"""
         elements = self.parser.parse(code)
-        
+
         # Should find two functions
         self.assertEqual(len(elements), 2)
-        
+
         # Check async properties
         fetch_func = next(e for e in elements if e.name == "fetchData")
         self.assertTrue(fetch_func.metadata.get("is_async", False))
-        
+
         get_data_func = next(e for e in elements if e.name == "getData")
         self.assertTrue(get_data_func.metadata.get("is_async", False))
-    
+
     def test_parse_module_elements(self):
         """Test parsing module-level elements like imports, exports, and variables."""
-        code = '''
+        code = """
 import React from 'react';
 import { useState, useEffect } from 'react';
 
@@ -169,28 +171,28 @@ export const ItemList = () => {
 };
 
 export default ItemList;
-'''
+"""
         elements = self.parser.parse(code)
-        
+
         # Check imports
         imports = [e for e in elements if e.element_type == ElementType.IMPORT]
         self.assertEqual(len(imports), 2)
         self.assertTrue(any("react" in e.name for e in imports))
-        
+
         # Check constants
         constants = [e for e in elements if e.element_type == ElementType.CONSTANT]
         self.assertEqual(len(constants), 2)
         self.assertTrue(any(e.name == "MAX_ITEMS" for e in constants))
         self.assertTrue(any(e.name == "API_URL" for e in constants))
-        
+
         # Check function
         functions = [e for e in elements if e.element_type == ElementType.FUNCTION]
         self.assertTrue(any(e.name == "fetchItems" for e in functions))
         self.assertTrue(any(e.name == "ItemList" for e in functions))
-    
+
     def test_find_function_by_name(self):
         """Test finding a function by name."""
-        code = '''
+        code = """
 function func1() {
     return 1;
 }
@@ -203,18 +205,18 @@ function findMe() {
 const func2 = () => {
     return 2;
 };
-'''
+"""
         # Use the find_function method
         target = self.parser.find_function(code, "findMe")
-        
+
         # Should find the function
         self.assertIsNotNone(target)
         self.assertEqual(target.name, "findMe")
         self.assertEqual(target.element_type, ElementType.FUNCTION)
-    
+
     def test_get_all_globals(self):
         """Test getting all global elements."""
-        code = '''
+        code = """
 import React from 'react';
 
 function globalFunc() {
@@ -228,36 +230,36 @@ class GlobalClass {
 }
 
 const CONSTANT = 42;
-'''
+"""
         globals_dict = self.parser.get_all_globals(code)
-        
+
         # Should find global function, class, and constant
         self.assertIn("globalFunc", globals_dict)
         self.assertIn("GlobalClass", globals_dict)
         self.assertIn("CONSTANT", globals_dict)
         self.assertIn("React", globals_dict)  # Import
-        
+
         # Method should not be in globals
         self.assertNotIn("method", globals_dict)
-    
+
     def test_check_syntax_validity(self):
         """Test syntax validity checker."""
         # Valid JavaScript
         valid_code = "function valid() { return 42; }"
         self.assertTrue(self.parser.check_syntax_validity(valid_code))
-        
+
         # Invalid JavaScript (unbalanced braces)
         invalid_code = "function invalid() { return 42;"
         self.assertFalse(self.parser.check_syntax_validity(invalid_code))
-        
+
         # Invalid JavaScript (unbalanced string)
-        invalid_code2 = "const str = \"unbalanced;"
+        invalid_code2 = 'const str = "unbalanced;'
         self.assertFalse(self.parser.check_syntax_validity(invalid_code2))
 
     def test_complex_in_progress_file(self):
         """Test parsing a complex, incomplete JavaScript file with various structures and errors."""
         # This test simulates a large, messy file that's being actively worked on
-        complex_code = '''
+        complex_code = """
 // DataAnalytics.js - Work in Progress
 // A complex JavaScript application for data analytics
 
@@ -531,85 +533,113 @@ const debounce = (func, wait) => {
     
     // Not properly terminated
     return app
-'''
-    
+"""
+
         # Parse the complex code
         try:
             # Add debug prints to the JavaScript parser to show what it finds
             original_parse = self.parser.parse
-            
+
             def debug_parse(self_parser, code):
                 elements = original_parse(code)
                 print("\nComplex JavaScript Parsing Results:")
                 print(f"Total elements found: {len(elements)}")
-                
+
                 # Categorize elements
                 imports = [e for e in elements if e.element_type == ElementType.IMPORT]
-                functions = [e for e in elements if e.element_type == ElementType.FUNCTION]
+                functions = [
+                    e for e in elements if e.element_type == ElementType.FUNCTION
+                ]
                 classes = [e for e in elements if e.element_type == ElementType.CLASS]
                 methods = [e for e in elements if e.element_type == ElementType.METHOD]
-                constants = [e for e in elements if e.element_type == ElementType.CONSTANT]
-                variables = [e for e in elements if e.element_type == ElementType.VARIABLE]
-                
+                constants = [
+                    e for e in elements if e.element_type == ElementType.CONSTANT
+                ]
+                variables = [
+                    e for e in elements if e.element_type == ElementType.VARIABLE
+                ]
+
                 print(f"Imports found: {len(imports)} - {[i.name for i in imports]}")
-                print(f"Functions found: {len(functions)} - {[f.name for f in functions]}")
+                print(
+                    f"Functions found: {len(functions)} - {[f.name for f in functions]}"
+                )
                 print(f"Classes found: {len(classes)} - {[c.name for c in classes]}")
                 print(f"Methods found: {len(methods)} - {[m.name for m in methods]}")
-                print(f"Constants found: {len(constants)} - {[c.name for c in constants]}")
-                print(f"Variables found: {len(variables)} - {[v.name for v in variables]}")
-                
+                print(
+                    f"Constants found: {len(constants)} - {[c.name for c in constants]}"
+                )
+                print(
+                    f"Variables found: {len(variables)} - {[v.name for v in variables]}"
+                )
+
                 return elements
-            
+
             # Temporarily replace the parse method for debugging
             self.parser.parse = lambda code: debug_parse(self.parser, code)
-            
+
             # Parse the complex code
             elements = self.parser.parse(complex_code)
-            
+
             # Restore the original parse method
             self.parser.parse = original_parse
-            
+
             # Basic assertions
             # There should be at least some functions and classes identified
             functions = [e for e in elements if e.element_type == ElementType.FUNCTION]
             classes = [e for e in elements if e.element_type == ElementType.CLASS]
             constants = [e for e in elements if e.element_type == ElementType.CONSTANT]
             methods = [e for e in elements if e.element_type == ElementType.METHOD]
-            
+
             # Test that key elements were found despite errors
-            self.assertGreaterEqual(len(functions), 2)  # Should find at least 2 functions
-            self.assertGreaterEqual(len(classes), 1)    # Should find at least 1 class
-            self.assertGreaterEqual(len(constants), 2)  # Should find at least 2 constants
-            
+            self.assertGreaterEqual(
+                len(functions), 2
+            )  # Should find at least 2 functions
+            self.assertGreaterEqual(len(classes), 1)  # Should find at least 1 class
+            self.assertGreaterEqual(
+                len(constants), 2
+            )  # Should find at least 2 constants
+
             # Test that specific elements were found
             function_names = [f.name for f in functions]
-            self.assertIn('formatDate', function_names)
-            
+            self.assertIn("formatDate", function_names)
+
             class_names = [c.name for c in classes]
-            self.assertIn('DataAnalytics', class_names)
-            
+            self.assertIn("DataAnalytics", class_names)
+
             # Test that at least some methods were properly associated with their parent classes
             methods_with_parents = [m for m in methods if m.parent is not None]
             if methods_with_parents:
                 # Check that at least one method has the correct parent
-                has_correct_parent = any(m.parent.name == 'DataAnalytics' for m in methods_with_parents)
-                self.assertTrue(has_correct_parent, "No methods were correctly associated with their parent class")
-                
+                has_correct_parent = any(
+                    m.parent.name == "DataAnalytics" for m in methods_with_parents
+                )
+                self.assertTrue(
+                    has_correct_parent,
+                    "No methods were correctly associated with their parent class",
+                )
+
             # Test handling of bad syntax
             # The parser should continue despite syntax errors and extract valid elements
-            if 'calculateMovingAverage' in function_names:
+            if "calculateMovingAverage" in function_names:
                 # If it found the function with the syntax error, it should have detected the issue
-                moving_avg_func = next(f for f in functions if f.name == 'calculateMovingAverage')
-                self.assertFalse(self.parser.check_syntax_validity(moving_avg_func.code))
-                
+                moving_avg_func = next(
+                    f for f in functions if f.name == "calculateMovingAverage"
+                )
+                self.assertFalse(
+                    self.parser.check_syntax_validity(moving_avg_func.code)
+                )
+
             # Document the parser's limitations
             print("\nParser Limitations:")
             print("- The JavaScript parser may skip some elements with syntax errors")
-            print("- Nested elements like class methods may not be fully associated with their parents")
+            print(
+                "- Nested elements like class methods may not be fully associated with their parents"
+            )
             print("- Complex nested structures might be partially detected")
-            
+
         except Exception as e:
             self.fail(f"Parser failed to handle complex JavaScript code: {e}")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()
