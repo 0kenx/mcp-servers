@@ -5,7 +5,7 @@ Primarily suitable for Python, potentially F#, YAML, CoffeeScript.
 
 import re
 from typing import List, Dict, Optional, Tuple, Set, Any
-from base import BaseParser, CodeElement, ElementType
+from .base import BaseParser, CodeElement, ElementType
 
 class IndentationBlockParser(BaseParser):
     """

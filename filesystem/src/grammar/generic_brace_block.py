@@ -5,7 +5,7 @@ Suitable for C-like languages (C, C++, Java, C#), JavaScript, TypeScript, Rust, 
 
 import re
 from typing import List, Dict, Optional, Tuple, Any, Set
-from base import BaseParser, CodeElement, ElementType
+from .base import BaseParser, CodeElement, ElementType
 
 class BraceBlockParser(BaseParser):
     """

@@ -11,9 +11,9 @@ from .c_cpp import CCppParser
 from .javascript import JavaScriptParser
 from .typescript import TypeScriptParser
 from .rust import RustParser
-from .brace_block_parser import BraceBlockParser
-from .indentation_block_parser import IndentationBlockParser
-from .keyword_pattern_parser import KeywordPatternParser # Import the new parser
+from .generic_brace_block import BraceBlockParser
+from .generic_indentation_block import IndentationBlockParser
+from .generic_keyword_pattern import KeywordPatternParser # Import the new parser
 
 from .base import CodeElement, ElementType, BaseParser
 

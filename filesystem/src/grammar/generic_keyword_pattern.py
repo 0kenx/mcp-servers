@@ -5,7 +5,7 @@ Lowest fidelity, useful as a fallback or for simple languages/scripts.
 
 import re
 from typing import List, Dict, Optional, Tuple, Any, Pattern
-from base import BaseParser, CodeElement, ElementType
+from .base import BaseParser, CodeElement, ElementType
 
 class KeywordPatternParser(BaseParser):
     """

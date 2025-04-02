@@ -37,6 +37,9 @@ from mcp_edit_utils import (
     CHECKPOINTS_DIR,
 )
 
+from src.grammar import get_parser_for_file, BaseParser, CodeElement, ElementType
+
+
 SYSTEM_PROMPT = """
 SYSTEM PROMPT - CODING GUIDELINES
 ====
@@ -713,20 +716,19 @@ def read_file_by_keyword(
 
     return "\n".join(result)
 
-
 @mcp.tool()
 def read_function_by_keyword(
     path: str, keyword: str, include_lines_before: int = 0, use_regex: bool = False
 ) -> str:
     """
-    Read a function definition from a file by keyword or regex pattern.
-    
+    Read a function definition from a file by keyword or regex pattern using grammar parsers.
+
     Args:
         path: Path to the file
         keyword: Keyword to identify the function (usually the function name), or a regex pattern if use_regex is True
         include_lines_before: Number of lines to include before the function definition
         use_regex: Whether to interpret the keyword as a regular expression (default: False)
-    
+
     Returns:
         The function definition with context, or a message if not found
     """
@@ -734,11 +736,54 @@ def read_function_by_keyword(
         resolved_path = _resolve_path(path)
         validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
         with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()  # Read all lines at once
+            code = f.read()
+            lines = code.splitlines()
     except (ValueError, FileNotFoundError, Exception) as e:
         return f"Error accessing file {path}: {str(e)}"
-
-    # Find lines containing the keyword or matching the regex
+    
+    # Get the appropriate parser for this file type
+    parser = get_parser_for_file(validated_path)
+    
+    # Try first to find the function using a grammar parser
+    found_element = None
+    
+    if parser:
+        try:
+            if use_regex:
+                # Parse all elements and then search for regex match in function names
+                elements = parser.parse(code)
+                pattern = re.compile(keyword)
+                
+                for element in elements:
+                    if element.element_type in (ElementType.FUNCTION, ElementType.METHOD):
+                        if pattern.search(element.name):
+                            found_element = element
+                            break
+            else:
+                # Try to find the function by exact name
+                found_element = parser.find_function(code, keyword)
+        except Exception as e:
+            log.warning(f"Parser failed: {str(e)}. Falling back to simple search.")
+    
+    # If we found a function using the parser, format and return it
+    if found_element:
+        # Calculate line numbers for including context
+        start_line = max(1, found_element.start_line - include_lines_before)
+        result_lines = []
+        
+        # Add the function code with line numbers
+        for i in range(start_line - 1, found_element.end_line):
+            line_num = i + 1  # Convert to 1-indexed line numbers
+            if i < len(lines):
+                line_text = lines[i].rstrip()
+                is_match_line = found_element.start_line <= line_num <= found_element.end_line
+                prefix = ">" if is_match_line else " "
+                result_lines.append(f"{line_num}{prefix} {line_text}")
+        
+        return "\n".join(result_lines)
+    
+    # Fall back to the original implementation if no parser is available
+    # or if the parser didn't find the function
     matches = []
     if use_regex:
         try:
@@ -750,87 +795,85 @@ def read_function_by_keyword(
         matches = [i for i, line in enumerate(lines) if keyword in line]
 
     if not matches:
-        return (
-            f"No matches found for {'pattern' if use_regex else 'keyword'} '{keyword}'."
-        )
+        return f"No matches found for {'pattern' if use_regex else 'keyword'} '{keyword}'."
 
     for match_idx in matches:
         line_idx = match_idx
         # Get file extension to determine language type
         file_ext = os.path.splitext(validated_path)[1].lower()
-        
+
         # Handle Python-style functions (by indentation)
         if file_ext in ('.py', '.pyx', '.pyw'):
             # Check if this line could be a function definition
             line = lines[line_idx].strip()
             if not (line.startswith('def ') or 'def ' in line):
                 continue  # Not a function definition
-            
+
             # Find where function body starts (line with colon)
             func_start = line_idx
             colon_found = ':' in line
             i = line_idx
-            
+
             # Look for colon if not on the same line
             while not colon_found and i < min(line_idx + 5, len(lines) - 1):
                 i += 1
                 if ':' in lines[i]:
                     colon_found = True
-            
+
             if not colon_found:
                 continue  # Not a proper function definition
-            
+
             # Now find the end of the function by tracking indentation
             base_indent = None
             end_idx = len(lines) - 1  # Default to end of file
-            
+
             for i in range(func_start + 1, len(lines)):
                 # Skip empty lines or comments at the beginning
                 line_content = lines[i].strip()
                 if not line_content or line_content.startswith('#'):
                     continue
-                    
+
                 # Get indentation of first non-empty line after function definition
                 if base_indent is None:
                     base_indent = len(lines[i]) - len(lines[i].lstrip())
                     continue
-                
+
                 # Check if we're back to base indentation level or less
                 current_indent = len(lines[i]) - len(lines[i].lstrip())
                 if current_indent <= base_indent and line_content and not line_content.startswith('#'):
                     # We found a line with same or less indentation - this is the end of the function
                     end_idx = i - 1
                     break
-        
+
         # Handle C-style functions (with braces)
         elif file_ext in ('.c', '.cpp', '.h', '.hpp', '.java', '.js', '.ts', '.php', '.cs'):
             brace_idx = -1
-            
+
             # Look for opening brace on the same line or the next few lines
             for i in range(line_idx, min(line_idx + 3, len(lines))):
                 if "{" in lines[i]:
                     brace_idx = i
                     break
-            
+
             if brace_idx == -1:
                 continue  # Not a function definition with braces
-            
+
             # Track brace nesting to find the end of the function
             brace_count = 0
             end_idx = -1
-            
+
             for i in range(brace_idx, len(lines)):
                 line = lines[i]
                 brace_count += line.count("{")
                 brace_count -= line.count("}")
-                
+
                 if brace_count == 0:
                     end_idx = i
                     break
-            
+
             if end_idx == -1:
                 return f"Found function at line {match_idx + 1}, but could not locate matching closing brace."
-        
+
         # For other languages, just try to capture a reasonable chunk of code
         else:
             # Default behavior - capture 20 lines after match
@@ -848,8 +891,96 @@ def read_function_by_keyword(
 
         return "\n".join(result)
 
-    # If we get here, none of the matches were valid function definitions
-    return f"Found matches for {'pattern' if use_regex else f"keyword '{keyword}'"} but none appeared to be valid function definitions."
+
+@mcp.tool()
+def get_symbols(path: str, symbol_type: Optional[str] = None) -> str:
+    """
+    Get all code symbols (functions, classes, methods, etc.) from a file using grammar parsers.
+
+    Args:
+        path: Path to the file
+        symbol_type: Optional filter for symbol type (function, class, method, variable, etc.)
+                    If None, returns all symbols
+
+    Returns:
+        A formatted list of symbols with their types and locations
+    """
+    try:
+        resolved_path = _resolve_path(path)
+        validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
+        with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
+            code = f.read()
+    except (ValueError, FileNotFoundError, Exception) as e:
+        return f"Error accessing file {path}: {str(e)}"
+    
+    # Get the appropriate parser for this file type
+    parser = get_parser_for_file(validated_path)
+    if not parser:
+        return f"No suitable parser available for file type: {path}"
+    
+    # Parse the code to get all elements
+    try:
+        elements = parser.parse(code)
+    except Exception as e:
+        return f"Error parsing file {path}: {str(e)}"
+    
+    # Filter by symbol type if specified
+    if symbol_type:
+        try:
+            # Convert to ElementType if possible
+            enum_type = ElementType(symbol_type.lower())
+            elements = [e for e in elements if e.element_type == enum_type]
+        except (ValueError, Exception):
+            # If not a valid ElementType, use string match
+            elements = [e for e in elements if symbol_type.lower() in e.element_type.value.lower()]
+    
+    # Format the results
+    if not elements:
+        return f"No symbols found in {path}" + (f" with type '{symbol_type}'" if symbol_type else "")
+    
+    result = [f"Symbols in {path}:"]
+    for elem in sorted(elements, key=lambda e: e.start_line):
+        parent_info = f" (in {elem.parent.name})" if elem.parent else ""
+        result.append(f"{elem.element_type.value}: {elem.name}{parent_info} (lines {elem.start_line}-{elem.end_line})")
+    
+    return "\n".join(result)
+
+
+@mcp.tool()
+def get_function_code(path: str, function_name: str) -> str:
+    """
+    Get the complete code of a specific function from a file.
+
+    Args:
+        path: Path to the file
+        function_name: Name of the function to retrieve
+
+    Returns:
+        The complete function code or an error message
+    """
+    try:
+        resolved_path = _resolve_path(path)
+        validated_path = validate_path(resolved_path, SERVER_ALLOWED_DIRECTORIES)
+        with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
+            code = f.read()
+    except (ValueError, FileNotFoundError, Exception) as e:
+        return f"Error accessing file {path}: {str(e)}"
+    
+    # Get the appropriate parser for this file type
+    parser = get_parser_for_file(validated_path)
+    if not parser:
+        return f"No suitable parser available for file type: {path}"
+    
+    # Find the specified function
+    try:
+        function = parser.find_function(code, function_name)
+        if not function:
+            return f"Function '{function_name}' not found in {path}"
+        
+        return function.code
+    except Exception as e:
+        return f"Error retrieving function '{function_name}' from {path}: {str(e)}"
+
 
 @mcp.tool()
 def create_directory(path: str) -> str:
@@ -1750,3 +1881,4 @@ def delete_file(ctx: Context, path: str) -> str:
 if __name__ == "__main__":
     print("Secure MCP Filesystem Server running", file=sys.stderr)
     mcp.run()
+
