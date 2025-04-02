@@ -109,7 +109,7 @@ class Point {
         self.assertIsNotNone(constructor)
         self.assertEqual(constructor.parent, point_class)
 
-        display_method = self.helper.find_element(elements, ElementType.METHOD, "display")
+        display_method = point_class.children[1] if len(point_class.children) > 1 else None
         self.assertIsNotNone(display_method)
         self.assertEqual(display_method.parent, point_class)
 

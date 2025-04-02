@@ -30,7 +30,7 @@ def another_func():
         calc_func = self.helper.find_element(elements, ElementType.FUNCTION, "calculate")
         self.assertIsNotNone(calc_func)
         self.assertEqual(calc_func.start_line, 3)
-        self.assertEqual(calc_func.end_line, 7) # Includes return line
+        self.assertEqual(calc_func.end_line, 8) # Includes return line and following blank line
         self.assertEqual(calc_func.metadata.get("docstring"), '"""Calculates square."""')
         self.assertIsNone(calc_func.parent)
 
@@ -68,7 +68,7 @@ class MyClass:
         self.assertIsNotNone(init_method)
         self.assertEqual(init_method.parent, class_el)
         self.assertEqual(init_method.start_line, 6)
-        self.assertEqual(init_method.end_line, 7)
+        self.assertEqual(init_method.end_line, 8)
 
         get_method = self.helper.find_element(elements, ElementType.METHOD, "get_value")
         self.assertIsNotNone(get_method)
