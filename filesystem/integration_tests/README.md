@@ -46,7 +46,7 @@ When adding new tests, follow these guidelines:
 
 The integration tests require:
 
-1. Python 3.6 or later
+1. Python 3.12 or later
 2. git (for the git-related tests)
 3. The MCP filesystem server code
 

@@ -15,7 +15,9 @@ import threading
 import time
 import json
 
-from mcp_edit_utils import (
+try:
+    # Try to import from the local module first
+    from .mcp_edit_utils import (
     normalize_path,
     expand_home,
     get_file_stats,
@@ -36,8 +38,36 @@ from mcp_edit_utils import (
     DIFFS_DIR,
     CHECKPOINTS_DIR,
 )
+except ImportError:
+    # Fall back to direct import for when running as src/filesystem.py
+    from mcp_edit_utils import (
+        normalize_path,
+        expand_home,
+        get_file_stats,
+        get_metadata,
+        get_history_root,
+        sanitize_path_for_filename,
+        acquire_lock,
+        release_lock,
+        calculate_hash,
+        generate_diff,
+        read_log_file,
+        write_log_file,
+        HistoryError,
+        log,
+        get_next_tool_call_index,
+        validate_path,
+        LOGS_DIR,
+        DIFFS_DIR,
+        CHECKPOINTS_DIR,
+    )
 
-from src.grammar import get_parser_for_file, BaseParser, CodeElement, ElementType
+try:
+    # Try relative import first
+    from .grammar import get_parser_for_file, BaseParser, CodeElement, ElementType
+except ImportError:
+    # Fall back to direct import for when running as src/filesystem.py
+    from src.grammar import get_parser_for_file, BaseParser, CodeElement, ElementType
 
 
 SYSTEM_PROMPT = """
