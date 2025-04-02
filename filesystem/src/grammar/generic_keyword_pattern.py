@@ -29,10 +29,18 @@ class KeywordPatternParser(BaseParser):
         (re.compile(r'^\s*([A-Z_][A-Z0-9_]+)\s*='), ElementType.CONSTANT, 1),
         (re.compile(r'^\s*const\s+([a-zA-Z_][a-zA-Z0-9_]+)\s*='), ElementType.CONSTANT, 1),
         (re.compile(r'^\s*(?:var|let|export)?\s*([a-zA-Z_][a-zA-Z0-9_]+)\s*='), ElementType.VARIABLE, 1),
-        # Basic Import/Use/Require (capture module name/path)
+        # Import patterns - enhanced for broader matching
         (re.compile(r'^\s*(?:import|use|require|include)\s+[\'"]?([a-zA-Z0-9_./-]+)', re.IGNORECASE), ElementType.IMPORT, 1),
-         # More specific import like Python/JS `from X import Y` or `import {Y} from X`
+        # More specific import like Python/JS `from X import Y` or `import {Y} from X`
         (re.compile(r'^\s*(?:from|import)\s+.*?from\s+[\'"]?([a-zA-Z0-9_./-]+)', re.IGNORECASE), ElementType.IMPORT, 1),
+        # C-style include
+        (re.compile(r'^\s*#include\s+[<"]([a-zA-Z0-9_./-]+)[>"]'), ElementType.IMPORT, 1),
+        # Ruby/Crystal require
+        (re.compile(r'^\s*require\s+[\'"]([a-zA-Z0-9_./-]+)[\'"]'), ElementType.IMPORT, 1),
+        # Ruby gem require
+        (re.compile(r'^\s*gem\s+[\'"]([a-zA-Z0-9_./-]+)[\'"]'), ElementType.IMPORT, 1),
+        # Namespace/module reference with ::
+        (re.compile(r'^\s*(?:using|import)\s+([a-zA-Z0-9_:]+(?:::[a-zA-Z0-9_]+)+)'), ElementType.IMPORT, 1),
     ]
 
 

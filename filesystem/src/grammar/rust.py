@@ -70,8 +70,8 @@ class RustParser(BaseParser):
         self.impl_pattern = re.compile(
             rf'^\s*(?:unsafe\s+)?impl(?:\s*<.*?>)?' # Optional unsafe, generics
             # Attempt to capture trait and type, or just type
-            r'(?:\s+(?:.*?)\s+for)?' # Optional "Trait for" part
-            r'\s+([a-zA-Z_][a-zA-Z0-9_:]+)' # Capture the Type (or Trait if "for" is absent)
+            r'(?:\s+(.*?)\s+for)?' # Optional "Trait for" part - GROUP 1
+            r'\s+([a-zA-Z_][a-zA-Z0-9_:]+)' # Capture the Type (or Trait if "for" is absent) - GROUP 2
             r'(?:<.*?>)?' # Optional generics for the type/trait
             r'\s*(?:where\s*.*?)?' # Optional where clause
             r'\s*\{'
@@ -334,41 +334,32 @@ class RustParser(BaseParser):
                 line_idx += 1 # Move to parse body
                 found_element = True
 
-            # Impl Block
+            # Impl blocks
             elif not found_element and self.impl_pattern.match(line):
-                 impl_match = self.impl_pattern.match(line)
-                 # Refined name extraction for impl block
-                 impl_line_content = line[impl_match.start():].strip()
-                 impl_parts = impl_line_content.split('{')[0].strip().split()
-                 impl_name = "impl_block" # Fallback
-                 if len(impl_parts) > 1:
-                     # Find type after 'for' or the main type if 'for' absent
-                     try:
-                         for_idx = impl_parts.index("for")
-                         impl_name = impl_parts[for_idx+1]
-                         # Clean up potential generics attached to the name
-                         impl_name = impl_name.split('<')[0]
-                     except ValueError: # 'for' not found
-                         impl_name = impl_parts[1] # Type is usually the second word after 'impl'
-                         impl_name = impl_name.split('<')[0]
+                impl_match = self.impl_pattern.match(line)
+                trait_name = impl_match.group(1) if impl_match.groups()[0] is not None else None  # Optional trait - GROUP 1
+                type_name = impl_match.group(2)  # Type being implemented - GROUP 2
 
+                # Determine if this is a standalone impl block or trait implementation
+                impl_metadata = base_metadata.copy()
+                if trait_name:
+                    impl_metadata["trait"] = trait_name.strip()
 
-                 end_idx = self._find_matching_brace(lines, line_idx)
-                 code_block = "\n".join(lines[line_idx : end_idx + 1])
-
-                 element = CodeElement(
-                     element_type=ElementType.IMPL,
-                     name=impl_name, # Use refined name
-                     start_line=line_num,
-                     end_line=end_idx + 1, # Temp end line
-                     code=code_block,
-                     parent=current_parent,
-                     metadata=base_metadata.copy()
-                 )
-                 self.elements.append(element)
-                 stack.append(element) # Push impl onto stack immediately
-                 line_idx += 1 # Move to parse body
-                 found_element = True
+                impl_element = CodeElement(
+                    element_type=ElementType.IMPL,
+                    name=f"impl {(trait_name + ' for ' if trait_name else '')}{type_name}",
+                    start_line=line_num,
+                    end_line=line_num,  # Will be updated when we find the closing brace
+                    code=line,
+                    parent=current_parent,
+                    metadata=impl_metadata
+                )
+                
+                self.elements.append(impl_element)
+                stack.append(impl_element)
+                current_parent = impl_element  # Set as current parent
+                line_idx += 1
+                found_element = True
 
             # Module Definition
             elif not found_element and self.mod_pattern.match(line):
