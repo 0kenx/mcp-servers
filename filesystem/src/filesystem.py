@@ -401,7 +401,7 @@ def track_edit_history(func: Callable) -> Callable:
             )
             history_root = get_history_root(resolved_file_path)
             if not history_root:
-                return f"Error: Cannot track history for path {resolved_file_path}."
+                return f"Error: Cannot track history for path {resolved_file_path}. Make sure '.mcp' folder exists here or in a parent directory."
             # Validate paths using the retrieved allowed_dirs
             validated_path = Path(
                 validate_path(resolved_file_path, allowed_dirs)
