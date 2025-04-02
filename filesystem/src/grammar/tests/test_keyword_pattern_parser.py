@@ -1,7 +1,7 @@
 import unittest
-from generic_keyword_pattern import KeywordPatternParser
-from base import ElementType
-from test_utils import ParserTestHelper
+from src.grammar.generic_keyword_pattern import KeywordPatternParser
+from src.grammar.base import ElementType
+from src.grammar.tests.test_utils import ParserTestHelper
 
 class TestKeywordPatternParser(unittest.TestCase):
     """Test cases for the generic KeywordPatternParser."""

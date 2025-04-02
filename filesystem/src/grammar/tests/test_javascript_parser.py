@@ -3,8 +3,8 @@ Tests for the JavaScript language parser.
 """
 
 import unittest
-from javascript import JavaScriptParser
-from base import ElementType
+from src.grammar.javascript import JavaScriptParser
+from src.grammar.base import ElementType
 
 
 class TestJavaScriptParser(unittest.TestCase):

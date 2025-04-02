@@ -1,7 +1,7 @@
 import unittest
-from generic_indentation_block import IndentationBlockParser
-from base import ElementType
-from test_utils import ParserTestHelper
+from src.grammar.generic_indentation_block import IndentationBlockParser
+from src.grammar.base import ElementType
+from src.grammar.tests.test_utils import ParserTestHelper
 
 class TestIndentationBlockParser(unittest.TestCase):
     """Test cases for the generic IndentationBlockParser."""

@@ -431,7 +431,7 @@ class CCppParser(BaseParser):
 
             # Process constant definitions
             constant_match = self.constant_pattern.match(line)
-            if constant_match and '#define' in line:
+            if constant_match:
                 const_name = constant_match.group(1)
                 const_value = constant_match.group(2).strip()
 
