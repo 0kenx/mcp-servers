@@ -157,6 +157,8 @@ Key capabilities:
 3. File Writing & Modification:
    - `write_file`: Create new files or completely overwrite existing ones
    - `edit_file_diff`: Make targeted changes using replacements and insertions
+   - `replace_symbol_in_file`: Replace code of a symbol (function, class, method)
+   - `replace_lines_in_file`: Replace code by line numbers
    - `move_file`: Rename or relocate files
    - `delete_file`: Remove files
    - `finish_edit`: Signal completion of editing operations
