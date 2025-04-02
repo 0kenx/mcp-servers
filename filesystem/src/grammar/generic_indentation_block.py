@@ -208,41 +208,44 @@ class IndentationBlockParser(BaseParser):
         Returns:
             Docstring text if found, None otherwise.
         """
-        if start_idx >= len(lines):
-            return None
-
-        line = lines[start_idx]
-        doc_match = self.DOCSTRING_PATTERN.match(line)
-
-        if not doc_match or self._count_indentation(line) != expected_indent:
-            return None
-
-        delimiter = '"""' if '"""' in line else "'''"
-
-        # Single line docstring
-        if line.count(delimiter) >= 2 and line.strip().endswith(delimiter):
-            return line.strip()
-
-        # Multi-line docstring
-        doc_lines = [line]
-        for i in range(start_idx + 1, len(lines)):
-            current_line = lines[i]
-            doc_lines.append(current_line)
-            if delimiter in current_line:
-                # Found the end delimiter
-                 # Basic check: ensure indentation doesn't decrease within docstring
-                 if self._count_indentation(current_line) < expected_indent and current_line.strip() != delimiter:
-                     return None # Dedented line within docstring? Unlikely.
-                 return self._join_lines(doc_lines)
-
-        return None # End of file reached before closing delimiter
+        # First, let's check a few lines ahead for a docstring
+        for i in range(start_idx, min(start_idx + 5, len(lines))):
+            if i >= len(lines):
+                continue
+                
+            line = lines[i]
+            stripped = line.strip()
+            
+            # Skip empty lines and comments
+            if not stripped or stripped.startswith('#'):
+                continue
+                
+            # Check if line starts with a docstring delimiter
+            if stripped.startswith("'''") or stripped.startswith('"""'):
+                delimiter = "'''" if "'''" in stripped else '"""'
+                
+                # Single line docstring
+                if stripped.endswith(delimiter) and len(stripped) > 6:  # At least '''x'''
+                    return stripped
+                    
+                # Multi-line docstring
+                doc_lines = [line]
+                for j in range(i + 1, len(lines)):
+                    current_line = lines[j]
+                    doc_lines.append(current_line)
+                    if delimiter in current_line:
+                        # Found the end delimiter
+                        return self._join_lines(doc_lines).strip()
+                break
+                
+        return None # No docstring found
 
 
     def check_syntax_validity(self, code: str) -> bool:
         """
         Basic check for indentation consistency. Returns True if indentation
         only increases or decreases relative to parent blocks, False on
-        unexpected indentation changes. Doesn't validate language syntax.
+        unexpected indentation changes. Also checks for mixed tabs and spaces.
 
         Args:
             code: Source code string.
@@ -252,11 +255,26 @@ class IndentationBlockParser(BaseParser):
         """
         lines = self._split_into_lines(code)
         indent_stack = [0] # Stack of expected indentation levels
-
+        
+        # Check for mixed tabs and spaces
+        uses_tabs = False
+        uses_spaces = False
+        
         for line in lines:
             stripped = line.strip()
             if not stripped or stripped.startswith('#'):
                 continue
+                
+            # Check for mixed indentation
+            leading_whitespace = line[:len(line) - len(line.lstrip())]
+            if '\t' in leading_whitespace:
+                uses_tabs = True
+            if ' ' in leading_whitespace:
+                uses_spaces = True
+                
+            # If both tabs and spaces are used for indentation, it's inconsistent
+            if uses_tabs and uses_spaces:
+                return False
 
             current_indent = self._count_indentation(line)
             last_indent = indent_stack[-1]
