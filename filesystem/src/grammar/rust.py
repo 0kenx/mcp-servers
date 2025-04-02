@@ -4,9 +4,7 @@ Rust language parser for extracting structured information from Rust code.
 
 import re
 from typing import List, Dict, Optional, Tuple, Any
-# Assuming base.py defining BaseParser, CodeElement, ElementType is available
-# in the same directory or PYTHONPATH
-from base import BaseParser, CodeElement, ElementType
+from .base import BaseParser, CodeElement, ElementType
 
 class RustParser(BaseParser):
     """

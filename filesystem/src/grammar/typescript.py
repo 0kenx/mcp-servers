@@ -4,8 +4,8 @@ TypeScript language parser for extracting structured information from TypeScript
 
 import re
 from typing import List, Dict, Optional, Tuple, Set, Any
-from javascript import JavaScriptParser
-from base import CodeElement, ElementType
+from .javascript import JavaScriptParser
+from .base import CodeElement, ElementType
 
 
 class TypeScriptParser(JavaScriptParser):
