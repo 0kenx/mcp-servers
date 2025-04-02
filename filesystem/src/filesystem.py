@@ -2088,6 +2088,7 @@ def replace_symbol_in_file(
     new_content: str,
     symbol_name: str,
     symbol_type: Optional[str] = None,
+    parent_name: Optional[str] = None,
 ) -> str:
     """
     Replace the code of a uniquely identified symbol (function, class, etc.) in a file.
@@ -2098,6 +2099,7 @@ def replace_symbol_in_file(
         new_content: The new code content for the symbol.
         symbol_name: Name of the symbol to replace.
         symbol_type: Optional type to filter by (e.g., 'function', 'class').
+        parent_name: Optional name of the parent symbol (e.g., class name for a method) for a more precise match.
 
     Returns:
         Success message or error if the symbol is not found or ambiguous.
@@ -2110,6 +2112,9 @@ def replace_symbol_in_file(
         )  # Validate against working dir for modification
         with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
             code = f.read()
+            # Reread as lines for precise manipulation later
+            f.seek(0)
+            lines = f.readlines()
     except (ValueError, FileNotFoundError, OSError, Exception) as e:
         return f"Error accessing file {path} for symbol replacement: {str(e)}"
 
@@ -2121,6 +2126,7 @@ def replace_symbol_in_file(
         all_elements = parser.parse(code)
         matching_elements = []
         for elem in all_elements:
+            name_matches = elem.name == symbol_name
             type_matches = True
             if symbol_type:
                 try:
@@ -2131,11 +2137,24 @@ def replace_symbol_in_file(
                         symbol_type.lower() in elem.element_type.value.lower()
                     )
 
-            if elem.name == symbol_name and type_matches:
+            parent_matches = True
+            if parent_name:
+                parent_matches = (
+                    elem.parent is not None and elem.parent.name == parent_name
+                )
+
+            if name_matches and type_matches and parent_matches:
                 matching_elements.append(elem)
 
     except Exception as e:
         return f"Error parsing symbols in {path} for replacement: {str(e)}"
+
+    # Create context string for messages
+    context_str = ""
+    if symbol_type:
+        context_str += f" of type '{symbol_type}'"
+    if parent_name:
+        context_str += f" within parent '{parent_name}'"
 
     # Check results
     if not matching_elements:
@@ -2153,31 +2172,60 @@ def replace_symbol_in_file(
         line_start = symbol_to_replace.start_line
         line_end = symbol_to_replace.end_line
 
-        # 2. Call replace_lines_in_file (but perform logic directly for atomicity)
+        # 2. Extract original symbol text precisely from lines
+        # Lines are 0-indexed, line numbers are 1-based
+        original_symbol_lines = lines[line_start - 1 : line_end]
+        if not original_symbol_lines:
+            return f"Error: Symbol '{symbol_name}'{context_str} found by parser but corresponds to empty line range ({line_start}-{line_end})."
+        original_symbol_text = "".join(original_symbol_lines)
+
+        # 3. Extract leading and trailing whitespace from original text
+        leading_whitespace_match = re.match(r"^\s*", original_symbol_text, re.DOTALL)
+        leading_whitespace = (
+            leading_whitespace_match.group(0) if leading_whitespace_match else ""
+        )
+
+        trailing_whitespace_match = re.search(r"\s*$", original_symbol_text, re.DOTALL)
+        trailing_whitespace = (
+            trailing_whitespace_match.group(0) if trailing_whitespace_match else ""
+        )
+
+        # 4. Trim the new content
+        trimmed_new_content = new_content.strip()
+
+        # 5. Construct the final replacement block
+        final_symbol_content = (
+            leading_whitespace + trimmed_new_content + trailing_whitespace
+        )
+
+        # 6. Split the new block into lines, preserving line endings
+        final_symbol_lines = final_symbol_content.splitlines(keepends=True)
+        # Handle case where content becomes empty or has no newline
+        if final_symbol_content and not final_symbol_content.endswith("\n"):
+            if final_symbol_lines:
+                final_symbol_lines[-1] += "\n"  # Add newline if missing from last line
+            else:
+                # If splitlines resulted in empty list but content exists (e.g. "abc"), make it a line
+                final_symbol_lines = [final_symbol_content + "\n"]
+        # Ensure empty replacement results in empty list
+        elif not final_symbol_content:
+            final_symbol_lines = []
+
+        # 7. Reconstruct the entire file content
         try:
-            # Read lines again within this function scope
-            with open(validated_path, "r", encoding="utf-8", errors="ignore") as f:
-                lines = f.readlines()
-
-            # Prepare new content lines
-            new_lines = new_content.splitlines(keepends=True)
-            if not new_content.endswith("\n") and new_lines:
-                new_lines[-1] += "\n"
-            elif not new_lines and new_content:
-                new_lines = [new_content + "\n"]
-
-            # Construct the new file content
             content_before = lines[: line_start - 1]
             content_after = lines[line_end:]  # Use original line_end from symbol
-            final_content_lines = content_before + new_lines + content_after
+
+            final_content_lines = content_before + final_symbol_lines + content_after
             final_content = "".join(final_content_lines)
 
-            # Write the modified content back
+            # 8. Write the modified content back
             with open(validated_path, "w", encoding="utf-8") as f:
                 f.write(final_content)
 
             type_str = f" ({symbol_to_replace.element_type.value})"
-            return f"Successfully replaced symbol '{symbol_name}'{type_str} in {path} (lines {line_start}-{line_end})."
+            parent_str = f" in parent '{parent_name}'" if parent_name else ""
+            return f"Successfully replaced symbol '{symbol_name}'{type_str}{parent_str} in {path} (original lines {line_start}-{line_end})."
 
         except Exception as e:
             # Catch errors during the file modification phase
@@ -2185,7 +2233,7 @@ def replace_symbol_in_file(
                 f"replace_symbol_in_file modification failed for {path}: {e}",
                 exc_info=True,
             )
-            return f"Error replacing symbol content in {path}: {str(e)}"
+            return f"Error writing replaced symbol content to {path}: {str(e)}"
 
 
 @mcp.tool()
