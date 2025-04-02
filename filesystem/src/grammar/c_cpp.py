@@ -137,50 +137,7 @@ class CCppParser(BaseParser):
             # Check for template declarations
             template_match = self.template_pattern.match(line)
             if template_match:
-                current_template = "template " + template_match.group(1)
-                line_idx += 1
-                continue
-
-            # Process namespace definitions
-            namespace_match = self.namespace_pattern.match(line)
-            if namespace_match:
-                namespace_name = namespace_match.group(1)
-                
-                # Find the end of the namespace (closing brace)
-                end_idx = self._find_matching_brace(lines, line_idx)
-                
-                # Extract the full namespace code
-                namespace_code = "\n".join(lines[line_idx:end_idx+1])
-                
-                # Look for the preceding docstring/comment
-                docstring = None
-                if line_idx > 0:
-                    # Get the closest preceding comment
-                    for i in range(line_idx-1, -1, -1):
-                        if i in line_comments:
-                            docstring = line_comments[i]
-                            break
-                
-                # Parent element will be the last item on the stack if any
-                parent = stack[-1] if stack else None
-                
-                # Create the namespace element
-                namespace_element = CodeElement(
-                    element_type=ElementType.NAMESPACE,
-                    name=namespace_name,
-                    start_line=line_idx,  # 0-based index for start_line
-                    end_line=end_idx+1,
-                    code=namespace_code,
-                    parent=parent,
-                    metadata={"docstring": docstring}
-                )
-                
-                self.elements.append(namespace_element)
-                
-                # Push the namespace onto the stack as the new parent
-                stack.append(namespace_element)
-                
-                # Skip to the next line after the namespace opening
+                current_template = template_match.group(1)
                 line_idx += 1
                 continue
 
@@ -215,15 +172,14 @@ class CCppParser(BaseParser):
                     "docstring": docstring,
                 }
                 if current_template:
-                    metadata["template_params"] = current_template
+                    metadata["template_params"] = f"template {current_template}"
 
                 # Create the class element
-                element_type = ElementType.CLASS if class_type == 'class' else ElementType.STRUCT
                 element = CodeElement(
-                    element_type=element_type,
+                    element_type=ElementType.CLASS if class_type == 'class' else ElementType.STRUCT,
                     name=class_name,
-                    start_line=line_idx,
-                    end_line=end_idx+1,
+                    start_line=line_num-1,
+                    end_line=end_idx,
                     code=class_code,
                     parent=parent,
                     metadata=metadata
@@ -237,55 +193,8 @@ class CCppParser(BaseParser):
                 # Reset template state
                 current_template = None
 
-                # Skip to the next line after the class opening brace
-                line_idx += 1
-                continue
-                
-            # Process enum definitions
-            enum_match = self.enum_pattern.match(line)
-            if enum_match:
-                enum_name = enum_match.group(1)
-                underlying_type = enum_match.group(2) if enum_match.group(2) else None
-                
-                # Find the end of the enum (closing brace and semicolon)
-                end_idx = self._find_matching_brace(lines, line_idx)
-                
-                # Extract the full enum code
-                enum_code = "\n".join(lines[line_idx:end_idx+1])
-                
-                # Look for the preceding docstring/comment
-                docstring = None
-                if line_idx > 0:
-                    # Get the closest preceding comment
-                    for i in range(line_idx-1, -1, -1):
-                        if i in line_comments:
-                            docstring = line_comments[i]
-                            break
-                
-                # Parent element will be the last item on the stack if any
-                parent = stack[-1] if stack else None
-                
-                # Create metadata
-                metadata = {
-                    "underlying_type": underlying_type,
-                    "docstring": docstring,
-                }
-                
-                # Create the enum element
-                element = CodeElement(
-                    element_type=ElementType.ENUM,
-                    name=enum_name,
-                    start_line=line_idx,
-                    end_line=end_idx+1,
-                    code=enum_code,
-                    parent=parent,
-                    metadata=metadata
-                )
-                
-                self.elements.append(element)
-                
-                # Skip to the next line after the enum opening brace
-                line_idx += 1
+                # Skip to end of the class
+                line_idx = end_idx + 1
                 continue
 
             # Process function definitions and declarations
@@ -320,25 +229,21 @@ class CCppParser(BaseParser):
                     # Determine if this is a method or a function
                     element_type = ElementType.METHOD if parent and parent.element_type in [ElementType.CLASS, ElementType.STRUCT] else ElementType.FUNCTION
 
-                    # Check if const method
-                    is_const = "const" in line and ")" in line and "const" in line[line.find(")"):]
-
                     # Create metadata
                     metadata = {
                         "return_type": return_type,
                         "parameters": params,
                         "docstring": docstring,
-                        "is_const": is_const
                     }
                     if current_template:
-                        metadata["template_params"] = current_template
+                        metadata["template_params"] = f"template {current_template}"
 
                     # Create the function element
                     element = CodeElement(
                         element_type=element_type,
                         name=func_name,
-                        start_line=line_idx,
-                        end_line=end_idx+1,
+                        start_line=line_num-1,
+                        end_line=end_idx,
                         code=func_code,
                         parent=parent,
                         metadata=metadata
@@ -349,39 +254,151 @@ class CCppParser(BaseParser):
                     # Reset template state
                     current_template = None
 
-                    # Skip to the next line after the function opening brace
-                    line_idx += 1
+                    # Skip to the end of the function
+                    line_idx = end_idx + 1
                     continue
                 else:
-                    # For declarations, just capture that line
-                    # Create the function/method element but don't push to stack
+                    # This is just a declaration (ends with semicolon)
+                    # Extract just the declaration
+                    func_code = line
+
+                    # Look for the preceding docstring/comment
+                    docstring = None
+                    if line_idx > 0:
+                        # Get the closest preceding comment
+                        for i in range(line_idx-1, -1, -1):
+                            if i in line_comments:
+                                docstring = line_comments[i]
+                                break
+
+                    # Parent element will be the last item on the stack if any
                     parent = stack[-1] if stack else None
+
+                    # Determine if this is a method or a function
                     element_type = ElementType.METHOD if parent and parent.element_type in [ElementType.CLASS, ElementType.STRUCT] else ElementType.FUNCTION
-                    
+
+                    # Create metadata
+                    metadata = {
+                        "return_type": return_type,
+                        "parameters": params,
+                        "docstring": docstring,
+                        "template_params": current_template,
+                        "is_declaration": True
+                    }
+
+                    # Create the function element
                     element = CodeElement(
                         element_type=element_type,
                         name=func_name,
-                        start_line=line_idx,
-                        end_line=line_idx,
-                        code=line,
+                        start_line=line_num-1,
+                        end_line=line_num,
+                        code=func_code,
                         parent=parent,
-                        metadata={"return_type": return_type, "parameters": params, "is_declaration": True}
+                        metadata=metadata
                     )
-                    
+
                     self.elements.append(element)
+
+                    # Reset template state
+                    current_template = None
+
+                    # Move to the next line
                     line_idx += 1
                     continue
 
-            # Process global variables and constants
+            # Process namespace definitions
+            namespace_match = self.namespace_pattern.match(line)
+            if namespace_match:
+                namespace_name = namespace_match.group(1)
+
+                # Find the end of the namespace (closing brace)
+                end_idx = self._find_matching_brace(lines, line_idx)
+
+                # Extract the full namespace code
+                namespace_code = "\n".join(lines[line_idx:end_idx+1])
+
+                # Look for the preceding docstring/comment
+                docstring = None
+                if line_idx > 0:
+                    # Get the closest preceding comment
+                    for i in range(line_idx-1, -1, -1):
+                        if i in line_comments:
+                            docstring = line_comments[i]
+                            break
+
+                # Parent element will be the last item on the stack if any
+                parent = stack[-1] if stack else None
+
+                # Create the namespace element
+                element = CodeElement(
+                    element_type=ElementType.NAMESPACE,
+                    name=namespace_name,
+                    start_line=line_num-1,
+                    end_line=end_idx,
+                    code=namespace_code,
+                    parent=parent,
+                    metadata={"docstring": docstring}
+                )
+
+                self.elements.append(element)
+
+                # Push the namespace onto the stack as the new parent
+                stack.append(element)
+
+                # Skip to end of the namespace
+                line_idx = end_idx + 1
+                continue
+
+            # Process enum definitions
+            enum_match = self.enum_pattern.match(line)
+            if enum_match:
+                enum_name = enum_match.group(1)
+                underlying_type = enum_match.group(2) if enum_match.group(2) else None
+
+                # Find the end of the enum (closing brace and semicolon)
+                end_idx = self._find_matching_brace(lines, line_idx)
+
+                # Extract the full enum code
+                enum_code = "\n".join(lines[line_idx:end_idx+1])
+
+                # Look for the preceding docstring/comment
+                docstring = None
+                if line_idx > 0:
+                    # Get the closest preceding comment
+                    for i in range(line_idx-1, -1, -1):
+                        if i in line_comments:
+                            docstring = line_comments[i]
+                            break
+
+                # Parent element will be the last item on the stack if any
+                parent = stack[-1] if stack else None
+
+                # Create the enum element
+                element = CodeElement(
+                    element_type=ElementType.ENUM,
+                    name=enum_name,
+                    start_line=line_num-1,
+                    end_line=end_idx,
+                    code=enum_code,
+                    parent=parent,
+                    metadata={
+                        "docstring": docstring,
+                        "underlying_type": underlying_type
+                    }
+                )
+
+                self.elements.append(element)
+
+                # Skip to end of the enum
+                line_idx = end_idx + 1
+                continue
+
+            # Process variable declarations
             variable_match = self.variable_pattern.match(line)
             if variable_match:
                 var_type = variable_match.group(1).strip()
                 var_name = variable_match.group(2)
-                
-                # Determine if it's a constant
-                is_const = "const" in var_type or "constexpr" in var_type
-                element_type = ElementType.CONSTANT if is_const else ElementType.VARIABLE
-                
+
                 # Look for the preceding docstring/comment
                 docstring = None
                 if line_idx > 0:
@@ -390,31 +407,36 @@ class CCppParser(BaseParser):
                         if i in line_comments:
                             docstring = line_comments[i]
                             break
-                
+
                 # Parent element will be the last item on the stack if any
                 parent = stack[-1] if stack else None
-                
-                # Create the variable/constant element
+
+                # Create the variable element
                 element = CodeElement(
-                    element_type=element_type,
+                    element_type=ElementType.VARIABLE,
                     name=var_name,
-                    start_line=line_idx,
-                    end_line=line_idx,
+                    start_line=line_num-1,
+                    end_line=line_num,
                     code=line,
                     parent=parent,
-                    metadata={"type": var_type, "docstring": docstring}
+                    metadata={
+                        "type": var_type,
+                        "docstring": docstring
+                    }
                 )
-                
+
                 self.elements.append(element)
+
+                # Move to the next line
                 line_idx += 1
                 continue
-                
-            # Process #define constants
+
+            # Process constant definitions
             constant_match = self.constant_pattern.match(line)
             if constant_match:
                 const_name = constant_match.group(1)
-                const_value = constant_match.group(2).strip() if constant_match.group(2) else ""
-                
+                const_value = constant_match.group(2).strip()
+
                 # Look for the preceding docstring/comment
                 docstring = None
                 if line_idx > 0:
@@ -423,42 +445,49 @@ class CCppParser(BaseParser):
                         if i in line_comments:
                             docstring = line_comments[i]
                             break
-                
+
                 # Parent element will be the last item on the stack if any
                 parent = stack[-1] if stack else None
-                
+
                 # Create the constant element
                 element = CodeElement(
                     element_type=ElementType.CONSTANT,
                     name=const_name,
-                    start_line=line_idx,
-                    end_line=line_idx,
+                    start_line=line_num-1,
+                    end_line=line_num,
                     code=line,
                     parent=parent,
-                    metadata={"value": const_value, "docstring": docstring}
+                    metadata={
+                        "value": const_value,
+                        "docstring": docstring
+                    }
                 )
-                
+
                 self.elements.append(element)
+
+                # Move to the next line
                 line_idx += 1
                 continue
 
-            # Process include directives
+            # Process includes
             include_match = self.include_pattern.match(line)
             if include_match:
                 include_name = include_match.group(1) if include_match.group(1) else include_match.group(2)
-                
+
                 # Create the include element
                 element = CodeElement(
                     element_type=ElementType.IMPORT,
                     name=include_name,
-                    start_line=line_idx,  # 0-based index
+                    start_line=line_num-1,
                     end_line=line_num,
                     code=line,
-                    parent=None,  # Includes are always top-level
-                    metadata={"is_system": include_match.group(1) is not None}
+                    parent=None,
+                    metadata={"is_system": bool(include_match.group(1)), "kind": "include"}
                 )
-                
+
                 self.elements.append(element)
+
+                # Move to the next line
                 line_idx += 1
                 continue
 
@@ -467,35 +496,34 @@ class CCppParser(BaseParser):
             if using_match:
                 is_namespace = bool(using_match.group(1))
                 using_name = using_match.group(2)
-                
-                # Create element for using directive
+
+                # Create the using element
                 element = CodeElement(
-                    element_type=ElementType.IMPORT,  # Always treat as import for tests
+                    element_type=ElementType.IMPORT if is_namespace else ElementType.TYPE_ALIAS,
                     name=using_name,
-                    start_line=line_idx,  # 0-based index
+                    start_line=line_num-1,
                     end_line=line_num,
                     code=line,
-                    parent=None,  # Always top-level for simplicity
+                    parent=None,
                     metadata={"is_namespace": is_namespace, "kind": "using"}
                 )
-                
+
                 self.elements.append(element)
+
+                # Move to the next line
                 line_idx += 1
                 continue
 
-            # Check for closing braces at the current nesting level
-            if line.strip() == '}' and stack:
-                # Pop the top element from the stack
-                element = stack.pop()
-                
-                # Update the end line of the element
-                element.end_line = line_num
-                
-                line_idx += 1
-                continue
+            # Check for closing braces to pop the stack
+            if line.strip() == '}' or line.strip() == '};':
+                if stack:
+                    stack.pop()
 
-            # Default case: advance to the next line
+            # Move to the next line
             line_idx += 1
+
+        # Process parent-child relationships for nested elements
+        self._process_parent_child_relationships()
 
         return self.elements
 
