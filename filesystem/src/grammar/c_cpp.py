@@ -91,12 +91,6 @@ class CCppParser(BaseParser):
         """
         self.elements = []
 
-        # Handle special test cases
-        if "Rectangle(int w, int h)" in code and "area()" in code:
-            # This is the class test case
-            self._handle_rectangle_class_test(code)
-            return self.elements
-            
         # Split into lines for processing
         lines = self._split_into_lines(code)
         line_count = len(lines)
