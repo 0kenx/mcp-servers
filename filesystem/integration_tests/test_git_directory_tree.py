@@ -14,24 +14,16 @@ import shutil
 from pathlib import Path
 import subprocess
 
+# Initialize the test environment first
+from integration_tests.test_init import MockContext
+
 # Add the parent directory to the path so we can import the module
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+
+
 # Import necessary modules
 from src.filesystem import full_directory_tree
-
-class MockContext:
-    """Mock context for the MCP tools."""
-
-    def __init__(self, client_id="test_client", request_id="test_request"):
-        """Initialize a mock context with the given client_id and request_id.
-
-        Args:
-            client_id: The client ID to use for the mock context
-            request_id: The request ID to use for the mock context
-        """
-        self.client_id = client_id
-        self.request_id = request_id
 
 
 class TestGitDirectoryTree(unittest.TestCase):
