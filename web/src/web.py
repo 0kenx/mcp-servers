@@ -2,17 +2,15 @@ import os
 import sys
 import json
 import asyncio
-import tempfile
 from datetime import datetime
-from enum import Enum
-from typing import Optional, List, Dict, Any, Union, Tuple, Set, Annotated
+from typing import Optional, List, Dict, Any, Tuple
 from urllib.parse import urlparse, urlunparse
 import httpx
-from pydantic import BaseModel, Field, AnyUrl, ValidationError
+from pydantic import AnyUrl, ValidationError
 import markdownify
 from dotenv import load_dotenv
 
-from mcp.server.fastmcp import FastMCP, Context
+from mcp.server.fastmcp import FastMCP
 
 # --- Configuration ---
 load_dotenv()  # Load environment variables from .env file
@@ -23,13 +21,13 @@ mcp = FastMCP("web-processing-server")
 # Default timeout for requests (in seconds)
 DEFAULT_TIMEOUT = 30
 # Default max length for fetched content before sending to AI (characters)
-DEFAULT_FETCH_MAX_LENGTH = 20000
+DEFAULT_FETCH_MAX_LENGTH = 100000
 # Default User Agent
 DEFAULT_USER_AGENT = "ModelContextProtocol-WebProcessor/1.0 (+https://github.com/modelcontextprotocol/servers)"
 # Default OpenAI Model
 DEFAULT_OPENAI_MODEL = "o3-mini"
 # Default Max Tokens for OpenAI response
-DEFAULT_OPENAI_MAX_TOKENS = 2000
+DEFAULT_OPENAI_MAX_TOKENS = 10000
 
 # Command line argument parsing
 if len(sys.argv) < 2:
@@ -141,7 +139,6 @@ async def check_robots_txt(url: str, user_agent: str, timeout: int) -> bool:
 
                 # Very basic parser - checks User-agent: * and specific agent
                 lines = robots_txt.splitlines()
-                relevant_rules = []
                 current_agent = None
                 for line in lines:
                     line = line.strip()
@@ -205,7 +202,7 @@ async def fetch_url(
         is_allowed = await check_robots_txt(url, user_agent, timeout)
         if not is_allowed:
             metadata["error"] = (
-                f"Access disallowed by robots.txt. Use ignore_robots=True to override."
+                "Access disallowed by robots.txt. Use ignore_robots=True to override."
             )
             return (None, None, 403, metadata)  # Use 403 Forbidden status
 
@@ -291,7 +288,7 @@ async def _call_openai(
                 {"role": "system", "content": AI_PROCESSOR_SYSTEM_PROMPT},
                 {"role": "user", "content": user_message},
             ],
-            max_tokens=max_tokens,
+            max_completion_tokens=max_tokens,
             temperature=0.2,  # Lower temperature for more deterministic extraction
         )
         result = completion.choices[0].message.content
@@ -514,7 +511,7 @@ async def fetch_and_process_multiple_urls(
             )
     else:
         # Markdown output
-        output_parts = [f"# AI Processing Results for Multiple URLs\n"]
+        output_parts = ["# AI Processing Results for Multiple URLs\n"]
         output_parts.append(f"**Instructions Applied:**\n```\n{instructions}\n```\n---")
         for url, result_or_error in results_list:
             output_parts.append(f"## Result for: {url}\n")
@@ -794,7 +791,7 @@ async def fetch_multiple_urls(  # Note: This does NOT use AI.
         Combined content as a JSON string map {url: result/error} or a single Markdown string.
     """
     if not urls:
-        return f"Error: No URLs provided."
+        return "Error: No URLs provided."
 
     _user_agent = user_agent or DEFAULT_USER_AGENT
 
@@ -849,7 +846,7 @@ async def fetch_multiple_urls(  # Note: This does NOT use AI.
                 {"error": "Failed to serialize results to JSON", "details": str(e)}
             )
     else:  # Markdown
-        output_parts = [f"# Basic Fetch Results for Multiple URLs\n---"]
+        output_parts = ["# Basic Fetch Results for Multiple URLs\n---"]
         for url, result_or_error in results_list:
             output_parts.append(f"## Result for: {url}\n")
             output_parts.append(
@@ -1130,11 +1127,7 @@ async def analyze_url(  # Note: This does NOT use AI.
         ignore_robots=True,  # Ignore robots for analysis
     )
 
-    if (
-        status_code >= 400
-        or content is None
-        or not ("text/html" in (content_type or ""))
-    ):
+    if status_code >= 400 or content is None or "text/html" not in (content_type or ""):
         error_msg = (
             metadata.get("error", f"HTTP Status {status_code}")
             if content is None
