@@ -293,7 +293,7 @@ def install_package(package: str, package_manager: str = None) -> Dict[str, Any]
     # Install the package
     install_cmd = PACKAGE_MANAGERS[package_manager]["install"] + [package]
     install_result = run_command_sync(
-        install_cmd, timeout=300
+        install_cmd, wait_time=300
     )  # Allow longer timeout for installations
 
     if install_result["returncode"] == 0:
