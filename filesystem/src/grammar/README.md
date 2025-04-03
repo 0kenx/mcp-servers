@@ -26,6 +26,14 @@ The parsers extract comprehensive metadata from code symbols, enhancing the usef
 - **Visibility**: Public/private/protected modifiers
 - **Other attributes**: Language-specific attributes like C++ attributes
 
+## Running the Tests
+
+To run all integration tests, use the test runner script:
+
+```bash
+uv run tests/run_tests.py 
+```
+
 ## Implementation
 
 ### Incomplete Code Handling
