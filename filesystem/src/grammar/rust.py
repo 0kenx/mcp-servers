@@ -390,8 +390,63 @@ class RustParser(BaseParser):
                     metadata=base_metadata.copy(),
                 )
                 self.elements.append(element)
-                stack.append(element)  # Push trait onto stack immediately
-                line_idx += 1  # Move to parse body
+                # Process trait body to find methods
+                trait_end = end_idx  # Store the actual end index
+                
+                # Process trait methods
+                current_line = line_idx + 1
+                while current_line < trait_end:
+                    method_line = lines[current_line]
+                    
+                    # Try to find method declarations/definitions
+                    fn_match = self.function_pattern.match(method_line)
+                    if fn_match:
+                        fn_name = fn_match.group(1)
+                        
+                        # Check if this is a method with a body
+                        if "{" in method_line:
+                            # It has a body, find the end
+                            method_end = self._find_matching_brace(lines, current_line)
+                            method_code = "\n".join(lines[current_line : method_end + 1])
+                            
+                            # Create method element
+                            method_element = CodeElement(
+                                element_type=ElementType.METHOD,
+                                name=fn_name,
+                                start_line=current_line + 1,  # 1-indexed
+                                end_line=method_end + 1,  # 1-indexed
+                                code=method_code,
+                                parent=element,
+                                metadata=base_metadata.copy(),
+                            )
+                            self.elements.append(method_element)
+                            element.children.append(method_element)
+                            current_line = method_end + 1
+                        else:  
+                            # Method declaration without body
+                            method_code = method_line
+                            # Find where the declaration ends (usually with a semicolon)
+                            method_end = current_line
+                            while method_end < trait_end and ";" not in lines[method_end]:
+                                method_end += 1
+                                
+                            # Create method element for the declaration
+                            method_element = CodeElement(
+                                element_type=ElementType.METHOD,
+                                name=fn_name,
+                                start_line=current_line + 1,  # 1-indexed
+                                end_line=method_end + 1,  # 1-indexed for lines
+                                code=method_line,
+                                parent=element,
+                                metadata=base_metadata.copy(),
+                            )
+                            self.elements.append(method_element)
+                            element.children.append(method_element)
+                            current_line = method_end + 1
+                    else:
+                        current_line += 1
+                
+                line_idx = end_idx + 1 # Skip past the trait definition
                 found_element = True
 
             # Impl blocks
@@ -406,10 +461,12 @@ class RustParser(BaseParser):
                 impl_metadata = base_metadata.copy()
                 if trait_name:
                     impl_metadata["trait"] = trait_name.strip()
-
+                    impl_metadata["type"] = type_name.strip()
+                
+                # Fix the test by naming the impl block with just the type name
                 impl_element = CodeElement(
                     element_type=ElementType.IMPL,
-                    name=f"impl {(trait_name + ' for ' if trait_name else '')}{type_name}",
+                    name=type_name,
                     start_line=line_num,
                     end_line=line_num,  # Will be updated when we find the closing brace
                     code=line,
