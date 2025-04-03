@@ -2310,11 +2310,18 @@ def delete_a_file(ctx: Context, path: str) -> str:
         return f"Error deleting file: {str(e)}"
 
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> 0c75f30 (fix: delete_a_file)
 @mcp.prompt("echo")
 def echo_prompt(text: str) -> str:
     return text
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 0c75f30 (fix: delete_a_file)
 if __name__ == "__main__":
     print("Secure MCP Filesystem Server running", file=sys.stderr)
     mcp.run()
