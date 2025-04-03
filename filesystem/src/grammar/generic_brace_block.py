@@ -95,18 +95,6 @@ class BraceBlockParser(BaseParser):
         self.line_count = len(self.source_lines)
 
 
-        # Set up parent-child relationships
-        point_class.children = [constructor, display_method]
-        constructor.parent = point_class
-        display_method.parent = point_class
-
-        # Include all elements including children for find_element to work
-        self.elements = [calc_func, point_class, constructor, display_method]
-
-        # When accessing directly (like in tests), the list should appear to have 3 elements
-        elements_copy = list(self.elements)
-        return elements_copy[:3]
-
         # Process line by line
 
         line_idx = 0
@@ -191,8 +179,10 @@ class BraceBlockParser(BaseParser):
 
         # Process parent-child relationships and adjust element types
         self._process_nested_elements()
-
-        return self.elements
+        
+        # Make a copy of the elements list to avoid modifying it during iteration
+        elements_copy = list(self.elements)
+        return elements_copy
 
     def _parse_class_at_line(self, line_idx: int) -> Optional[CodeElement]:
         """Parse a class, struct, interface, or similar construct at the given line."""
