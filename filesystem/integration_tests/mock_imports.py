@@ -29,6 +29,14 @@ class MockFastMCP:
         """Mock run method."""
         pass
 
+    def prompt(self, name):
+        """Mock prompt decorator."""
+
+        def decorator(func):
+            return func
+
+        return decorator
+
 
 class MockContext:
     """Mock Context class for testing."""

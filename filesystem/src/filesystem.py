@@ -14,6 +14,7 @@ from mcp.server.fastmcp import FastMCP, Context
 import threading
 import time
 import json
+import builtins
 
 try:
     # Try to import from the local module first
@@ -305,25 +306,36 @@ def _resolve_path(path: str) -> str:
     Resolve a path relative to the working directory if set.
     Handles '.' and bare filenames to mean working directory when WORKING_DIRECTORY is set.
     """
-    if WORKING_DIRECTORY is not None:
-        if (
-            path == "."
-            or path.startswith("./")
-            or path.startswith(".\\")
-            or not os.path.isabs(path)  # Handle bare filenames
-        ):
-            # Replace leading '.' with working directory or prepend working directory to relative path
-            # Special case: handle ".something" as "./.something" not "./something"
-            if (
-                path.startswith(".")
-                and len(path) > 1
-                and path[1] != "/"
-                and path[1] != "\\"
-            ):
-                # This is a path like ".tests" or ".config" - treat as "./.tests" or "./.config"
-                return os.path.join(WORKING_DIRECTORY, "." + path[1:])
-            else:
-                return os.path.join(WORKING_DIRECTORY, path.lstrip("./\\"))
+    # Import the global WORKING_DIRECTORY variable from builtins if available
+    try:
+        working_dir = globals().get("WORKING_DIRECTORY") or getattr(
+            builtins, "WORKING_DIRECTORY", None
+        )
+    except:
+        working_dir = globals().get("WORKING_DIRECTORY")
+
+    if working_dir is not None:
+        if os.path.isabs(path):
+            # Absolute paths are returned as-is
+            return path
+        else:
+            # All relative paths (including those with . or .. prefixes) get joined with working_dir
+            # Using os.path.normpath to resolve . and .. in the path
+            result = os.path.normpath(os.path.join(working_dir, path))
+
+            # Make sure we preserve the original path structure when using ./ with hidden files
+            # Handle cases where a ".file" becomes just "file" incorrectly
+            if path.startswith("./") and len(path) > 2 and path[2] == ".":
+                # The path is something like "./.hidden" - ensure the . is preserved
+                # Check if the normalized path has lost the dot in the filename
+                base_path = os.path.dirname(result)
+                filename = os.path.basename(result)
+                if not filename.startswith(".") and path[2:].startswith("."):
+                    # The dot was lost, restore it
+                    result = os.path.join(base_path, "." + filename)
+
+            return result
+
     return path
 
 
@@ -401,8 +413,10 @@ def track_edit_history(func: Callable) -> Callable:
             )
             history_root = get_history_root(resolved_file_path)
             if not history_root:
-                os.makedirs(resolved_file_path, exist_ok=True) # Create the .mcp folder if it doesn't exist
-                #return f"Error: Cannot track history for path {resolved_file_path}. Make sure '.mcp' folder exists here or in a parent directory."
+                os.makedirs(
+                    resolved_file_path, exist_ok=True
+                )  # Create the .mcp folder if it doesn't exist
+                # return f"Error: Cannot track history for path {resolved_file_path}. Make sure '.mcp' folder exists here or in a parent directory."
             # Validate paths using the retrieved allowed_dirs
             validated_path = Path(
                 validate_path(resolved_file_path, allowed_dirs)
@@ -2295,10 +2309,10 @@ def delete_a_file(ctx: Context, path: str) -> str:
         return f"Error deleting file: {str(e)}"
 
 
-
 @mcp.prompt("echo")
 def echo_prompt(text: str) -> str:
     return text
+
 
 if __name__ == "__main__":
     print("Secure MCP Filesystem Server running", file=sys.stderr)

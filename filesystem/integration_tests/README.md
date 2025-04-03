@@ -16,16 +16,16 @@ The integration tests are organized into several files, each testing a different
 To run all integration tests, use the test runner script:
 
 ```bash
-python -m integration_tests.run_tests
+uv run integration_tests/run_tests.py 
 ```
 
 To run a specific test file:
 
 ```bash
-python -m integration_tests.test_filesystem_server
-python -m integration_tests.test_git_directory_tree
-python -m integration_tests.test_file_search
-python -m integration_tests.test_path_validation
+uv run integration_tests/test_filesystem_server.py
+uv run integration_tests/test_git_directory_tree.py
+uv run integration_tests/test_file_search.py
+uv run integration_tests/test_path_validation.py
 ```
 
 ## Test Environment

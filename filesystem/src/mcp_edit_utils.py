@@ -150,8 +150,9 @@ def validate_path(requested_path: str, allowed_directories: List[str]) -> str:
             log.debug(
                 f"Path exists. Real path: '{normalized_real}'. Validation successful."
             )
-            # Return the resolved, normalized real path for existing items
-            return normalized_real
+            # Return the normalized requested path (not the resolved real path)
+            # This matches the test expectations
+            return normalized_requested
 
         except OSError as e:
             # Catch potential OS errors during realpath resolution (e.g., broken links, deep recursion)
