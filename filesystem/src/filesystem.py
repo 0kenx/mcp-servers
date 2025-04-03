@@ -160,7 +160,7 @@ Key capabilities:
    - `replace_symbol_in_file`: Replace code of a symbol (function, class, method)
    - `replace_lines_in_file`: Replace code by line numbers
    - `move_file`: Rename or relocate files
-   - `delete_file`: Remove files
+   - `delete_a_file`: Remove files
    - `finish_edit`: Signal completion of editing operations
 
 Best practices for usage:
@@ -401,7 +401,8 @@ def track_edit_history(func: Callable) -> Callable:
             )
             history_root = get_history_root(resolved_file_path)
             if not history_root:
-                return f"Error: Cannot track history for path {resolved_file_path}. Make sure '.mcp' folder exists here or in a parent directory."
+                os.makedirs(resolved_file_path, exist_ok=True) # Create the .mcp folder if it doesn't exist
+                #return f"Error: Cannot track history for path {resolved_file_path}. Make sure '.mcp' folder exists here or in a parent directory."
             # Validate paths using the retrieved allowed_dirs
             validated_path = Path(
                 validate_path(resolved_file_path, allowed_dirs)
@@ -421,7 +422,7 @@ def track_edit_history(func: Callable) -> Callable:
 
         if tool_name == "move_file":
             operation = "move"
-        elif tool_name == "delete_file":
+        elif tool_name == "delete_a_file":
             operation = "delete"
             if not file_existed_before:
                 # Fail early if deleting non-existent file
@@ -2270,8 +2271,8 @@ def move_file(ctx: Context, source: str, destination: str) -> str:
 
 @mcp.tool()
 @track_edit_history
-def delete_file(ctx: Context, path: str) -> str:
-    """Delete a file."""
+def delete_a_file(ctx: Context, path: str) -> str:
+    """Delete a file"""
     try:
         resolved_path = _resolve_path(path)
         validated_path = validate_path(resolved_path, WORKING_DIRECTORY)
@@ -2293,6 +2294,11 @@ def delete_file(ctx: Context, path: str) -> str:
     except (ValueError, FileNotFoundError, Exception) as e:
         return f"Error deleting file: {str(e)}"
 
+
+
+@mcp.prompt("echo")
+def echo_prompt(text: str) -> str:
+    return text
 
 if __name__ == "__main__":
     print("Secure MCP Filesystem Server running", file=sys.stderr)
