@@ -408,6 +408,11 @@ class CCppParser(BaseParser):
 
                 # Push the namespace onto the stack as the new parent
                 stack.append(element)
+                
+                # Process nested elements within the namespace
+                nested_start = line_idx + 1
+                nested_end = end_idx - 1
+                self._process_nested_elements_in_range(nested_start, nested_end, element)
 
                 # Skip to end of the namespace
                 line_idx = end_idx + 1
@@ -593,8 +598,261 @@ class CCppParser(BaseParser):
         self._process_parent_child_relationships()
 
         return self.elements
-
+    def _process_nested_elements_in_range(self, start_idx: int, end_idx: int, parent_element: CodeElement):
+        """
+        Process nested elements within a specific range and associate them with the parent.
+        
+        Args:
+            start_idx: Start line index
+            end_idx: End line index
+            parent_element: Parent element to associate children with
+        """
+        # Save the current line index
+        current_idx = start_idx
+        
+        while current_idx < end_idx:
+            line = self.source_lines[current_idx]
+            
+            # Check for namespace
+            namespace_match = self.namespace_pattern.match(line)
+            if namespace_match:
+                namespace_name = namespace_match.group(1)
+                
+                # Find the end of the namespace
+                end_of_namespace = self._find_matching_brace(self.source_lines, current_idx)
+                
+                # Extract the full namespace code
+                namespace_code = "\n".join(self.source_lines[current_idx : end_of_namespace + 1])
+                
+                # Create the namespace element
+                element = CodeElement(
+                    element_type=ElementType.NAMESPACE,
+                    name=namespace_name,
+                    start_line=current_idx + 1,  # 1-based line numbers
+                    end_line=end_of_namespace + 1,
+                    code=namespace_code,
+                    parent=parent_element,
+                    metadata={},
+                )
+                
+                # Set up parent-child relationship
+                element.parent = parent_element
+                parent_element.children.append(element)
+                
+                self.elements.append(element)
+                
+                # Process nested elements recursively
+                self._process_nested_elements_in_range(current_idx + 1, end_of_namespace, element)
+                
+                # Skip past this namespace
+                current_idx = end_of_namespace + 1
+                continue
+            
+            # Also check for class, struct, enum, and function definitions
+            # Class check
+            class_match = self.class_pattern.match(line)
+            if class_match:
+                class_type = class_match.group(1)  # 'class' or 'struct'
+                class_name = class_match.group(2)
+                
+                # Find the end of the class
+                end_of_class = self._find_matching_brace(self.source_lines, current_idx)
+                
+                # Extract the full class code
+                class_code = "\n".join(self.source_lines[current_idx : end_of_class + 1])
+                
+                # Create the class element
+                element = CodeElement(
+                    element_type=ElementType.CLASS if class_type == "class" else ElementType.STRUCT,
+                    name=class_name,
+                    start_line=current_idx + 1,  # 1-based line numbers
+                    end_line=end_of_class + 1,
+                    code=class_code,
+                    parent=parent_element,
+                    metadata={},
+                )
+                
+                # Set up parent-child relationship
+                element.parent = parent_element
+                parent_element.children.append(element)
+                
+                self.elements.append(element)
+                
+                # Process nested elements recursively
+                self._process_nested_elements_in_range(current_idx + 1, end_of_class, element)
+                
+                # Skip past this class
+                current_idx = end_of_class + 1
+                continue
+            
+            # Function check
+            function_match = self.function_pattern.match(line)
+            if function_match:
+                return_type = function_match.group(1).strip()
+                func_name = function_match.group(2)
+                params = function_match.group(3)
+                
+                # Check if this is a definition or declaration
+                if "{" in line:
+                    # Find the end of the function
+                    end_of_function = self._find_matching_brace(self.source_lines, current_idx)
+                    
+                    # Extract the full function code
+                    func_code = "\n".join(self.source_lines[current_idx : end_of_function + 1])
+                    
+                    # Create the function/method element
+                    element_type = ElementType.METHOD if parent_element and parent_element.element_type in [ElementType.CLASS, ElementType.STRUCT] else ElementType.FUNCTION
+                    element = CodeElement(
+                        element_type=element_type,
+                        name=func_name,
+                        start_line=current_idx + 1,  # 1-based line numbers
+                        end_line=end_of_function + 1,
+                        code=func_code,
+                        parent=parent_element,
+                        metadata={"return_type": return_type, "parameters": params},
+                    )
+                    
+                    # Set up parent-child relationship
+                    element.parent = parent_element
+                    parent_element.children.append(element)
+                    
+                    self.elements.append(element)
+                    
+                    # Skip past this function
+                    current_idx = end_of_function + 1
+                    continue
+            
+            # Move to the next line
+            current_idx += 1
+    
     def _find_matching_brace(self, lines: List[str], start_idx: int) -> int:
+        """
+        Find the line number of the matching closing brace for a given opening brace.
+        
+        Args:
+            lines: List of code lines
+            start_idx: Index of the line with the opening brace
+        
+        Returns:
+            Index of the line with the matching closing brace
+        """
+        
+        while current_idx < end_idx:
+            line = self.source_lines[current_idx]
+            
+            # Check for namespace
+            namespace_match = self.namespace_pattern.match(line)
+            if namespace_match:
+                namespace_name = namespace_match.group(1)
+                
+                # Find the end of the namespace
+                end_of_namespace = self._find_matching_brace(self.source_lines, current_idx)
+                
+                # Extract the full namespace code
+                namespace_code = "\n".join(self.source_lines[current_idx : end_of_namespace + 1])
+                
+                # Create the namespace element
+                element = CodeElement(
+                    element_type=ElementType.NAMESPACE,
+                    name=namespace_name,
+                    start_line=current_idx + 1,  # 1-based line numbers
+                    end_line=end_of_namespace + 1,
+                    code=namespace_code,
+                    parent=parent_element,
+                    metadata={},
+                )
+                
+                # Set up parent-child relationship
+                element.parent = parent_element
+                parent_element.children.append(element)
+                
+                self.elements.append(element)
+                
+                # Process nested elements recursively
+                self._process_nested_elements_in_range(current_idx + 1, end_of_namespace, element)
+                
+                # Skip past this namespace
+                current_idx = end_of_namespace + 1
+                continue
+            
+            # Also check for class, struct, enum, and function definitions
+            # Class check
+            class_match = self.class_pattern.match(line)
+            if class_match:
+                class_type = class_match.group(1)  # 'class' or 'struct'
+                class_name = class_match.group(2)
+                
+                # Find the end of the class
+                end_of_class = self._find_matching_brace(self.source_lines, current_idx)
+                
+                # Extract the full class code
+                class_code = "\n".join(self.source_lines[current_idx : end_of_class + 1])
+                
+                # Create the class element
+                element = CodeElement(
+                    element_type=ElementType.CLASS if class_type == "class" else ElementType.STRUCT,
+                    name=class_name,
+                    start_line=current_idx + 1,  # 1-based line numbers
+                    end_line=end_of_class + 1,
+                    code=class_code,
+                    parent=parent_element,
+                    metadata={},
+                )
+                
+                # Set up parent-child relationship
+                element.parent = parent_element
+                parent_element.children.append(element)
+                
+                self.elements.append(element)
+                
+                # Process nested elements recursively
+                self._process_nested_elements_in_range(current_idx + 1, end_of_class, element)
+                
+                # Skip past this class
+                current_idx = end_of_class + 1
+                continue
+            
+            # Function check
+            function_match = self.function_pattern.match(line)
+            if function_match:
+                return_type = function_match.group(1).strip()
+                func_name = function_match.group(2)
+                params = function_match.group(3)
+                
+                # Check if this is a definition or declaration
+                if "{" in line:
+                    # Find the end of the function
+                    end_of_function = self._find_matching_brace(self.source_lines, current_idx)
+                    
+                    # Extract the full function code
+                    func_code = "\n".join(self.source_lines[current_idx : end_of_function + 1])
+                    
+                    # Create the function/method element
+                    element_type = ElementType.METHOD if parent_element and parent_element.element_type in [ElementType.CLASS, ElementType.STRUCT] else ElementType.FUNCTION
+                    element = CodeElement(
+                        element_type=element_type,
+                        name=func_name,
+                        start_line=current_idx + 1,  # 1-based line numbers
+                        end_line=end_of_function + 1,
+                        code=func_code,
+                        parent=parent_element,
+                        metadata={"return_type": return_type, "parameters": params},
+                    )
+                    
+                    # Set up parent-child relationship
+                    element.parent = parent_element
+                    parent_element.children.append(element)
+                    
+                    self.elements.append(element)
+                    
+                    # Skip past this function
+                    current_idx = end_of_function + 1
+                    continue
+            
+            # Move to the next line
+            current_idx += 1
+    
+    
         """
         Find the line number of the matching closing brace for a given opening brace.
 

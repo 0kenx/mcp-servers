@@ -46,8 +46,8 @@ class BraceBlockParser(BaseParser):
         r"((?:(?:public|private|protected|static|final|abstract|export)\s+)*)"
         r"(class|struct|interface|enum|trait|impl)"
         r"\s+([a-zA-Z_][a-zA-Z0-9_]*)"
-        r"(?:\s*(?:extends|implements|:)\s*[^{]*)?"
-        r"\s*(?:\{|\n\s*\{)"
+        r"(?:\s*(?:extends|implements|:)\s*[^{]*?)?"
+        r"\s*(?:\{|\s*\{|\n\s*\{|$)"
     )
 
     # Pattern to match function definitions
