@@ -82,18 +82,18 @@ RUN chown -R $USERNAME:$USERNAME /home/$USERNAME
 WORKDIR /app
 
 # Install Go
-RUN curl -OL https://golang.org/dl/go1.24.1.linux-amd64.tar.gz && \
-    tar -C /usr/local -xzf go1.24.1.linux-amd64.tar.gz && \
-    rm go1.24.1.linux-amd64.tar.gz && \
-    echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> /home/$USERNAME/.bashrc
+#RUN curl -OL https://golang.org/dl/go1.24.1.linux-amd64.tar.gz && \
+#    tar -C /usr/local -xzf go1.24.1.linux-amd64.tar.gz && \
+#    rm go1.24.1.linux-amd64.tar.gz && \
+#    echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> /home/$USERNAME/.bashrc
 
 # Install Foundry
-RUN curl -L https://foundry.paradigm.xyz | bash
+#RUN curl -L https://foundry.paradigm.xyz | bash
 
 # Install Rust (rustup and cargo)
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
-    echo 'source "$HOME/.cargo/env"' >> /home/$USERNAME/.bashrc
-RUN $HOME/.cargo/bin/rustup component add rustfmt clippy rust-analyzer
+#RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
+#    echo 'source "$HOME/.cargo/env"' >> /home/$USERNAME/.bashrc
+#RUN $HOME/.cargo/bin/rustup component add rustfmt clippy rust-analyzer
 #RUN $HOME/.cargo/bin/cargo install cargo-watch
 
 
@@ -107,11 +107,6 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     requests \
     pandas \
     numpy \
-    matplotlib \
-    seaborn \
-    black \
-    flake8 \
-    mypy \
     pytest
 
 
