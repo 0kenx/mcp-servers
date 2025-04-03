@@ -726,6 +726,56 @@ class CCppParser(BaseParser):
                     current_idx = end_of_function + 1
                     continue
             
+            # Check for constants/variables
+            constant_match = self.constant_pattern.match(line)
+            if constant_match:
+                const_name = constant_match.group(1)
+                const_value = constant_match.group(2).strip()
+                
+                # Create the constant element
+                element = CodeElement(
+                    element_type=ElementType.CONSTANT,
+                    name=const_name,
+                    start_line=current_idx + 1,  # 1-based line numbers
+                    end_line=current_idx + 1,
+                    code=line,
+                    parent=parent_element,
+                    metadata={"value": const_value},
+                )
+                
+                # Set up parent-child relationship
+                element.parent = parent_element
+                parent_element.children.append(element)
+                
+                self.elements.append(element)
+                current_idx += 1
+                continue
+                
+            # Check for variable declarations
+            variable_match = self.variable_pattern.match(line)
+            if variable_match:
+                var_type = variable_match.group(1).strip()
+                var_name = variable_match.group(2)
+                
+                # Create the variable element
+                element = CodeElement(
+                    element_type=ElementType.VARIABLE,
+                    name=var_name,
+                    start_line=current_idx + 1,  # 1-based line numbers
+                    end_line=current_idx + 1,
+                    code=line,
+                    parent=parent_element,
+                    metadata={"type": var_type},
+                )
+                
+                # Set up parent-child relationship
+                element.parent = parent_element
+                parent_element.children.append(element)
+                
+                self.elements.append(element)
+                current_idx += 1
+                continue
+            
             # Move to the next line
             current_idx += 1
     
