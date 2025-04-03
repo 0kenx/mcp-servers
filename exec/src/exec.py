@@ -1,19 +1,17 @@
 import os
 import sys
-import json
 import subprocess
 import tempfile
 import time
-import signal
 import asyncio
 import psutil
 import shutil
 from datetime import datetime
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, List, Dict, Any, Union, Tuple, Set
+from typing import List, Dict, Any, Union, Set
 
-from mcp.server.fastmcp import FastMCP, Context
+from mcp.server.fastmcp import FastMCP
 
 MCP_INSTRUCTIONS = """
 The Exec MCP Server is a powerful execution environment that allows AI assistants like Claude to run commands, scripts, and tests. The mounted filesystem is shared with the Filesystem MCP Server.
@@ -23,8 +21,9 @@ This server comes with pre-installed development tools for Python, JavaScript/Ty
 Key capabilities:
 
 1. Command & Script Execution:
-   - `execute_command`: Run shell commands asynchronously with configurable timeouts. The process doesn't terminate after timeout, but is run in a session pool that can be accessed later. You can simultaneously execute multiple commands in a fork-join pattern
+   - `execute_command`: Run shell commands asynchronously with configurable wait time. The process doesn't terminate after wait time, but is run in a session pool that can be accessed later. You can simultaneously execute multiple commands in a fork-join pattern 
    - `execute_script`: Run multi-line code in Python, JavaScript, Rust, Go, or Bash asynchronously
+   - `run_command_sync`: Run shell commands synchronously with configurable wait time. Use this for commands that interfere with async I/O, such as `npm test`
    
 2. Process Management:
    - `list_sessions`: View all active command sessions
@@ -44,7 +43,7 @@ Key capabilities:
    - `configure_packages`: Install multiple packages across different managers
 
 For optimal usage:
-- Set reasonable timeouts for your commands and use the fork-join pattern for long running commands
+- Set reasonable wait time for your commands and use the fork-join pattern for long running commands
 - Check if tools are already installed with `list_installed_commands` before installation
 - When using scripting languages, handle errors properly
 """
@@ -177,15 +176,16 @@ def is_command_blacklisted(command: str) -> bool:
 
 
 async def create_async_process(
-    command: Union[str, List[str]],
-    use_fork: bool = False
+    command: Union[str, List[str]], use_fork: bool = False
 ) -> asyncio.subprocess.Process:
     """Create an async subprocess, optionally using fork for isolation"""
     if isinstance(command, list):
         command = " ".join(command)
-    
-    if use_fork or ('npm' in command or 'yarn' in command or 'node' in command): # force fork for npm/node due to async I/O issues
-        escaped_command = command.replace("'", "'\\''") # Escape single quotes in the command by replacing ' with '\''
+
+    if use_fork:
+        escaped_command = command.replace(
+            "'", "'\\''"
+        )  # Escape single quotes in the command by replacing ' with '\''
         shell_command = f"bash -c '{escaped_command}'"
         # Create a fork and execute the command there
         # Use a pipe for communication
@@ -198,9 +198,7 @@ async def create_async_process(
         )
     else:
         return await asyncio.create_subprocess_shell(
-            command, 
-            stdout=asyncio.subprocess.PIPE, 
-            stderr=asyncio.subprocess.PIPE
+            command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
 
 
@@ -285,7 +283,7 @@ def install_package(package: str, package_manager: str = None) -> Dict[str, Any]
     # Update repositories if using apt
     if package_manager == "apt":
         update_cmd = PACKAGE_MANAGERS[package_manager]["update"]
-        update_result = run_command(update_cmd)
+        update_result = run_command_sync(update_cmd)
         if update_result["returncode"] != 0:
             return {
                 "success": False,
@@ -294,7 +292,7 @@ def install_package(package: str, package_manager: str = None) -> Dict[str, Any]
 
     # Install the package
     install_cmd = PACKAGE_MANAGERS[package_manager]["install"] + [package]
-    install_result = run_command(
+    install_result = run_command_sync(
         install_cmd, timeout=300
     )  # Allow longer timeout for installations
 
@@ -311,22 +309,23 @@ def install_package(package: str, package_manager: str = None) -> Dict[str, Any]
             "error": install_result["stderr"],
         }
 
+
 @mcp.tool()
 def run_command_sync(
-     command: List[str], 
-     timeout: int = DEFAULT_TIMEOUT, 
-     output_type: OutputType = OutputType.BOTH,
-     shell: bool = False
- ) -> Dict[str, Any]:
+    command: List[str],
+    wait_time: int = DEFAULT_TIMEOUT,
+    output_type: OutputType = OutputType.BOTH,
+    shell: bool = False,
+) -> Dict[str, Any]:
     """
     Run a shell command synchronously with timeout and return the result.
-    
+
     Args:
         command: The command to run
-        timeout: Maximum execution time in seconds
+        wait_time: Maximum execution time in seconds
         output_type: Which output streams to capture (stdout, stderr, or both)
         shell: Whether to run the command in a shell
-        
+
     Returns:
         Dictionary with stdout, stderr, return code, and execution time
     """
@@ -337,20 +336,24 @@ def run_command_sync(
     # For security, if shell=True, ensure command is a string
     if shell and isinstance(command, list):
         command = " ".join(command)
-    
+
     start_time = time.time()
 
     try:
         # Run the command with timeout
         process = subprocess.Popen(
             command,
-            stdout=subprocess.PIPE if output_type in [OutputType.STDOUT, OutputType.BOTH] else subprocess.DEVNULL,
-            stderr=subprocess.PIPE if output_type in [OutputType.STDERR, OutputType.BOTH] else subprocess.DEVNULL,
+            stdout=subprocess.PIPE
+            if output_type in [OutputType.STDOUT, OutputType.BOTH]
+            else subprocess.DEVNULL,
+            stderr=subprocess.PIPE
+            if output_type in [OutputType.STDERR, OutputType.BOTH]
+            else subprocess.DEVNULL,
             text=True,
-            shell=shell
+            shell=shell,
         )
 
-        stdout, stderr = process.communicate(timeout=timeout)
+        stdout, stderr = process.communicate(timeout=wait_time)
 
         execution_time = time.time() - start_time
 
@@ -359,7 +362,7 @@ def run_command_sync(
             "stderr": stderr,
             "returncode": process.returncode,
             "execution_time": execution_time,
-            "timed_out": False
+            "timed_out": False,
         }
     except subprocess.TimeoutExpired:
         # Kill the process if it times out
@@ -370,10 +373,12 @@ def run_command_sync(
 
         return {
             "stdout": stdout if stdout else "",
-            "stderr": stderr if stderr else "Command timed out after {timeout} seconds",
+            "stderr": stderr
+            if stderr
+            else "Command timed out after {wait_time} seconds",
             "returncode": -1,
             "execution_time": execution_time,
-            "timed_out": True
+            "timed_out": True,
         }
     except Exception as e:
         return {
@@ -381,24 +386,28 @@ def run_command_sync(
             "stderr": f"Error executing command: {str(e)}",
             "returncode": -1,
             "execution_time": time.time() - start_time,
-            "timed_out": False
+            "timed_out": False,
         }
 
 
 # Define tool implementations
 @mcp.tool()
 async def execute_command(
-    command: str, timeout: int = DEFAULT_TIMEOUT, output_type: str = "both", use_fork: bool = False, terminate_after_timeout: bool = False
+    command: str,
+    wait_time: int = DEFAULT_TIMEOUT,
+    output_type: str = "both",
+    use_fork: bool = False,
+    terminate_after_wait: bool = False,
 ) -> str:
     """
-    Execute a command asynchronously. Returns formatted output from the command if execution completed before timeout. Otherwise, returns a session ID for the running command.
+    Execute a command asynchronously. Returns formatted output from the command if execution completed before wait_time. Otherwise, returns a session ID for the running command.
 
     Args:
         command: The command to execute
-        timeout: Maximum execution time in seconds (default: 30)
+        wait_time: Maximum execution time in seconds (default: 30)
         output_type: Which outputs to return ("stdout", "stderr", "both")
         use_fork: Whether to use a new process group via fork (default: False)
-        terminate_after_timeout: Whether to kill the process after timeout (default: False)
+        terminate_after_wait: Whether to kill the process after wait_time (default: False)
     """
     global last_session_id, active_sessions
 
@@ -440,7 +449,7 @@ async def execute_command(
 
     try:
         # Wait for process to complete or timeout
-        await asyncio.wait_for(process.wait(), timeout=timeout)
+        await asyncio.wait_for(process.wait(), timeout=wait_time)
 
         # Wait for output readers to complete
         await stdout_task
@@ -469,8 +478,8 @@ async def execute_command(
         session.stdout_buffer = "\n".join(stdout_buffer)
         session.stderr_buffer = "\n".join(stderr_buffer)
 
-        # If terminate_after_timeout is True, kill the process
-        if terminate_after_timeout:
+        # If terminate_after_wait is True, kill the process
+        if terminate_after_wait:
             process.kill()
             # Wait for process to terminate (non-blocking)
             try:
@@ -485,9 +494,9 @@ async def execute_command(
                     "stdout": session.stdout_buffer,
                     "stderr": session.stderr_buffer,
                     "returncode": -9,  # SIGKILL
-                    "execution_time": timeout,
+                    "execution_time": wait_time,
                     "timed_out": True,
-                    "terminated": True
+                    "terminated": True,
                 },
                 OutputType(output_type.lower()),
             )
@@ -497,7 +506,7 @@ async def execute_command(
                 "stdout": session.stdout_buffer,
                 "stderr": session.stderr_buffer,
                 "returncode": None,
-                "execution_time": timeout,
+                "execution_time": wait_time,
                 "timed_out": True,
                 "session_id": session_id,
             },
@@ -622,14 +631,16 @@ def list_processes(name_filter: str = None) -> str:
     """
     output = ["PID\tPPID\tCPU\tMEM\tCOMMAND"]
 
-    for proc in psutil.process_iter(["pid", "ppid", "name", "cpu_percent", "memory_percent"]):
+    for proc in psutil.process_iter(
+        ["pid", "ppid", "name", "cpu_percent", "memory_percent"]
+    ):
         try:
             info = proc.info
-            
+
             # Apply name filter if provided
-            if name_filter and name_filter.lower() not in info['name'].lower():
+            if name_filter and name_filter.lower() not in info["name"].lower():
                 continue
-            
+
             output.append(
                 f"{info['pid']}\t{info['ppid']}\t{info['cpu_percent']:.1f}\t{info['memory_percent']:.1f}\t{info['name']}"
             )
@@ -680,7 +691,7 @@ def list_blocked_commands() -> str:
 async def execute_script(
     script: str,
     script_type: str = "bash",
-    timeout: int = DEFAULT_TIMEOUT,
+    wait_time: int = DEFAULT_TIMEOUT,
     output_type: str = "both",
 ) -> str:
     """
@@ -689,7 +700,7 @@ async def execute_script(
     Args:
         script: The script content to execute
         script_type: Type of script (bash, python, js, go, rust)
-        timeout: Maximum execution time in seconds
+        wait_time: Maximum execution time in seconds
         output_type: Which outputs to return ("stdout", "stderr", "both")
 
     Returns:
@@ -799,7 +810,7 @@ edition = "2021"
             return f"Unsupported script type: {script_type}"
 
         # Execute the script using execute_command
-        return await execute_command(command, timeout, output_type)
+        return await execute_command(command, wait_time, output_type)
     finally:
         # Clean up temporary files
         if os.path.exists(script_path):
