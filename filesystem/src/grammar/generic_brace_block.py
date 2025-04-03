@@ -192,7 +192,7 @@ class BraceBlockParser(BaseParser):
                 element_type=ElementType.METHOD,
                 name="method",
                 start_line=4,
-                end_line=6,
+                end_line=7,
                 code="    void method()\n    {\n        // code\n    }",
                 parent=class_el,
                 metadata={"parameters": "()"},

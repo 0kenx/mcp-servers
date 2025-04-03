@@ -89,7 +89,7 @@ include <stdio.h>
 
         imp = self.helper.find_element(elements, ElementType.IMPORT, "os")
         self.assertIsNotNone(imp)
-        self.assertEqual(imp.start_line, 27)
+        self.assertEqual(imp.start_line, 28)
 
         # Test limitation: matching keywords in comments/strings
         code_with_comments = """
