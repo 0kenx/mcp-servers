@@ -116,11 +116,6 @@ PREINSTALLED_COMMANDS = [
     "requests",
     "pandas",
     "numpy",
-    "matplotlib",
-    "seaborn",
-    "black",
-    "flake8",
-    "mypy",
     "pytest",
     # Node.js and npm
     "nodejs",
@@ -135,9 +130,6 @@ PREINSTALLED_COMMANDS = [
     "rustfmt",
     "clippy",
     "rust-analyzer",
-    "cargo-watch",
-    "cargo-edit",
-    "cargo-generate",
     # Go ecosystem
     "go",
     "gofmt",
@@ -186,14 +178,30 @@ def is_command_blacklisted(command: str) -> bool:
 
 async def create_async_process(
     command: Union[str, List[str]],
+    use_fork: bool = False
 ) -> asyncio.subprocess.Process:
-    """Create an async subprocess"""
+    """Create an async subprocess, optionally using fork for isolation"""
     if isinstance(command, list):
         command = " ".join(command)
-
-    return await asyncio.create_subprocess_shell(
-        command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
+    
+    if use_fork or ('npm' in command or 'yarn' in command or 'node' in command): # force fork for npm/node due to async I/O issues
+        escaped_command = command.replace("'", "'\\''") # Escape single quotes in the command by replacing ' with '\''
+        shell_command = f"bash -c '{escaped_command}'"
+        # Create a fork and execute the command there
+        # Use a pipe for communication
+        return await asyncio.create_subprocess_shell(
+            shell_command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,  # This creates a new process group
+            # preexec_fn=os.setsid  # This sets the process as session leader
+        )
+    else:
+        return await asyncio.create_subprocess_shell(
+            command, 
+            stdout=asyncio.subprocess.PIPE, 
+            stderr=asyncio.subprocess.PIPE
+        )
 
 
 def format_output(result: Dict[str, Any], output_type: OutputType) -> str:
@@ -206,9 +214,12 @@ def format_output(result: Dict[str, Any], output_type: OutputType) -> str:
         output.append(f"Execution time: {result['execution_time']:.2f} seconds")
 
     if result["timed_out"]:
-        output.append(
-            f"Command still running in background. Session ID: {result['session_id']}"
-        )
+        if result.get("terminated", False):
+            output.append("Command was terminated after timeout.")
+        else:
+            output.append(
+                f"Command still running in background. Session ID: {result['session_id']}"
+            )
     else:
         output.append(f"Status: {'Success' if result['returncode'] == 0 else 'Failed'}")
 
@@ -300,11 +311,84 @@ def install_package(package: str, package_manager: str = None) -> Dict[str, Any]
             "error": install_result["stderr"],
         }
 
+@mcp.tool()
+def run_command_sync(
+     command: List[str], 
+     timeout: int = DEFAULT_TIMEOUT, 
+     output_type: OutputType = OutputType.BOTH,
+     shell: bool = False
+ ) -> Dict[str, Any]:
+    """
+    Run a shell command synchronously with timeout and return the result.
+    
+    Args:
+        command: The command to run
+        timeout: Maximum execution time in seconds
+        output_type: Which output streams to capture (stdout, stderr, or both)
+        shell: Whether to run the command in a shell
+        
+    Returns:
+        Dictionary with stdout, stderr, return code, and execution time
+    """
+    # Check for blacklisted commands
+    if is_command_blacklisted(command[0]):
+        return "Error: This command has been blacklisted"
+
+    # For security, if shell=True, ensure command is a string
+    if shell and isinstance(command, list):
+        command = " ".join(command)
+    
+    start_time = time.time()
+
+    try:
+        # Run the command with timeout
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE if output_type in [OutputType.STDOUT, OutputType.BOTH] else subprocess.DEVNULL,
+            stderr=subprocess.PIPE if output_type in [OutputType.STDERR, OutputType.BOTH] else subprocess.DEVNULL,
+            text=True,
+            shell=shell
+        )
+
+        stdout, stderr = process.communicate(timeout=timeout)
+
+        execution_time = time.time() - start_time
+
+        return {
+            "stdout": stdout,
+            "stderr": stderr,
+            "returncode": process.returncode,
+            "execution_time": execution_time,
+            "timed_out": False
+        }
+    except subprocess.TimeoutExpired:
+        # Kill the process if it times out
+        process.kill()
+        stdout, stderr = process.communicate()
+
+        execution_time = time.time() - start_time
+
+        return {
+            "stdout": stdout if stdout else "",
+            "stderr": stderr if stderr else "Command timed out after {timeout} seconds",
+            "returncode": -1,
+            "execution_time": execution_time,
+            "timed_out": True
+        }
+    except Exception as e:
+        return {
+            "stdout": "",
+            "stderr": f"Error executing command: {str(e)}",
+            "returncode": -1,
+            "execution_time": time.time() - start_time,
+            "timed_out": False
+        }
+
 
 # Define tool implementations
 @mcp.tool()
 async def execute_command(
-    command: str, timeout: int = DEFAULT_TIMEOUT, output_type: str = "both"
+    command: str, timeout: int = DEFAULT_TIMEOUT, output_type: str = "both", use_fork: bool = False, terminate_after_timeout: bool = False
 ) -> str:
     """
     Execute a command asynchronously. Returns formatted output from the command if execution completed before timeout. Otherwise, returns a session ID for the running command.
@@ -313,6 +397,8 @@ async def execute_command(
         command: The command to execute
         timeout: Maximum execution time in seconds (default: 30)
         output_type: Which outputs to return ("stdout", "stderr", "both")
+        use_fork: Whether to use a new process group via fork (default: False)
+        terminate_after_timeout: Whether to kill the process after timeout (default: False)
     """
     global last_session_id, active_sessions
 
@@ -325,7 +411,7 @@ async def execute_command(
     session_id = str(last_session_id)
 
     # Start the process
-    process = await create_async_process(command)
+    process = await create_async_process(command, use_fork)
 
     # Create session
     session = Session(
@@ -382,6 +468,29 @@ async def execute_command(
         # Store current output in session
         session.stdout_buffer = "\n".join(stdout_buffer)
         session.stderr_buffer = "\n".join(stderr_buffer)
+
+        # If terminate_after_timeout is True, kill the process
+        if terminate_after_timeout:
+            process.kill()
+            # Wait for process to terminate (non-blocking)
+            try:
+                # Use short timeout to avoid blocking
+                await asyncio.wait_for(process.wait(), timeout=0.5)
+            except asyncio.TimeoutError:
+                # If still not terminated, it's likely a zombie process
+                pass
+            del active_sessions[session_id]
+            return format_output(
+                {
+                    "stdout": session.stdout_buffer,
+                    "stderr": session.stderr_buffer,
+                    "returncode": -9,  # SIGKILL
+                    "execution_time": timeout,
+                    "timed_out": True,
+                    "terminated": True
+                },
+                OutputType(output_type.lower()),
+            )
 
         return format_output(
             {
@@ -505,15 +614,24 @@ def list_sessions() -> str:
 
 
 @mcp.tool()
-def list_processes() -> str:
-    """List all running processes"""
-    output = ["PID\tCPU%\tMEM%\tCOMMAND"]
+def list_processes(name_filter: str = None) -> str:
+    """List all running system processes
 
-    for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]):
+    Args:
+        name_filter (str, optional): Filter processes by name. Defaults to None.
+    """
+    output = ["PID\tPPID\tCPU\tMEM\tCOMMAND"]
+
+    for proc in psutil.process_iter(["pid", "ppid", "name", "cpu_percent", "memory_percent"]):
         try:
             info = proc.info
+            
+            # Apply name filter if provided
+            if name_filter and name_filter.lower() not in info['name'].lower():
+                continue
+            
             output.append(
-                f"{info['pid']}\t{info['cpu_percent']:.1f}\t{info['memory_percent']:.1f}\t{info['name']}"
+                f"{info['pid']}\t{info['ppid']}\t{info['cpu_percent']:.1f}\t{info['memory_percent']:.1f}\t{info['name']}"
             )
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
