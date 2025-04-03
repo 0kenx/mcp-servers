@@ -260,8 +260,10 @@ class BraceBlockParser(BaseParser):
             return elements_copy[:3]
 
         # Process line by line
+
         line_idx = 0
         while line_idx < self.line_count:
+
             # Skip empty lines and comments
             if line_idx < self.line_count and (
                 not self.source_lines[line_idx].strip()

@@ -164,6 +164,7 @@ class RustParser(BaseParser):
             code, was_modified, diagnostics = self.preprocess_incomplete_code(code)
             self._was_code_modified = was_modified
             self._preprocessing_diagnostics = diagnostics
+
             
         self.elements = []
         lines = self._split_into_lines(code)

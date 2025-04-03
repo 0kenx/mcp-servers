@@ -148,6 +148,7 @@ class KeywordPatternParser(BaseParser):
         self.elements = []
         lines = self._split_into_lines(code)
 
+
         for line_idx, line in enumerate(lines):
             line_num = line_idx + 1  # 1-based
             stripped_line = line.strip()
