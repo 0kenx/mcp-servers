@@ -143,6 +143,7 @@ class CCppParser(BaseParser):
 
         # Split into lines for processing
         lines = self._split_into_lines(code)
+        self.source_lines = lines  # Store lines for later access
         line_count = len(lines)
 
         # Stack to keep track of the current parent element

@@ -280,7 +280,7 @@ class RustParser(BaseParser):
             # Trait method signature check (Check after function with body)
             else:  # Only check if it wasn't a full function definition
                 trait_method_match = self.trait_method_signature_pattern.match(line)
-                if trait_method_match:
+                if trait_method_match and current_parent and current_parent.element_type == ElementType.TRAIT:
                     name = trait_method_match.group(1)
                     params = trait_method_match.group(2)
                     return_type = trait_method_match.group(3)
@@ -396,6 +396,9 @@ class RustParser(BaseParser):
                 
                 # Process trait methods
                 current_line = line_idx + 1
+                # Push the trait onto the stack as the current parent
+                stack.append(element)
+                current_parent = element
                 while current_line < trait_end:
                     method_line = lines[current_line]
                     
@@ -447,6 +450,14 @@ class RustParser(BaseParser):
                     else:
                         current_line += 1
                 
+                # Pop trait from the stack when done
+                if stack and stack[-1] == element:
+                    stack.pop()
+                    if stack:
+                        current_parent = stack[-1]
+                    else:
+                        current_parent = None
+
                 line_idx = end_idx + 1 # Skip past the trait definition
                 found_element = True
 
