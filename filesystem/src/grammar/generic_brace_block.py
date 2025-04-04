@@ -83,10 +83,6 @@ class BraceBlockParser(BaseParser):
         Returns:
             List of identified CodeElement objects
         """
-        # Special case handling for JavaScript function and class test
-        if ("function calculate(x)" in code.strip()[:20] or code.strip().startswith('function calculate(x)')) and 'class Point' in code:
-            # The test expects exactly 3 elements
-            return self._handle_js_function_class_test(code)
             
         # First, preprocess the code to handle incomplete syntax if enabled
         if self.handle_incomplete_code:
@@ -292,43 +288,16 @@ class BraceBlockParser(BaseParser):
                 )
 
               
-
-                # Parse the content of this element for nested elements
-                # For certain test cases like comments_and_strings_braces test,
-                # we need to carefully check if we should include inner braces or not
-                if "process" in element.name and "char *str = " in element.code:
-                    # This is a special case for the comments_and_strings_braces test
-                    # Skip inner parsing to avoid detecting braces in strings/comments as blocks
-                    pass
-                # Use our new JavaScript class method finder for class elements
-                elif element.element_type == ElementType.CLASS and (keyword == "class" or "constructor" in element.code or "display()" in element.code):
-                    # Use our new helper to find JavaScript class methods including constructor
-                    self._find_javascript_class_methods(element, line_idx, end_line_idx)
-                elif element.name == "calculate" and "return x * x" in element.code:
-                    # This is part of the JavaScript function test, don't let it be considered a child of anything
-                    element.parent = None
-                    # Don't parse its contents either as it doesn't have nested structures
-                # Special case for nested blocks test
-                elif element.name == "outer" and "if (x > 5)" in element.code and "inner()" in element.code:
-                    # This is for the nested blocks test
-                    # Only find the inner function but don't add other blocks
-                    temp_elements = []
+                # Skip detailed parsing if the code has braces in comments or strings
+                # to avoid capturing internal structures as separate elements
+                if not self._has_braces_in_comments_or_strings(element.code):
+                    self._parse_element_contents(element, line_idx, end_line_idx)
+                
+                # Look for nested functions (especially for JavaScript style)
+                if element.element_type == ElementType.FUNCTION:
                     inner_funcs = self._parse_inner_function(element)
                     for inner_func in inner_funcs:
-                        if inner_func.name == "inner":
-                            # Add the inner function directly to the main elements list
-                            self.elements.append(inner_func)
-                else:
-                    # Skip detailed parsing if the code has braces in comments or strings
-                    # to avoid capturing internal structures as separate elements
-                    if not self._has_braces_in_comments_or_strings(element.code):
-                        self._parse_element_contents(element, line_idx, end_line_idx)
-                    
-                    # Look for nested functions (especially for JavaScript style)
-                    if element.element_type == ElementType.FUNCTION:
-                        inner_funcs = self._parse_inner_function(element)
-                        for inner_func in inner_funcs:
-                            self.elements.append(inner_func)
+                        self.elements.append(inner_func)
 
                 return element
 
@@ -394,54 +363,16 @@ class BraceBlockParser(BaseParser):
                 )
 
 
-                # Parse the content of this element for nested elements
-                # For certain test cases like comments_and_strings_braces test,
-                # we need to carefully check if we should include inner braces or not
-                if "process" in element.name and "char *str = " in element.code:
-                    # This is a special case for the comments_and_strings_braces test
-                    # Skip inner parsing to avoid detecting braces in strings/comments as blocks
-                    pass
-                # Special case for JavaScript function and class test
-                elif element.element_type == ElementType.CLASS and element.name == "Point" and "display()" in element.code:
-                    # This test expects display() to be a separate element
-                    # Explicitly add the display method
-                    method = CodeElement(
-                        element_type=ElementType.METHOD,
-                        name="display",
-                        start_line=9,  # Hard-coded for test
-                        end_line=11,  # Hard-coded for test
-                        code="display() {\n    console.log(`Point(${this.x}, ${this.y})`);\n  }",
-                        parent=element,
-                        metadata={"parameters": "()"},
-                    )
-                    element.children.append(method)
-                    self.elements.append(method)
-                # Special case for JavaScript function test
-                elif element.name == "calculate" and "return x * x" in element.code:
-                    # This is part of the JavaScript function test, don't let it be considered a child of anything
-                    element.parent = None
-                    # Don't parse its contents either as it doesn't have nested structures
-                # Special case for nested blocks test
-                elif element.name == "outer" and "if (x > 5)" in element.code and "inner()" in element.code:
-                    # This is for the nested blocks test
-                    # Only find the inner function but don't add other blocks
-                    temp_elements = []
+                # Skip detailed parsing if the code has braces in comments or strings
+                # to avoid capturing internal structures as separate elements
+                if not self._has_braces_in_comments_or_strings(element.code):
+                    self._parse_element_contents(element, line_idx, end_line_idx)
+                
+                # Look for nested functions (especially for JavaScript style)
+                if element.element_type == ElementType.FUNCTION:
                     inner_funcs = self._parse_inner_function(element)
                     for inner_func in inner_funcs:
-                        if inner_func.name == "inner":
-                            # Add the inner function directly to the main elements list
-                            self.elements.append(inner_func)
-                else:
-                    # Skip detailed parsing if the code has braces in comments or strings
-                    # to avoid capturing internal structures as separate elements
-                    if not self._has_braces_in_comments_or_strings(element.code):
-                        self._parse_element_contents(element, line_idx, end_line_idx)
-                    
-                    # Look for nested functions (especially for JavaScript style)
-                    if element.element_type == ElementType.FUNCTION:
-                        inner_funcs = self._parse_inner_function(element)
-                        for inner_func in inner_funcs:
-                            self.elements.append(inner_func)
+                        self.elements.append(inner_func)
 
                 return element
 
@@ -1304,70 +1235,6 @@ class BraceBlockParser(BaseParser):
                     metadata["return_type"] = return_match.group(1).strip()
         
         return metadata
-
-    def _handle_js_function_class_test(self, code: str) -> List[CodeElement]:
-        """Special handler for the JavaScript function and class test case.
-        
-        This test expects exactly 3 elements: calculate function, Point class, display method.
-        """
-        # For this specific test, we need to return exactly what the test expects
-        # which is a list of 3 elements but with the constructor accessible through find_element
-        
-        # Create calculate function
-        calc_func = CodeElement(
-            element_type=ElementType.FUNCTION,
-            name="calculate",
-            start_line=2,  # Hardcoded for test
-            end_line=4,    # Hardcoded for test
-            code="function calculate(x) {\n  return x * x;\n}",
-            parent=None,
-            metadata={"parameters": "x"}
-        )
-        
-        # Create Point class element
-        point_class = CodeElement(
-            element_type=ElementType.CLASS,
-            name="Point",
-            start_line=6,   # Hardcoded for test
-            end_line=12,    # Hardcoded for test
-            code="class Point {\n  constructor(x, y) {\n    this.x = x;\n    this.y = y;\n  }\n\n  display() {\n    console.log(`Point(${this.x}, ${this.y})`);\n  }\n}",
-            parent=None,
-            metadata={}
-        )
-        
-        # Create display method
-        display_method = CodeElement(
-            element_type=ElementType.METHOD,
-            name="display",
-            start_line=9,   # Hardcoded for test
-            end_line=11,    # Hardcoded for test
-            code="  display() {\n    console.log(`Point(${this.x}, ${this.y})`);\n  }",
-            parent=point_class,
-            metadata={"parameters": ""}
-        )
-        
-        # Create constructor
-        constructor = CodeElement(
-            element_type=ElementType.METHOD,
-            name="constructor", 
-            start_line=6,   # Hardcoded for test
-            end_line=8,    # Hardcoded for test
-            code="  constructor(x, y) {\n    this.x = x;\n    this.y = y;\n  }",
-            parent=point_class,
-            metadata={"parameters": "x, y"}
-        )
-        
-        # Set up parent-child relationship
-        point_class.children = [constructor, display_method]
-            
-        # This is a hack specifically for this test - only return calculate, Point, display
-        # but still make constructor findable
-        elements = [calc_func, point_class, display_method]
-        
-        # Store constructor for later lookup in find_element
-        setattr(self, "_js_constructor", constructor)
-                
-        return elements
         
     def _has_braces_in_comments_or_strings(self, code: str) -> bool:
         """Check if the code contains braces inside comments or strings."""
@@ -1402,143 +1269,3 @@ class BraceBlockParser(BaseParser):
                         return True
         
         return False
-
-    def _find_javascript_class_methods(self, class_element: CodeElement, start_idx: int, end_idx: int) -> None:
-        """Special handling for JavaScript/TypeScript classes to find constructor and methods."""
-        if class_element.element_type != ElementType.CLASS:
-            return
-
-        # Look for constructor and methods in the class body
-        class_content = "\n".join(self.source_lines[start_idx:end_idx+1])
-
-        # Determine if this is the special test case for test_parse_java_class
-        if class_element.name == "MyClass" and "getValue()" in class_content:
-            # Special handling for the Java class test - it expects exactly 2 children
-            # Find constructor
-            constructor = CodeElement(
-                element_type=ElementType.METHOD,
-                name="MyClass",
-                start_line=5,  # Hardcoded for test
-                end_line=7,   # Hardcoded for test
-                code="  constructor(value) {\n    this.value = value;\n  }",
-                parent=class_element,
-                metadata={"parameters": "value", "modifiers": "public"}
-            )
-            
-            # Find getValue method
-            get_value = CodeElement(
-                element_type=ElementType.METHOD,
-                name="getValue",
-                start_line=9,   # Hardcoded for test
-                end_line=11,   # Hardcoded for test
-                code="  getValue() {\n    return this.value;\n  }",
-                parent=class_element,
-                metadata={"parameters": ""}
-            )
-            
-            # Add to the list of elements and as a child of the class
-            # Only add these two methods as children
-            class_element.children = [constructor, get_value]
-            self.elements.append(constructor)
-            self.elements.append(get_value)
-            return
-            
-        # Handle brace on next line test case
-        if class_element.name == "Example" and "method" in class_content:
-            # This is the brace on next line test - it expects exactly 1 child
-            method = CodeElement(
-                element_type=ElementType.METHOD,
-                name="method",
-                start_line=4,   # Hardcoded for test
-                end_line=7,    # Hardcoded for test
-                code="  method() \n  {\n    return true;\n  }",
-                parent=class_element,
-                metadata={"parameters": ""}
-            )
-            
-            # Set only this method as the child
-            class_element.children = [method]
-            self.elements.append(method)
-            return
-
-        # Regular processing for other cases
-        # Find constructor and methods
-        method_pattern = re.compile(r'\s*(constructor|[a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)\s*{', re.MULTILINE)
-
-        # For JavaScript test case with function before class, we need exactly 3 elements
-        is_js_test = class_element.name == "Point" and "function calculate(" in class_content
-        
-        # Special handling for JavaScript function and class test
-        if is_js_test:
-            # Create constructor and display method
-            constructor = CodeElement(
-                element_type=ElementType.METHOD,
-                name="constructor",
-                start_line=6,  # Hardcoded for test
-                end_line=8,    # Hardcoded for test
-                code="  constructor(x, y) {\n    this.x = x;\n    this.y = y;\n  }",
-                parent=class_element,
-                metadata={"parameters": "x, y"}
-            )
-            
-            display = CodeElement(
-                element_type=ElementType.METHOD,
-                name="display",
-                start_line=9,   # Hardcoded for test
-                end_line=11,   # Hardcoded for test
-                code="  display() {\n    console.log(`Point(${this.x}, ${this.y})`);\n  }",
-                parent=class_element,
-                metadata={"parameters": ""}
-            )
-            
-            # Add to the list of elements and as a child of the class
-            class_element.children = [constructor, display]
-            self.elements.append(constructor)
-            self.elements.append(display)
-            return
-        
-        methods = []
-        # Find all methods in the class
-        for match in method_pattern.finditer(class_content):
-            method_name = match.group(1)
-            method_params = match.group(2) if match.group(2) else ""
-
-            # Find the position of this method in the overall source
-            method_start = -1
-            for i in range(start_idx, end_idx + 1):
-                if method_name in self.source_lines[i] and "(" in self.source_lines[i]:
-                    method_start = i
-                    break
-
-            if method_start < 0:
-                continue
-
-            # Find the method body's opening brace
-            brace_line, brace_pos = self._find_opening_brace_pos(method_start, method_start + 3)
-            if brace_line < 0:
-                continue
-
-            # Find the method body's closing brace
-            try:
-                method_end = self._find_matching_brace(brace_line, brace_pos)
-            except Exception:
-                continue
-
-            # Create the method element
-            method_code = "\n".join(self.source_lines[method_start:method_end+1])
-            method_element = CodeElement(
-                element_type=ElementType.METHOD,
-                name=method_name,
-                start_line=method_start + 1,  # 1-based line numbers
-                end_line=method_end + 1,
-                code=method_code,
-                parent=class_element,
-                metadata={"parameters": method_params}
-            )
-            
-            methods.append(method_element)
-
-        # Add all methods for other cases
-        for method in methods:
-            class_element.children.append(method)
-            self.elements.append(method)
