@@ -42,6 +42,18 @@ class TokenType(Enum):
     COMMA = "comma"                    # ,
     DOT = "dot"                        # .
     
+    # CSS specific tokens
+    AT_RULE = "at_rule"                # @media, @import, etc.
+    PROPERTY = "property"              # CSS property name
+    VALUE = "value"                    # CSS property value
+    SELECTOR = "selector"              # CSS selector
+    
+    # JSX specific tokens
+    JSX_TAG = "jsx_tag"                # <tag>, </tag>, <tag/>, etc.
+    JSX_ATTRIBUTE = "jsx_attribute"    # attribute names in JSX tags
+    JSX_EXPRESSION = "jsx_expression"  # {expression} in JSX
+    JSX_TEXT = "jsx_text"              # Text content between JSX tags
+    
     UNKNOWN = "unknown"
 
 
