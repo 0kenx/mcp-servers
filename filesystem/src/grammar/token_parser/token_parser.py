@@ -11,7 +11,7 @@ from .tokenizer import Tokenizer
 from .parser_state import ParserState
 from .symbol_table import SymbolTable
 from .context_tracker import ContextTracker
-from ..base import BaseParser, CodeElement, ElementType
+from .base import BaseParser, CodeElement, ElementType
 
 
 class TokenParser(BaseParser):

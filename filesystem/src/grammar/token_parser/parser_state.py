@@ -5,7 +5,7 @@ This module provides the ParserState class that tracks the state during parsing.
 """
 
 from typing import List, Dict, Set, Optional, Any, Union
-from ..base import CodeElement
+from .base import CodeElement
 
 
 class ContextInfo:
