@@ -17,6 +17,8 @@ from .javascript_tokenizer import JavaScriptTokenizer
 from .javascript_parser import JavaScriptParser
 from .generic_parsers import BraceBlockParser, IndentationBlockParser, KeywordBlockParser
 from .parser_factory import ParserFactory
+from .context_tracker import ContextTracker, Context
+from .ast_utils import remove_circular_refs, format_ast_for_output
 
 __all__ = [
     'Token',
@@ -37,4 +39,8 @@ __all__ = [
     'IndentationBlockParser',
     'KeywordBlockParser',
     'ParserFactory',
+    'ContextTracker',
+    'Context',
+    'remove_circular_refs',
+    'format_ast_for_output',
 ] 

@@ -251,6 +251,19 @@ class PythonParser(TokenParser):
                     if index < len(tokens) and tokens[index].token_type == TokenType.IDENTIFIER:
                         param_type = tokens[index].value
                         index += 1
+                    
+                    # Support complex type annotations like List[str], Dict[str, int], etc.
+                    if index < len(tokens) and tokens[index].token_type == TokenType.OPEN_BRACKET:
+                        bracket_depth = 1
+                        index += 1
+                        
+                        # Collect the entire type annotation
+                        while index < len(tokens) and bracket_depth > 0:
+                            if tokens[index].token_type == TokenType.OPEN_BRACKET:
+                                bracket_depth += 1
+                            elif tokens[index].token_type == TokenType.CLOSE_BRACKET:
+                                bracket_depth -= 1
+                            index += 1
                 
                 # Check for default value
                 default_value = None
@@ -262,21 +275,39 @@ class PythonParser(TokenParser):
                         index += 1
                     
                     # Parse default value expression
-                    default_value_expr = self._parse_expression(tokens, index)
-                    if default_value_expr:
-                        default_value = default_value_expr["node"]
-                        index = default_value_expr["next_index"]
+                    default_expr = self._parse_expression(tokens, index)
+                    if default_expr:
+                        default_value = default_expr["node"]
+                        index = default_expr["next_index"]
                 
-                parameters.append({
+                # Create parameter node
+                param_node = {
                     "type": "Parameter",
                     "name": param_name,
-                    "annotation": param_type,
-                    "default": default_value,
+                    "type_annotation": param_type,
+                    "default_value": default_value,
                     "start": param_index,
                     "end": index - 1,
                     "parent": None,
                     "children": []
-                })
+                }
+                
+                # Add parameter to symbol table
+                self.symbol_table.add_symbol(
+                    name=param_name,
+                    symbol_type="parameter",
+                    position=tokens[param_index].position,
+                    line=tokens[param_index].line,
+                    column=tokens[param_index].column,
+                    metadata={"type": param_type}
+                )
+                
+                parameters.append(param_node)
+                
+                # Set parent-child relationship for default value
+                if default_value:
+                    default_value["parent"] = param_node
+                    param_node["children"].append(default_value)
             
             # Skip comma
             if index < len(tokens) and tokens[index].token_type == TokenType.COMMA:
@@ -300,6 +331,19 @@ class PythonParser(TokenParser):
             if index < len(tokens) and tokens[index].token_type == TokenType.IDENTIFIER:
                 return_type = tokens[index].value
                 index += 1
+                
+                # Support complex return types like List[str], Dict[str, int], etc.
+                if index < len(tokens) and tokens[index].token_type == TokenType.OPEN_BRACKET:
+                    bracket_depth = 1
+                    index += 1
+                    
+                    # Collect the entire return type
+                    while index < len(tokens) and bracket_depth > 0:
+                        if tokens[index].token_type == TokenType.OPEN_BRACKET:
+                            bracket_depth += 1
+                        elif tokens[index].token_type == TokenType.CLOSE_BRACKET:
+                            bracket_depth -= 1
+                        index += 1
         
         # Skip whitespace and colon
         while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
@@ -323,46 +367,115 @@ class PythonParser(TokenParser):
                         current_indent_level = indent_token.metadata["indent_size"]
                 break
         
-        # Context metadata
-        context_metadata = {"name": function_name}
+        # Determine if we're in a class context (method vs function)
+        is_method = self.is_in_context(self.context_types["class"])
+        context_type = self.context_types["method"] if is_method else self.context_types["function"]
         
-        # Add function to symbol table
+        # Context metadata
+        context_metadata = {
+            "name": function_name,
+            "parameters": [p["name"] for p in parameters],
+            "return_type": return_type,
+            "is_method": is_method
+        }
+        
+        # Add function/method to symbol table
         self.symbol_table.add_symbol(
             name=function_name,
-            symbol_type="function",
+            symbol_type="method" if is_method else "function",
             position=tokens[name_index].position,
             line=tokens[name_index].line,
             column=tokens[name_index].column,
-            metadata={"parameters": [p["name"] for p in parameters]}
+            metadata={
+                "parameters": [p["name"] for p in parameters],
+                "return_type": return_type
+            }
         )
         
+        # Enter function context
+        if self.context_tracker:
+            self.context_tracker.enter_context(
+                context_type, 
+                function_name, 
+                context_metadata,
+                start_index
+            )
+        else:
+            # For backward compatibility
+            self.state.enter_context(ContextInfo(context_type, context_metadata))
+        
         # Parse function body using generic indentation block parser
-        body_tokens, next_index = IndentationBlockParser.parse_block(
+        body_token_indices, next_index = IndentationBlockParser.parse_block(
             tokens,
             index,
             current_indent_level,
             self.state,
-            self.context_types["function"],
+            None,  # Don't push context again, we already did it above
             context_metadata
         )
         
+        # Process the body tokens into actual nodes
+        body_nodes = []
+        i = 0
+        while i < len(body_token_indices):
+            token_index = body_token_indices[i]
+            
+            # Skip whitespace and newlines
+            if tokens[token_index].token_type in [TokenType.WHITESPACE, TokenType.NEWLINE]:
+                i += 1
+                continue
+            
+            # Parse statement based on token type
+            if tokens[token_index].token_type == TokenType.KEYWORD:
+                stmt = self._parse_keyword_statement(tokens, token_index)
+                if stmt:
+                    body_nodes.append(stmt["node"])
+                    # Skip ahead to tokens after this statement
+                    while i < len(body_token_indices) and body_token_indices[i] < stmt["next_index"]:
+                        i += 1
+                else:
+                    i += 1
+            elif tokens[token_index].token_type == TokenType.IDENTIFIER:
+                stmt = self._parse_expression_statement(tokens, token_index)
+                if stmt:
+                    body_nodes.append(stmt["node"])
+                    # Skip ahead to tokens after this statement
+                    while i < len(body_token_indices) and body_token_indices[i] < stmt["next_index"]:
+                        i += 1
+                else:
+                    i += 1
+            else:
+                # Other token types
+                i += 1
+        
+        # Exit function context
+        if self.context_tracker:
+            self.context_tracker.exit_context(next_index)
+        else:
+            # For backward compatibility
+            self.state.exit_context()
+        
         # Create function node
         function_node = {
-            "type": "FunctionDefinition",
+            "type": "FunctionDefinition" if not is_method else "MethodDefinition",
             "name": function_name,
             "parameters": parameters,
             "return_type": return_type,
-            "body": body_tokens,
+            "body": body_nodes,
             "start": start_index,
             "end": next_index - 1,
             "parent": None,
             "children": []
         }
         
-        # Set parent-child relationships for parameters
+        # Set parent-child relationships for parameters and body nodes
         for param in parameters:
             param["parent"] = function_node
             function_node["children"].append(param)
+        
+        for node in body_nodes:
+            node["parent"] = function_node
+            function_node["children"].append(node)
         
         return {
             "node": function_node,
@@ -472,32 +585,89 @@ class PythonParser(TokenParser):
             metadata={"bases": [b["name"] for b in bases]}
         )
         
+        # Enter class context
+        if self.context_tracker:
+            self.context_tracker.enter_context(
+                self.context_types["class"], 
+                class_name, 
+                context_metadata,
+                start_index
+            )
+        else:
+            # For backward compatibility
+            self.state.enter_context(ContextInfo(self.context_types["class"], context_metadata))
+        
         # Parse class body using generic indentation block parser
-        body_tokens, next_index = IndentationBlockParser.parse_block(
+        body_token_indices, next_index = IndentationBlockParser.parse_block(
             tokens,
             index,
             current_indent_level,
             self.state,
-            self.context_types["class"],
+            None,  # Don't push context again, we already did it above
             context_metadata
         )
+        
+        # Process the body tokens into actual nodes
+        body_nodes = []
+        i = 0
+        while i < len(body_token_indices):
+            token_index = body_token_indices[i]
+            
+            # Skip whitespace and newlines
+            if tokens[token_index].token_type in [TokenType.WHITESPACE, TokenType.NEWLINE]:
+                i += 1
+                continue
+            
+            # Parse statement based on token type
+            if tokens[token_index].token_type == TokenType.KEYWORD:
+                stmt = self._parse_keyword_statement(tokens, token_index)
+                if stmt:
+                    body_nodes.append(stmt["node"])
+                    # Skip ahead to tokens after this statement
+                    while i < len(body_token_indices) and body_token_indices[i] < stmt["next_index"]:
+                        i += 1
+                else:
+                    i += 1
+            elif tokens[token_index].token_type == TokenType.IDENTIFIER:
+                stmt = self._parse_expression_statement(tokens, token_index)
+                if stmt:
+                    body_nodes.append(stmt["node"])
+                    # Skip ahead to tokens after this statement
+                    while i < len(body_token_indices) and body_token_indices[i] < stmt["next_index"]:
+                        i += 1
+                else:
+                    i += 1
+            else:
+                # Other token types
+                i += 1
+        
+        # Exit class context
+        if self.context_tracker:
+            self.context_tracker.exit_context(next_index)
+        else:
+            # For backward compatibility
+            self.state.exit_context()
         
         # Create class node
         class_node = {
             "type": "ClassDefinition",
             "name": class_name,
             "bases": bases,
-            "body": body_tokens,
+            "body": body_nodes,
             "start": start_index,
             "end": next_index - 1,
             "parent": None,
             "children": []
         }
         
-        # Set parent-child relationships for bases
+        # Set parent-child relationships for bases and body nodes
         for base in bases:
             base["parent"] = class_node
             class_node["children"].append(base)
+        
+        for node in body_nodes:
+            node["parent"] = class_node
+            class_node["children"].append(node)
         
         return {
             "node": class_node,

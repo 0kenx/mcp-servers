@@ -15,6 +15,7 @@ parent_dir = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.append(str(parent_dir))
 
 from grammar.token_parser import ParserFactory
+from grammar.token_parser.ast_utils import format_ast_for_output
 
 
 def parse_html_code(code: str) -> None:
@@ -33,37 +34,8 @@ def parse_html_code(code: str) -> None:
     # Parse the code
     ast = parser.parse(code)
     
-    # Create a function to remove circular references for JSON serialization
-    def remove_circular_refs(node, visited=None):
-        if visited is None:
-            visited = set()
-        
-        # Handle non-dict/list types
-        if not isinstance(node, (dict, list)):
-            return node
-        
-        # Handle recursive structures
-        node_id = id(node)
-        if node_id in visited:
-            return None  # or some placeholder like "[Circular]"
-        
-        visited.add(node_id)
-        
-        if isinstance(node, dict):
-            # Create a new dict excluding 'parent' and any circular references
-            result = {}
-            for k, v in node.items():
-                if k != 'parent':  # Skip parent to avoid circular refs
-                    result[k] = remove_circular_refs(v, visited.copy())
-            return result
-        
-        elif isinstance(node, list):
-            return [remove_circular_refs(item, visited.copy()) for item in node]
-        else:
-            return node
-    
-    # Remove circular references and print the AST as JSON
-    serializable_ast = remove_circular_refs(ast)
+    # Format AST for output (removes circular references)
+    serializable_ast = format_ast_for_output(ast)
     print(json.dumps(serializable_ast, indent=2, default=str))
     
     # Print the symbol table
@@ -73,7 +45,15 @@ def parse_html_code(code: str) -> None:
     for scope, symbols in all_symbols.items():
         print(f"\nScope: {scope}")
         for symbol in symbols:
-            print(f"  {symbol.name} (Type: {symbol.symbol_type}, Line: {symbol.line}, Column: {symbol.column})")
+            metadata_str = ""
+            if symbol.metadata and "attributes" in symbol.metadata:
+                attributes = symbol.metadata["attributes"]
+                if attributes:
+                    attrs = [attr.get("name", "") for attr in attributes if "name" in attr]
+                    if attrs:
+                        metadata_str = f", Attributes: {', '.join(attrs)}"
+            
+            print(f"  {symbol.name} (Type: {symbol.symbol_type}, Line: {symbol.line}, Column: {symbol.column}{metadata_str})")
 
 
 def main() -> None:

@@ -10,6 +10,7 @@ from .token import Token, TokenType
 from .tokenizer import Tokenizer
 from .parser_state import ParserState
 from .symbol_table import SymbolTable
+from .context_tracker import ContextTracker
 from ..base import BaseParser, CodeElement, ElementType
 
 
@@ -28,6 +29,7 @@ class TokenParser(BaseParser):
         self.elements: List[CodeElement] = []
         self.state: Optional[ParserState] = None
         self.symbol_table: Optional[SymbolTable] = None
+        self.context_tracker: Optional[ContextTracker] = None
     
     def parse(self, code: str) -> List[CodeElement]:
         """
@@ -43,6 +45,7 @@ class TokenParser(BaseParser):
         self.elements = []
         self.state = ParserState()
         self.symbol_table = SymbolTable()
+        self.context_tracker = ContextTracker()
         
         # Tokenize
         tokens = self.tokenize(code)
@@ -70,12 +73,15 @@ class TokenParser(BaseParser):
         
         return self.tokenizer.tokenize(code)
     
-    def build_ast(self, tokens: List[Token]) -> None:
+    def build_ast(self, tokens: List[Token]) -> Dict[str, Any]:
         """
         Build an abstract syntax tree from the tokens.
         
         Args:
             tokens: List of tokens
+            
+        Returns:
+            Dictionary representing the abstract syntax tree
         """
         raise NotImplementedError("Subclasses must implement build_ast")
     
@@ -87,6 +93,81 @@ class TokenParser(BaseParser):
         self._validate_parent_child_relationships()
         self._fix_orphaned_elements()
         self._fix_element_types()
+    
+    def enter_context(self, type_: str, name: Optional[str] = None, 
+                     metadata: Optional[Dict[str, Any]] = None,
+                     start: int = -1) -> None:
+        """
+        Enter a new parsing context.
+        
+        This updates both the context_tracker and state for backward compatibility.
+        
+        Args:
+            type_: Type of the context
+            name: Optional name for the context
+            metadata: Optional metadata for the context
+            start: Start position of the context
+        """
+        if self.context_tracker:
+            self.context_tracker.enter_context(type_, name, metadata, start)
+        
+        # For backward compatibility with state
+        if self.state:
+            self.state.enter_context(type_, metadata)
+    
+    def exit_context(self, end: int = -1) -> None:
+        """
+        Exit the current context.
+        
+        This updates both the context_tracker and state for backward compatibility.
+        
+        Args:
+            end: End position of the context
+        """
+        if self.context_tracker:
+            self.context_tracker.exit_context(end)
+        
+        # For backward compatibility with state
+        if self.state:
+            self.state.exit_context()
+    
+    def get_current_context_type(self) -> str:
+        """
+        Get the current context type.
+        
+        Returns:
+            The current context type
+        """
+        if self.context_tracker and self.context_tracker.get_current_context():
+            return self.context_tracker.get_current_context().type
+        
+        # Fallback to state
+        if self.state:
+            return self.state.context_type
+        
+        return "code"
+    
+    def is_in_context(self, *context_types: str) -> bool:
+        """
+        Check if currently in any of the given context types.
+        
+        Args:
+            *context_types: Context types to check
+            
+        Returns:
+            True if in any of the given context types
+        """
+        if self.context_tracker:
+            for context_type in context_types:
+                if self.context_tracker.get_context_of_type(context_type):
+                    return True
+            return False
+        
+        # Fallback to state
+        if self.state:
+            return self.state.is_in_context(*context_types)
+        
+        return False
     
     def _check_for_overlapping_elements(self) -> None:
         """
