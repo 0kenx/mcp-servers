@@ -13,7 +13,7 @@ from .token_parser import TokenParser
 from .parser_state import ParserState, ContextInfo
 from .symbol_table import SymbolTable
 from .css_tokenizer import CSSTokenizer
-from .generic_parsers import BraceBlockParser
+from .generic_brace_block_parser import BraceBlockParser
 
 
 class CSSParser(TokenParser):

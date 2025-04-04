@@ -38,14 +38,14 @@ def parse_python_code(code: str) -> None:
     serializable_ast = format_ast_for_output(ast)
     print(json.dumps(serializable_ast, indent=2, default=str))
     
-    # Print the symbol table
-    print("\nSymbol Table:")
-    all_symbols = parser.symbol_table.get_all_symbols()
+    # # Print the symbol table
+    # print("\nSymbol Table:")
+    # all_symbols = parser.symbol_table.get_all_symbols()
     
-    for scope, symbols in all_symbols.items():
-        print(f"\nScope: {scope}")
-        for symbol in symbols:
-            print(f"  {symbol.name} ({symbol.symbol_type}) at line {symbol.line}, column {symbol.column}")
+    # for scope, symbols in all_symbols.items():
+    #     print(f"\nScope: {scope}")
+    #     for symbol in symbols:
+    #         print(f"  {symbol.name} ({symbol.symbol_type}) at line {symbol.line}, column {symbol.column}")
 
 
 def main() -> None:

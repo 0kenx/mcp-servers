@@ -13,7 +13,7 @@ from .token_parser import TokenParser
 from .parser_state import ParserState, ContextInfo
 from .symbol_table import SymbolTable, Symbol
 from .python_tokenizer import PythonTokenizer
-from .generic_parsers import IndentationBlockParser
+from .generic_indentation_block_parser import IndentationBlockParser
 
 
 class PythonParser(TokenParser):

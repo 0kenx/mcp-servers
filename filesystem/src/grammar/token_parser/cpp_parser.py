@@ -13,7 +13,7 @@ from .c_parser import CParser
 from .parser_state import ParserState, ContextInfo
 from .symbol_table import SymbolTable
 from .cpp_tokenizer import CppTokenizer
-from .generic_parsers import BraceBlockParser
+from .generic_brace_block_parser import BraceBlockParser
 
 
 class CppParser(CParser):

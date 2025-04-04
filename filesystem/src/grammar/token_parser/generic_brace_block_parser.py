@@ -7,6 +7,7 @@ like brace blocks, indentation blocks, and keyword-based blocks.
 
 from typing import List, Dict, Set, Optional, Any, Tuple, cast
 from .token import Token, TokenType
+from .token_parser import TokenParser
 from .parser_state import ParserState, ContextInfo
 from .symbol_table import SymbolTable
 from .generic_brace_block_tokenizer import BraceBlockTokenizer
