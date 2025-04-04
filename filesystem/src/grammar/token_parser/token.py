@@ -5,6 +5,7 @@ Represents a single token in the code.
 
 from enum import Enum
 from typing import Optional, Dict, Any
+from dataclasses import dataclass, field
 
 
 class TokenType(Enum):
@@ -57,6 +58,7 @@ class TokenType(Enum):
     UNKNOWN = "unknown"
 
 
+@dataclass
 class Token:
     """
     Represents a token in the source code.
@@ -64,33 +66,13 @@ class Token:
     A token is a lexical unit recognized by the parser, such as a keyword,
     identifier, delimiter, operator, etc.
     """
+    token_type: TokenType
+    value: str
+    position: int
+    line: int
+    column: int
+    metadata: Optional[Dict[str, Any]] = field(default_factory=dict)
     
-    def __init__(
-        self, 
-        token_type: TokenType, 
-        value: str, 
-        position: int,
-        line: int,
-        column: int,
-        metadata: Optional[Dict[str, Any]] = None
-    ):
-        """
-        Initialize a token.
-        
-        Args:
-            token_type: Type of the token
-            value: Text value of the token
-            position: Position in the source code (character index)
-            line: Line number (1-based)
-            column: Column number (1-based)
-            metadata: Additional information about the token
-        """
-        self.token_type = token_type
-        self.value = value
-        self.position = position
-        self.line = line
-        self.column = column
-        self.metadata = metadata or {}
     
     def __repr__(self):
         return f"Token({self.token_type.value}, '{self.value}', line {self.line}, col {self.column})"

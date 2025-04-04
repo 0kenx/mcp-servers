@@ -40,7 +40,7 @@ def parse_javascript_code(code: str) -> None:
     
     # Print the symbol table
     print("\nSymbol Table:")
-    all_symbols = parser.symbol_table.get_all_symbols()
+    all_symbols = parser.symbol_table.get_symbols_by_scope()
     
     for scope, symbols in all_symbols.items():
         print(f"\nScope: {scope}")

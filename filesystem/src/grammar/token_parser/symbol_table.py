@@ -6,66 +6,39 @@ symbol tables during parsing.
 """
 
 from typing import Dict, Any, Optional, List, Set, Union
+from dataclasses import dataclass, field
 
 
+@dataclass
 class Symbol:
     """
     Represents a symbol in the symbol table.
     
     A symbol can be a variable, function, class, etc.
     """
-    
-    def __init__(
-        self,
-        name: str,
-        symbol_type: str,
-        position: int,
-        line: int,
-        column: int,
-        metadata: Optional[Dict[str, Any]] = None
-    ):
-        """
-        Initialize a symbol.
-        
-        Args:
-            name: Name of the symbol
-            symbol_type: Type of the symbol (variable, function, class, etc.)
-            position: Character position in the source code
-            line: Line number (1-based)
-            column: Column number (1-based) 
-            metadata: Additional information about the symbol
-        """
-        self.name = name
-        self.symbol_type = symbol_type
-        self.position = position
-        self.line = line
-        self.column = column
-        self.metadata = metadata or {}
+    name: str
+    symbol_type: str
+    position: int
+    line: int
+    column: int
+    metadata: Dict[str, Any] = field(default_factory=dict)
     
     def __repr__(self):
         return f"Symbol({self.symbol_type}, '{self.name}', line {self.line})"
 
 
+@dataclass
 class Scope:
     """
     Represents a scope in the symbol table.
     
     A scope is a region of code where symbols are defined and can be referenced.
     """
-    
-    def __init__(self, scope_type: str, parent: Optional['Scope'] = None):
-        """
-        Initialize a scope.
-        
-        Args:
-            scope_type: Type of scope (global, function, class, block, etc.)
-            parent: Parent scope, or None for the global scope
-        """
-        self.scope_type = scope_type
-        self.parent = parent
-        self.symbols: Dict[str, Symbol] = {}
-        self.children: List['Scope'] = []
-        self.metadata: Dict[str, Any] = {}
+    scope_type: str
+    parent: Optional['Scope'] = None
+    symbols: Dict[str, Symbol] = field(default_factory=dict)
+    children: List['Scope'] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
     
     def add_symbol(self, symbol: Symbol) -> None:
         """
@@ -172,7 +145,7 @@ class SymbolTable:
         Returns:
             The created symbol
         """
-        symbol = Symbol(name, symbol_type, position, line, column, metadata)
+        symbol = Symbol(name, symbol_type, position, line, column, metadata or {})
         self.current_scope.add_symbol(symbol)
         return symbol
     
@@ -204,7 +177,7 @@ class SymbolTable:
     
     def get_all_symbols(self) -> List[Symbol]:
         """
-        Get all symbols from all scopes.
+        Get all symbols from all scopes as a flat list.
         
         Returns:
             List of all symbols
@@ -217,4 +190,24 @@ class SymbolTable:
                 collect_symbols(child)
         
         collect_symbols(self.global_scope)
-        return symbols 
+        return symbols
+    
+    def get_symbols_by_scope(self) -> Dict[str, List[Symbol]]:
+        """
+        Get all symbols organized by scope.
+        
+        Returns:
+            Dictionary mapping scope identifiers to lists of symbols
+        """
+        result: Dict[str, List[Symbol]] = {}
+        
+        def collect_symbols_by_scope(scope: Scope, path: str = "") -> None:
+            scope_path = f"{path}/{scope.scope_type}" if path else scope.scope_type
+            result[scope_path] = list(scope.symbols.values())
+            
+            for i, child in enumerate(scope.children):
+                child_path = f"{scope_path}/{i}"
+                collect_symbols_by_scope(child, child_path)
+        
+        collect_symbols_by_scope(self.global_scope)
+        return result 
