@@ -1,0 +1,1 @@
+def outer_function():

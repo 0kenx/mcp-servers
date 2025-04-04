@@ -1,0 +1,3 @@
+return "Inside!"
+    
+    class InnerClass:
