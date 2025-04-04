@@ -9,6 +9,13 @@ from typing import Dict, Type, Optional
 from .token_parser import TokenParser
 from .python_parser import PythonParser
 from .javascript_parser import JavaScriptParser
+from .typescript_parser import TypeScriptParser
+from .c_parser import CParser
+from .cpp_parser import CppParser
+from .rust_parser import RustParser
+from .html_parser import HTMLParser
+from .css_parser import CSSParser
+from .ts_react_parser import TSReactParser
 
 
 class ParserFactory:
@@ -62,5 +69,18 @@ class ParserFactory:
 
 # Register built-in parsers
 ParserFactory.register('python', PythonParser)
+ParserFactory.register('py', PythonParser)
 ParserFactory.register('javascript', JavaScriptParser)
-ParserFactory.register('js', JavaScriptParser)  # Alias for 'javascript' 
+ParserFactory.register('js', JavaScriptParser)  # Alias for 'javascript'
+ParserFactory.register('typescript', TypeScriptParser)
+ParserFactory.register('ts', TypeScriptParser)  # Alias for 'typescript'
+ParserFactory.register('c', CParser)
+ParserFactory.register('cpp', CppParser)
+ParserFactory.register('c++', CppParser)  # Alias for 'cpp'
+ParserFactory.register('rust', RustParser)
+ParserFactory.register('rs', RustParser)
+ParserFactory.register('html', HTMLParser)
+ParserFactory.register('htm', HTMLParser)
+ParserFactory.register('css', CSSParser)
+ParserFactory.register('tsx', TSReactParser)
+ParserFactory.register('jsx', TSReactParser)  # Can also handle JSX 
