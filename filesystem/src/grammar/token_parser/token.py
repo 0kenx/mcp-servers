@@ -20,6 +20,10 @@ class TokenType(Enum):
     WHITESPACE = "whitespace"
     NEWLINE = "newline"
     
+    # Indentation tokens
+    INDENT = "indent"                  # Increase in indentation level
+    DEDENT = "dedent"                  # Decrease in indentation level
+    
     # Specific delimiter tokens
     OPEN_BRACE = "open_brace"          # {
     CLOSE_BRACE = "close_brace"        # }
@@ -43,11 +47,28 @@ class TokenType(Enum):
     COMMA = "comma"                    # ,
     DOT = "dot"                        # .
     
+    # Preprocessor directive (C/C++/etc.)
+    PREPROCESSOR = "preprocessor"      # #include, #define, etc.
+    
+    # Rust specific tokens
+    ATTRIBUTE = "attribute"            # #[derive(Debug)]
+    
     # CSS specific tokens
     AT_RULE = "at_rule"                # @media, @import, etc.
     PROPERTY = "property"              # CSS property name
     VALUE = "value"                    # CSS property value
     SELECTOR = "selector"              # CSS selector
+    
+    # HTML specific tokens
+    DOCTYPE = "doctype"                # <!DOCTYPE html>
+    OPEN_TAG = "open_tag"              # <tag>
+    CLOSE_TAG = "close_tag"            # </tag>
+    SELF_CLOSING_TAG = "self_closing_tag"  # <tag/>
+    ATTRIBUTE = "attribute"            # attribute="value"
+    SCRIPT = "script"                  # <script>...</script>
+    STYLE = "style"                    # <style>...</style>
+    ENTITY = "entity"                  # &nbsp;
+    TEXT = "text"                      # Text content
     
     # JSX specific tokens
     JSX_TAG = "jsx_tag"                # <tag>, </tag>, <tag/>, etc.
