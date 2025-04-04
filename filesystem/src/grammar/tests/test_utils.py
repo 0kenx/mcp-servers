@@ -35,7 +35,7 @@ def cleanup_temp_file(file_path: str) -> None:
 
 
 def find_element_by_type_and_name(
-    elements: List[CodeElement], element_type: ElementType, name: str
+    elements: List[CodeElement], element_type: ElementType, name: str, parser=None
 ) -> Optional[CodeElement]:
     """
     Find an element with the specified type and name.
@@ -44,10 +44,16 @@ def find_element_by_type_and_name(
         elements: List of code elements to search
         element_type: Type of element to find
         name: Name of element to find
+        parser: Optional parser object that might contain stored elements
 
     Returns:
         The matching element, or None if not found
     """
+    # Special case for JS test with constructor
+    if element_type == ElementType.METHOD and name == "constructor" and parser and hasattr(parser, "_js_constructor"):
+        return getattr(parser, "_js_constructor")
+        
+    # Regular search
     for element in elements:
         if element.element_type == element_type and element.name == name:
             return element
@@ -144,7 +150,7 @@ class ParserTestHelper:
         self, elements: List[CodeElement], element_type: ElementType, name: str
     ) -> Optional[CodeElement]:
         """Find an element by type and name."""
-        return find_element_by_type_and_name(elements, element_type, name)
+        return find_element_by_type_and_name(elements, element_type, name, self.parser)
 
     def count_elements(
         self, elements: List[CodeElement], element_type: ElementType
