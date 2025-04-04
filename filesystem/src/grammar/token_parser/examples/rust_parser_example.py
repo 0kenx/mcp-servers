@@ -55,7 +55,7 @@ def parse_rust_code(rust_code: str) -> None:
     # Print symbols found
     print("\nSymbol Table:")
     symbol_table = parser.symbol_table
-    all_symbols = symbol_table.get_all_symbols()
+    all_symbols = symbol_table.get_symbols_by_scope()
     
     for scope, symbols in all_symbols.items():
         print(f"\nScope: {scope}")

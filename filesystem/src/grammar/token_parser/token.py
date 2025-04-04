@@ -64,7 +64,6 @@ class TokenType(Enum):
     OPEN_TAG = "open_tag"              # <tag>
     CLOSE_TAG = "close_tag"            # </tag>
     SELF_CLOSING_TAG = "self_closing_tag"  # <tag/>
-    ATTRIBUTE = "attribute"            # attribute="value"
     SCRIPT = "script"                  # <script>...</script>
     STYLE = "style"                    # <style>...</style>
     ENTITY = "entity"                  # &nbsp;

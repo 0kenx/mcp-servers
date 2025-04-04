@@ -68,7 +68,7 @@ def parse_typescript_code(code: str) -> None:
     
     # Print the symbol table
     print("\nSymbol Table:")
-    for symbol in parser.symbol_table.get_all_symbols():
+    for symbol in parser.symbol_table.get_symbols_by_scope():
         print(f"{symbol.name} ({symbol.symbol_type}) at line {symbol.line}, column {symbol.column}")
 
 
