@@ -414,8 +414,9 @@ def track_edit_history(func: Callable) -> Callable:
             history_root = get_history_root(resolved_file_path)
             if not history_root:
                 os.makedirs(
-                    resolved_file_path, exist_ok=True
+                    ".mcp", exist_ok=True
                 )  # Create the .mcp folder if it doesn't exist
+                history_root = get_history_root(resolved_file_path)
                 # return f"Error: Cannot track history for path {resolved_file_path}. Make sure '.mcp' folder exists here or in a parent directory."
             # Validate paths using the retrieved allowed_dirs
             validated_path = Path(
