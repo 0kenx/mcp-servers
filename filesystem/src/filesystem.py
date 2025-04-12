@@ -2482,43 +2482,15 @@ def get_vibe_issues(repo: str) -> Tuple[bool, List[Dict[Any, Any]], str]:
 
     try:
         all_issues = json.loads(stdout)
-        # Filter issues without the 'blocked' label and without linked PRs
+        # Filter issues without the 'blocked' label
+        # Note: We're skipping the linked PRs check as it's causing errors with the API
         filtered_issues = []
 
         for issue in all_issues:
             label_names = [label["name"] for label in issue.get("labels", [])]
             if "blocked" not in label_names:
-                # Check if issue has linked PRs
-                pr_cmd = [
-                    "gh",
-                    "issue",
-                    "view",
-                    str(issue["number"]),
-                    "--repo",
-                    repo,
-                    "--json",
-                    "linkedPullRequests",
-                ]
-                pr_stdout, pr_stderr, pr_rc = _run_command(pr_cmd, check=False)
-
-                if pr_rc != 0:
-                    return (
-                        False,
-                        [],
-                        f"Error checking linked PRs for issue #{issue['number']}: {pr_stderr}",
-                    )
-
-                try:
-                    pr_data = json.loads(pr_stdout)
-                    linked_prs = pr_data.get("linkedPullRequests", [])
-                    if not linked_prs:
-                        filtered_issues.append(issue)
-                except json.JSONDecodeError:
-                    return (
-                        False,
-                        [],
-                        f"Error parsing linked PR data for issue #{issue['number']}: {pr_stdout}",
-                    )
+                # Add the issue to filtered list without checking for linked PRs
+                filtered_issues.append(issue)
 
         return True, filtered_issues, "Successfully fetched vibe issues."
 
