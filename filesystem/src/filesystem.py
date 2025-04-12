@@ -15,6 +15,7 @@ from mcp.server.fastmcp import FastMCP, Context
 import threading
 import time
 import builtins
+import tempfile
 
 try:
     # Try to import from the local module first
@@ -2339,11 +2340,16 @@ def echo_prompt(text: str) -> str:
 
 # --- GitHub Vibe Helper Functions ---
 
-def run_command(command: List[str], check: bool = True) -> Tuple[str, str, int]:
+def run_command(command: List[str], check: bool = True, shell: bool = False) -> Tuple[str, str, int]:
     """Run a shell command and return stdout, stderr, and return code."""
     try:
         result = subprocess.run(
-            command, capture_output=True, text=True, check=check, cwd=WORKING_DIRECTORY
+            command, 
+            capture_output=True, 
+            text=True, 
+            check=check, 
+            cwd=WORKING_DIRECTORY,
+            shell=shell
         )
         return result.stdout.strip(), result.stderr.strip(), result.returncode
     except subprocess.CalledProcessError as e:
@@ -2353,6 +2359,67 @@ def run_command(command: List[str], check: bool = True) -> Tuple[str, str, int]:
             e.returncode,
         )
 
+def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
+    """Validate that the directory is a git repository and set up Git and GitHub CLI."""
+    global WORKING_DIRECTORY
+    
+    # Use the provided directory or fall back to the global WORKING_DIRECTORY
+    directory_to_use = directory if directory else WORKING_DIRECTORY
+    
+    if not directory_to_use:
+        return False, "Working directory is not set. Please call set_working_directory first."
+
+    try:
+        # Verify the directory exists and is accessible
+        if not os.path.isdir(directory_to_use):
+            return False, f"'{directory_to_use}' is not a directory."
+
+        if not os.access(directory_to_use, os.R_OK):
+            return False, f"No read permission for '{directory_to_use}'."
+
+        # Check if this is a git repository
+        stdout, stderr, rc = run_command(
+            ["git", "rev-parse", "--is-inside-work-tree"], check=False
+        )
+        if rc != 0:
+            return False, f"'{directory_to_use}' is not a git repository or git is not installed."
+
+        # Set git user name and email if provided
+        if GIT_USER_NAME:
+            result = run_command(["git", "config", "user.name", GIT_USER_NAME], check=False)
+            if result[2] != 0:
+                return False, f"Error setting git user name: {result[1]}"
+
+        if GIT_USER_EMAIL:
+            result = run_command(["git", "config", "user.email", GIT_USER_EMAIL], check=False)
+            if result[2] != 0:
+                return False, f"Error setting git user email: {result[1]}"
+
+        # Login to GitHub CLI if token is provided
+        if GITHUB_TOKEN:
+            try:
+                # Use process with stdin to pass the token directly
+                process = subprocess.run(
+                    ["gh", "auth", "login", "--with-token"],
+                    input=GITHUB_TOKEN,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    cwd=WORKING_DIRECTORY
+                )
+                
+                if process.returncode != 0:
+                    return False, f"Error logging in to GitHub: {process.stderr}"
+
+                result = run_command(["gh", "auth", "setup-git"], check=False)
+                if result[2] != 0:
+                    return False, f"Error setting GitHub auth setup-git: {result[1]}"
+            except Exception as e:
+                return False, f"Error during GitHub authentication: {str(e)}"
+
+        return True, f"Working directory '{directory_to_use}' is valid."
+    except Exception as e:
+        return False, f"Error validating directory: {str(e)}"
 
 def check_git_status() -> Tuple[bool, str]:
     """Check if the git working directory is clean."""
@@ -2607,62 +2674,6 @@ def extract_debug_instructions(issue_body: str) -> str:
     # If no specific section found, return the whole body
     return issue_body
 
-
-def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
-    """Validate that the directory is a git repository and set up Git and GitHub CLI."""
-    global WORKING_DIRECTORY
-    
-    # Use the provided directory or fall back to the global WORKING_DIRECTORY
-    directory_to_use = directory if directory else WORKING_DIRECTORY
-    
-    if not directory_to_use:
-        return False, "Working directory is not set. Please call set_working_directory first."
-
-    try:
-        # Verify the directory exists and is accessible
-        if not os.path.isdir(directory_to_use):
-            return False, f"'{directory_to_use}' is not a directory."
-
-        if not os.access(directory_to_use, os.R_OK):
-            return False, f"No read permission for '{directory_to_use}'."
-
-        # Check if this is a git repository
-        stdout, stderr, rc = run_command(
-            ["git", "rev-parse", "--is-inside-work-tree"], check=False
-        )
-        if rc != 0:
-            return False, f"'{directory_to_use}' is not a git repository or git is not installed."
-
-        # Set git user name and email if provided
-        if GIT_USER_NAME:
-            result = run_command(["git", "config", "user.name", GIT_USER_NAME], check=False)
-            if result[2] != 0:
-                return False, f"Error setting git user name: {result[1]}"
-
-        if GIT_USER_EMAIL:
-            result = run_command(["git", "config", "user.email", GIT_USER_EMAIL], check=False)
-            if result[2] != 0:
-                return False, f"Error setting git user email: {result[1]}"
-
-        # Login to GitHub CLI if token is provided
-        if GITHUB_TOKEN:
-            result = run_command(["echo", GITHUB_TOKEN, ">", "github_token"], check=False)
-            if result[2] != 0:
-                return False, f"Error writing GitHub token: {result[1]}"
-
-            result = run_command(
-                ["gh", "auth", "login", "--with-token", "<", "github_token"], check=False
-            )
-            if result[2] != 0:
-                return False, f"Error logging in to GitHub: {result[1]}"
-
-            result = run_command(["gh", "auth", "setup-git"], check=False)
-            if result[2] != 0:
-                return False, f"Error setting GitHub auth setup-git: {result[1]}"
-
-        return True, f"Working directory '{directory_to_use}' is valid."
-    except Exception as e:
-        return False, f"Error validating directory: {str(e)}"
 
 # --- GitHub Vibe MCP Tools ---
 
