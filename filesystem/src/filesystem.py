@@ -205,7 +205,7 @@ You are also given a list of instructions for fixing the issue.
 # Environment variables for GitHub Vibe
 GIT_USER_NAME = os.environ.get("GIT_USER_NAME")
 GIT_USER_EMAIL = os.environ.get("GIT_USER_EMAIL")
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+GITHUB_AUTH_TOKEN = os.environ.get("GITHUB_AUTH_TOKEN")
 
 mcp = FastMCP("secure-filesystem-server", instructions=MCP_INSTRUCTIONS)
 
@@ -2396,12 +2396,12 @@ def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
                 return False, f"Error setting git user email: {result[1]}"
 
         # Login to GitHub CLI if token is provided
-        if GITHUB_TOKEN:
+        if GITHUB_AUTH_TOKEN:
             try:
                 # Use process with stdin to pass the token directly
                 process = subprocess.run(
                     ["gh", "auth", "login", "--with-token"],
-                    input=GITHUB_TOKEN,
+                    input=GITHUB_AUTH_TOKEN,
                     text=True,
                     capture_output=True,
                     check=False,
