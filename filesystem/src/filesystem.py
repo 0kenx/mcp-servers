@@ -2340,7 +2340,7 @@ def echo_prompt(text: str) -> str:
 
 # --- GitHub Vibe Helper Functions ---
 
-def run_command(command: List[str], check: bool = True, shell: bool = False) -> Tuple[str, str, int]:
+def _run_command(command: List[str], check: bool = True, shell: bool = False) -> Tuple[str, str, int]:
     """Run a shell command and return stdout, stderr, and return code."""
     try:
         result = subprocess.run(
@@ -2378,7 +2378,7 @@ def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
             return False, f"No read permission for '{directory_to_use}'."
 
         # Check if this is a git repository
-        stdout, stderr, rc = run_command(
+        stdout, stderr, rc = _run_command(
             ["git", "rev-parse", "--is-inside-work-tree"], check=False
         )
         if rc != 0:
@@ -2386,12 +2386,12 @@ def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
 
         # Set git user name and email if provided
         if GIT_USER_NAME:
-            result = run_command(["git", "config", "user.name", GIT_USER_NAME], check=False)
+            result = _run_command(["git", "config", "user.name", GIT_USER_NAME], check=False)
             if result[2] != 0:
                 return False, f"Error setting git user name: {result[1]}"
 
         if GIT_USER_EMAIL:
-            result = run_command(["git", "config", "user.email", GIT_USER_EMAIL], check=False)
+            result = _run_command(["git", "config", "user.email", GIT_USER_EMAIL], check=False)
             if result[2] != 0:
                 return False, f"Error setting git user email: {result[1]}"
 
@@ -2411,7 +2411,7 @@ def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
                 if process.returncode != 0:
                     return False, f"Error logging in to GitHub: {process.stderr}"
 
-                result = run_command(["gh", "auth", "setup-git"], check=False)
+                result = _run_command(["gh", "auth", "setup-git"], check=False)
                 if result[2] != 0:
                     return False, f"Error setting GitHub auth setup-git: {result[1]}"
             except Exception as e:
@@ -2423,7 +2423,7 @@ def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
 
 def check_git_status() -> Tuple[bool, str]:
     """Check if the git working directory is clean."""
-    stdout, stderr, rc = run_command(["git", "status", "--porcelain"], check=False)
+    stdout, stderr, rc = _run_command(["git", "status", "--porcelain"], check=False)
 
     if rc != 0:
         return False, f"Error checking git status: {stderr}"
@@ -2439,7 +2439,7 @@ def check_git_status() -> Tuple[bool, str]:
 
 def get_github_repo() -> Tuple[bool, str]:
     """Get the GitHub repository from the git remote."""
-    stdout, stderr, rc = run_command(
+    stdout, stderr, rc = _run_command(
         ["git", "remote", "get-url", "origin"], check=False
     )
 
@@ -2450,7 +2450,7 @@ def get_github_repo() -> Tuple[bool, str]:
     # Supports formats like:
     # - https://github.com/owner/repo.git
     # - git@github.com:owner/repo.git
-    match = re.search(r"github\.com[:/]([^/]+/[^/]+?)(\.git)?$", stdout)
+    match = re.search(r"[:/]([^/]+/[^/]+?)(\.git)?$", stdout)
     if not match:
         return False, f"Could not extract GitHub repository from remote URL: {stdout}"
 
@@ -2475,7 +2475,7 @@ def get_vibe_issues(repo: str) -> Tuple[bool, List[Dict[Any, Any]], str]:
         "number,title,labels,createdAt,body,comments",
     ]
 
-    stdout, stderr, rc = run_command(cmd, check=False)
+    stdout, stderr, rc = _run_command(cmd, check=False)
 
     if rc != 0:
         return False, [], f"Error fetching GitHub issues: {stderr}"
@@ -2499,7 +2499,7 @@ def get_vibe_issues(repo: str) -> Tuple[bool, List[Dict[Any, Any]], str]:
                     "--json",
                     "linkedPullRequests",
                 ]
-                pr_stdout, pr_stderr, pr_rc = run_command(pr_cmd, check=False)
+                pr_stdout, pr_stderr, pr_rc = _run_command(pr_cmd, check=False)
 
                 if pr_rc != 0:
                     return (
@@ -2634,19 +2634,19 @@ def create_branch(
     branch_name = f"vibe/{issue_number}-{sanitized_title}"
 
     # First, fetch the latest changes
-    fetch_stdout, fetch_stderr, fetch_rc = run_command(["git", "fetch"], check=False)
+    fetch_stdout, fetch_stderr, fetch_rc = _run_command(["git", "fetch"], check=False)
     if fetch_rc != 0:
         return False, f"Error fetching latest changes: {fetch_stderr}"
 
     # Check if the source branch exists
-    check_stdout, check_stderr, check_rc = run_command(
+    check_stdout, check_stderr, check_rc = _run_command(
         ["git", "rev-parse", "--verify", f"origin/{source_branch}"], check=False
     )
     if check_rc != 0:
         return False, f"Source branch '{source_branch}' does not exist: {check_stderr}"
 
     # Create a new branch from the source branch
-    branch_stdout, branch_stderr, branch_rc = run_command(
+    branch_stdout, branch_stderr, branch_rc = _run_command(
         ["git", "checkout", "-b", branch_name, f"origin/{source_branch}"], check=False
     )
 
@@ -2799,7 +2799,7 @@ async def vibe_commit_fix(changelog: str) -> str:
         return f"Error: {message}"
 
     # 1. Verify we're on a vibe branch
-    branch_stdout, branch_stderr, branch_rc = run_command(
+    branch_stdout, branch_stderr, branch_rc = _run_command(
         ["git", "branch", "--show-current"], check=False
     )
     if branch_rc != 0:
@@ -2834,14 +2834,14 @@ async def vibe_commit_fix(changelog: str) -> str:
         "--body",
         f"## Changelog\n{changelog}",
     ]
-    comment_stdout, comment_stderr, comment_rc = run_command(comment_cmd, check=False)
+    comment_stdout, comment_stderr, comment_rc = _run_command(comment_cmd, check=False)
 
     if comment_rc != 0:
         return f"Error adding comment to issue #{issue_number}: {comment_stderr}"
 
     # 4. Add all changes and commit
     # First, check if there are any changes
-    status_stdout, status_stderr, status_rc = run_command(
+    status_stdout, status_stderr, status_rc = _run_command(
         ["git", "status", "--porcelain"], check=False
     )
     if status_rc != 0:
@@ -2851,14 +2851,14 @@ async def vibe_commit_fix(changelog: str) -> str:
         return "No changes to commit. Make some changes first."
 
     # Add all changes
-    add_stdout, add_stderr, add_rc = run_command(["git", "add", "."], check=False)
+    add_stdout, add_stderr, add_rc = _run_command(["git", "add", "."], check=False)
     if add_rc != 0:
         return f"Error adding changes: {add_stderr}"
 
     # Commit changes
     commit_message = f"Fix #{issue_number}: {changelog}"
     commit_cmd = ["git", "commit", "-m", commit_message]
-    commit_stdout, commit_stderr, commit_rc = run_command(commit_cmd, check=False)
+    commit_stdout, commit_stderr, commit_rc = _run_command(commit_cmd, check=False)
 
     if commit_rc != 0:
         return f"Error committing changes: {commit_stderr}"
@@ -2866,7 +2866,7 @@ async def vibe_commit_fix(changelog: str) -> str:
     # 5. Push and create PR
     # Push the branch
     push_cmd = ["git", "push", "--set-upstream", "origin", current_branch]
-    push_stdout, push_stderr, push_rc = run_command(push_cmd, check=False)
+    push_stdout, push_stderr, push_rc = _run_command(push_cmd, check=False)
 
     if push_rc != 0:
         return f"Error pushing changes: {push_stderr}"
@@ -2887,7 +2887,7 @@ async def vibe_commit_fix(changelog: str) -> str:
         repo,
     ]
 
-    pr_stdout, pr_stderr, pr_rc = run_command(pr_cmd, check=False)
+    pr_stdout, pr_stderr, pr_rc = _run_command(pr_cmd, check=False)
 
     if pr_rc != 0:
         return f"Error creating PR: {pr_stderr}"
