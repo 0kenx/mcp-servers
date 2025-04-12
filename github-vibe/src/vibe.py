@@ -44,6 +44,9 @@ GIT_USER_NAME = os.environ.get("GIT_USER_NAME")
 GIT_USER_EMAIL = os.environ.get("GIT_USER_EMAIL")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 
+# Working directory global variable
+WORKING_DIRECTORY = None
+
 def run_command(command: List[str], check: bool = True) -> Tuple[str, str, int]:
     """Run a shell command and return stdout, stderr, and return code."""
     try:
@@ -51,7 +54,8 @@ def run_command(command: List[str], check: bool = True) -> Tuple[str, str, int]:
             command,
             capture_output=True,
             text=True,
-            check=check
+            check=check,
+            cwd=WORKING_DIRECTORY
         )
         return result.stdout.strip(), result.stderr.strip(), result.returncode
     except subprocess.CalledProcessError as e:
@@ -272,8 +276,31 @@ def extract_debug_instructions(issue_body: str) -> str:
     return issue_body
 
 
+def validate_working_directory(directory: str) -> Tuple[bool, str]:
+    """Validate working directory exists, is readable, and is a git repository."""
+    if not directory:
+        return False, "Working directory path is empty or not provided."
+    
+    if not os.path.isdir(directory):
+        return False, f"'{directory}' is not a directory."
+    
+    if not os.access(directory, os.R_OK):
+        return False, f"No read permission for '{directory}'."
+    
+    # Check if this is a git repository
+    stdout, stderr, rc = run_command(
+        ["git", "rev-parse", "--is-inside-work-tree"], 
+        check=False, 
+        working_dir=directory
+    )
+    if rc != 0:
+        return False, f"'{directory}' is not a git repository or git is not installed."
+    
+    return True, f"Working directory '{directory}' is valid."
+
+
 @mcp.tool()
-async def vibe_fix_issue(issue_number: Optional[int] = None) -> str:
+async def vibe_fix_issue(working_directory: Optional[str] = None, issue_number: Optional[int] = None) -> str:
     """
     Pick a GitHub issue tagged with 'vibe' and prepare it for fixing.
     
@@ -286,11 +313,26 @@ async def vibe_fix_issue(issue_number: Optional[int] = None) -> str:
     6. Provides instructions from the issue for debugging
     
     Args:
+        working_directory: The directory where git and gh commands will be executed.
+                          Required on first call, can be omitted on subsequent calls.
         issue_number: Optional specific issue number to work on
         
     Returns:
         Instructions for fixing the selected issue
     """
+    global WORKING_DIRECTORY
+    
+    # If working_directory is provided, validate and set global
+    if working_directory is not None:
+        valid, message = validate_working_directory(working_directory)
+        if not valid:
+            return f"Error: {message}"
+        WORKING_DIRECTORY = os.path.abspath(working_directory)
+    
+    # Check if we have a working directory (either from parameter or previous call)
+    if WORKING_DIRECTORY is None:
+        return "Error: Working directory is not set. Please provide 'working_directory' parameter."
+        
     # 1. Verify git status
     is_clean, git_status_msg = check_git_status()
     if not is_clean:
@@ -366,6 +408,10 @@ async def vibe_commit_fix(changelog: str) -> str:
     Returns:
         Result of the operation
     """
+    # Check if global working directory is set
+    if WORKING_DIRECTORY is None:
+        return "Error: Working directory is not set. Run vibe-fix-issue first."
+        
     # 1. Verify we're on a vibe branch
     branch_stdout, branch_stderr, branch_rc = run_command(["git", "branch", "--show-current"], check=False)
     if branch_rc != 0:
