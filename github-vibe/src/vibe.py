@@ -38,6 +38,12 @@ Requirements:
 # Create MCP server
 mcp = FastMCP("github-vibe", instructions=MCP_INSTRUCTIONS)
 
+# Environment variables
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+GIT_USER_NAME = os.environ.get("GIT_USER_NAME")
+GIT_USER_EMAIL = os.environ.get("GIT_USER_EMAIL")
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+
 def run_command(command: List[str], check: bool = True) -> Tuple[str, str, int]:
     """Run a shell command and return stdout, stderr, and return code."""
     try:
