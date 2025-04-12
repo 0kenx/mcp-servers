@@ -205,6 +205,7 @@ You are also given a list of instructions for fixing the issue.
 # Environment variables for GitHub Vibe
 GIT_USER_NAME = os.environ.get("GIT_USER_NAME")
 GIT_USER_EMAIL = os.environ.get("GIT_USER_EMAIL")
+GIT_SSH_KEY = os.environ.get("GIT_SSH_KEY")
 GITHUB_AUTH_TOKEN = os.environ.get("GITHUB_AUTH_TOKEN")
 
 mcp = FastMCP("secure-filesystem-server", instructions=MCP_INSTRUCTIONS)
@@ -2383,6 +2384,14 @@ def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
         )
         if rc != 0:
             return False, f"'{directory_to_use}' is not a git repository or git is not installed."
+
+        # Add SSH key to SSH agent if provided
+        if GIT_SSH_KEY:
+            ssh_key_path = os.path.join(os.path.expanduser("~/.ssh"), "id_rsa")
+            with open(ssh_key_path, "w") as f:
+                f.write(GIT_SSH_KEY)
+            os.chmod(ssh_key_path, 0o600)
+            
 
         # Login to GitHub CLI if token is provided
         if GITHUB_AUTH_TOKEN:
