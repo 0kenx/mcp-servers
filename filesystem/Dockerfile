@@ -28,7 +28,7 @@ FROM python:3.12-slim-bookworm
 
 RUN apt-get update \
     && apt-get install -yq --no-install-recommends \
-        build-essential git curl
+        build-essential git curl openssh-client gnupg
 
 # Install system dependencies (including git and gh CLI)
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
