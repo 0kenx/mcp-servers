@@ -34,6 +34,16 @@ Requirements:
 - You must have appropriate GitHub permissions for the repository
 """
 
+ISSUE_SYSTEM_INSTRUCTIONS = """
+You are a helpful assistant that helps with GitHub issues.
+
+You are given a GitHub issue and a list of comments on the issue.
+
+You are also given a list of instructions for fixing the issue.
+
+
+"""
+
 # Create MCP server
 mcp = FastMCP("github-vibe", instructions=MCP_INSTRUCTIONS)
 
@@ -113,7 +123,7 @@ def get_vibe_issues(repo: str) -> Tuple[bool, List[Dict[Any, Any]], str]:
         "--state",
         "open",
         "--json",
-        "number,title,labels,createdAt,body",
+        "number,title,labels,createdAt,body,comments",
     ]
 
     stdout, stderr, rc = run_command(cmd, check=False)
@@ -321,7 +331,7 @@ def extract_debug_instructions(issue_body: str) -> str:
     return issue_body
 
 
-def validate_working_directory(directory: str) -> Tuple[bool, str]:
+def setup_directory_and_tools(directory: str) -> Tuple[bool, str]:
     """Validate working directory exists, is readable, and is a git repository."""
     if not directory:
         return False, "Working directory path is empty or not provided."
@@ -339,12 +349,25 @@ def validate_working_directory(directory: str) -> Tuple[bool, str]:
     if rc != 0:
         return False, f"'{directory}' is not a git repository or git is not installed."
 
+    # Set git user name and email
+    result = run_command(["git", "config", "user.name", GIT_USER_NAME], check=False)
+    if result[2] != 0:
+        return False, f"Error setting git user name: {result[1]}"
+
+    result = run_command(["git", "config", "user.email", GIT_USER_EMAIL], check=False)
+    if result[2] != 0:
+        return False, f"Error setting git user email: {result[1]}"
+
+    # Login to GitHub CLI
     result = run_command(
         ["gh", "auth", "login", "--with-token", GITHUB_TOKEN], check=False
     )
-
     if result[2] != 0:
         return False, f"Error logging in to GitHub: {result[1]}"
+
+    result = run_command(["gh", "auth", "setup-git"], check=False)
+    if result[2] != 0:
+        return False, f"Error setting GitHub auth setup-git: {result[1]}"
 
     return True, f"Working directory '{directory}' is valid."
 
@@ -376,7 +399,7 @@ async def vibe_fix_issue(
 
     # If working_directory is provided, validate and set global
     if working_directory is not None:
-        valid, message = validate_working_directory(working_directory)
+        valid, message = setup_directory_and_tools(working_directory)
         if not valid:
             return f"Error: {message}"
         WORKING_DIRECTORY = os.path.abspath(working_directory)
@@ -413,6 +436,7 @@ async def vibe_fix_issue(
     issue_number = selected_issue["number"]
     issue_title = selected_issue["title"]
     issue_body = selected_issue["body"]
+    issue_comments = selected_issue["comments"]
 
     # 5. Extract source branch from issue
     success, source_branch = extract_source_branch(issue_body)
@@ -430,13 +454,19 @@ async def vibe_fix_issue(
     debug_instructions = extract_debug_instructions(issue_body)
 
     # Build response
-    response = f"""# Issue #{issue_number}: {issue_title}
+    response = f"""
+{ISSUE_SYSTEM_INSTRUCTIONS}
+
+# Issue #{issue_number}: {issue_title}
 
 {source_branch_msg}
 {branch_msg}
 
 ## Debug Instructions
 {debug_instructions}
+
+## Issue Comments
+{issue_comments}
 
 You are now ready to fix this issue. Make the necessary changes, and then run `vibe-commit-fix` to create a PR.
 """
