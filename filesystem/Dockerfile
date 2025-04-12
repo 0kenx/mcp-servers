@@ -62,6 +62,11 @@ WORKDIR /app
 # Set the default user.
 USER $USERNAME
 
+# Configure SSH to skip host key checking
+RUN mkdir -p /home/$USERNAME/.ssh
+RUN echo "HOST *" > /home/$USERNAME/.ssh/config
+RUN echo "StrictHostKeyChecking no" >> /home/$USERNAME/.ssh/config
+
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 
