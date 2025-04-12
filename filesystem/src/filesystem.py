@@ -2384,17 +2384,6 @@ def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
         if rc != 0:
             return False, f"'{directory_to_use}' is not a git repository or git is not installed."
 
-        # Set git user name and email if provided
-        if GIT_USER_NAME:
-            result = _run_command(["git", "config", "user.name", GIT_USER_NAME], check=False)
-            if result[2] != 0:
-                return False, f"Error setting git user name: {result[1]}"
-
-        if GIT_USER_EMAIL:
-            result = _run_command(["git", "config", "user.email", GIT_USER_EMAIL], check=False)
-            if result[2] != 0:
-                return False, f"Error setting git user email: {result[1]}"
-
         # Login to GitHub CLI if token is provided
         if GITHUB_AUTH_TOKEN:
             try:
@@ -2407,13 +2396,9 @@ def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
                     check=False,
                     cwd=WORKING_DIRECTORY
                 )
-                
                 if process.returncode != 0:
                     return False, f"Error logging in to GitHub: {process.stderr}"
 
-                result = _run_command(["gh", "auth", "setup-git"], check=False)
-                if result[2] != 0:
-                    return False, f"Error setting GitHub auth setup-git: {result[1]}"
             except Exception as e:
                 return False, f"Error during GitHub authentication: {str(e)}"
 
@@ -2423,7 +2408,7 @@ def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
 
 def check_git_status() -> Tuple[bool, str]:
     """Check if the git working directory is clean."""
-    stdout, stderr, rc = _run_command(["git", "status", "--porcelain"], check=False)
+    stdout, stderr, rc = _run_command(["git", "status", "-s", "--porcelain"], check=False)
 
     if rc != 0:
         return False, f"Error checking git status: {stderr}"
@@ -2707,7 +2692,7 @@ async def vibe_fix_issue(
     issue_number = selected_issue["number"]
     issue_title = selected_issue["title"]
     issue_body = selected_issue["body"]
-    issue_comments = selected_issue["comments"]
+    issue_comments = selected_issue.get("comments", [])
 
     # 5. Extract source branch from issue
     success, source_branch = extract_source_branch(issue_body)
@@ -2823,13 +2808,13 @@ async def vibe_commit_fix(changelog: str) -> str:
         return "No changes to commit. Make some changes first."
 
     # Add all changes
-    add_stdout, add_stderr, add_rc = _run_command(["git", "add", "."], check=False)
+    add_stdout, add_stderr, add_rc = _run_command(["git", "add", "--", "."], check=False)
     if add_rc != 0:
         return f"Error adding changes: {add_stderr}"
 
     # Commit changes
     commit_message = f"Fix #{issue_number}: {changelog}"
-    commit_cmd = ["git", "commit", "-m", commit_message]
+    commit_cmd = ["git", "commit", "-a", "-m", commit_message, f"--author={GIT_USER_NAME} <{GIT_USER_EMAIL}>"]
     commit_stdout, commit_stderr, commit_rc = _run_command(commit_cmd, check=False)
 
     if commit_rc != 0:
