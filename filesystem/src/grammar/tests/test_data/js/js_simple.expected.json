@@ -1,0 +1,17 @@
+[
+  {
+    "name": "<anonymous>",
+    "element_type": "function",
+    "start_line": 35,
+    "end_line": 37,
+    "children": [],
+    "parameters": [
+      {
+        "name": "x"
+      },
+      {
+        "name": "y"
+      }
+    ]
+  }
+]

@@ -11,6 +11,7 @@ from .token import Token, TokenType
 from .c_parser import CParser
 from .cpp_tokenizer import CppTokenizer
 from .generic_brace_block_parser import BraceBlockParser
+from .base import CodeElement, ElementType
 
 
 class CppParser(CParser):
@@ -319,7 +320,7 @@ class CppParser(CParser):
             index += 1
 
         # Check for template parameters (less than)
-        if index >= len(tokens) or tokens[index].token_type != TokenType.LESS_THAN:
+        if index >= len(tokens) or tokens[index].token_type != TokenType.OPERATOR or tokens[index].value != "<":
             return None
 
         index += 1
@@ -327,7 +328,8 @@ class CppParser(CParser):
         # Parse template parameters (simplified)
         template_parameters = []
         while (
-            index < len(tokens) and tokens[index].token_type != TokenType.GREATER_THAN
+            index < len(tokens) and 
+            (tokens[index].token_type != TokenType.OPERATOR or tokens[index].value != ">")
         ):
             # This is a very simplified template parameter parsing
             if tokens[index].token_type == TokenType.IDENTIFIER:
@@ -345,7 +347,7 @@ class CppParser(CParser):
             index += 1
 
         # Skip greater than
-        if index < len(tokens) and tokens[index].token_type == TokenType.GREATER_THAN:
+        if index < len(tokens) and tokens[index].token_type == TokenType.OPERATOR and tokens[index].value == ">":
             index += 1
         else:
             return None  # Malformed template declaration
@@ -642,3 +644,79 @@ class CppParser(CParser):
         }
 
         return {"node": access_node, "next_index": index}
+        
+    def _convert_node_to_element(self, node: Dict[str, Any], line_map: Dict[int, int]) -> Optional[CodeElement]:
+        """
+        Convert an AST node to a CodeElement, with support for C++ specific nodes.
+        
+        Args:
+            node: The AST node to convert
+            line_map: Mapping from token indices to line numbers
+            
+        Returns:
+            A CodeElement or None if the node cannot be converted
+        """
+        # First, try the C parser's converter
+        element = super()._convert_node_to_element(node, line_map)
+        if element:
+            return element
+            
+        # Handle C++-specific nodes
+        element_type = None
+        name = ""
+        start_line = 1
+        end_line = 1
+        parameters = []
+        
+        # Get name and type based on node type
+        if "type" in node:
+            if node["type"] == "ClassDeclaration":
+                element_type = ElementType.CLASS
+                if "name" in node:
+                    name = node["name"]
+            elif node["type"] == "NamespaceDeclaration":
+                element_type = ElementType.NAMESPACE
+                if "name" in node:
+                    name = node["name"]
+                elif "name" == None:
+                    name = "anonymous_namespace"
+            elif node["type"] == "TemplateDeclaration":
+                # For template declarations, we want to extract the actual templated entity
+                if "declaration" in node and isinstance(node["declaration"], dict):
+                    # Call recursively on the inner declaration
+                    return self._convert_node_to_element(node["declaration"], line_map)
+                else:
+                    element_type = ElementType.TEMPLATE
+                    name = "template"
+        
+        # Get start and end lines
+        if "start" in node and node["start"] in line_map:
+            start_line = line_map[node["start"]]
+        if "end" in node and node["end"] in line_map:
+            end_line = line_map[node["end"]]
+            
+        # Skip if we couldn't determine the element type
+        if not element_type:
+            return None
+            
+        # Create the element
+        element = CodeElement(
+            name=name,
+            element_type=element_type,
+            start_line=start_line,
+            end_line=end_line
+        )
+        
+        # Set parameters if available
+        if "parameters" in node and node["parameters"]:
+            element.parameters = node["parameters"]
+            
+        # Add children
+        if "children" in node:
+            for child_node in node["children"]:
+                child_element = self._convert_node_to_element(child_node, line_map)
+                if child_element:
+                    child_element.parent = element
+                    element.children.append(child_element)
+                    
+        return element

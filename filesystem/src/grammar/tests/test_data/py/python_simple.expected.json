@@ -1,0 +1,21 @@
+[
+  {
+    "name": "__init__",
+    "element_type": "function",
+    "start_line": 17,
+    "end_line": 116,
+    "children": [],
+    "parameters": [
+      {
+        "name": "self",
+        "type": null,
+        "default": null
+      },
+      {
+        "name": "name",
+        "type": "str",
+        "default": null
+      }
+    ]
+  }
+]
