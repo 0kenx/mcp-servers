@@ -2444,17 +2444,26 @@ def get_github_repo() -> Tuple[bool, str]:
     # Supports formats like:
     # - https://github.com/owner/repo.git
     # - git@github.com:owner/repo.git
-    match = re.search(r"[:/]([^/]+/[^/]+?)(\.git)?$", stdout)
+    # - ssh://git@github.com/owner/repo.git
+    match = re.search(r"(?:[:/])([^/]+/[^/]+?)(?:\.git)?$", stdout)
     if not match:
         return False, f"Could not extract GitHub repository from remote URL: {stdout}"
 
     repo = match.group(1)
-    return True, repo
+    # Always return the HTTPS URL format as per requirements
+    full_https_url = f"https://github.com/{repo}.git"
+    return True, full_https_url
 
 
 def get_vibe_issues(repo: str) -> Tuple[bool, List[Dict[Any, Any]], str]:
     """Get all open vibe issues without linked PRs or blocked tag."""
     # Use gh CLI to get issues with the 'vibe' label, open status, and no linked PR
+    
+    # Extract just the owner/repo part if a full URL is provided
+    repo_match = re.search(r"github\.com/([^/]+/[^/]+?)(?:\.git)?$", repo)
+    if repo_match:
+        repo = repo_match.group(1)
+        
     cmd = [
         "gh",
         "issue",
@@ -2599,8 +2608,13 @@ def create_branch(
     )  # Replace multiple dashes with one
     branch_name = f"vibe/{issue_number}-{sanitized_title}"
 
-    # First, fetch the latest changes
-    fetch_stdout, fetch_stderr, fetch_rc = _run_command(["git", "fetch"], check=False)
+    # Get the GitHub repository URL
+    success, repo_url = get_github_repo()
+    if not success:
+        return False, f"Error getting GitHub repository URL: {repo_url}"
+
+    # First, fetch the latest changes with explicit URL
+    fetch_stdout, fetch_stderr, fetch_rc = _run_command(["git", "fetch", repo_url], check=False)
     if fetch_rc != 0:
         return False, f"Error fetching latest changes: {fetch_stderr}"
 
@@ -2611,7 +2625,7 @@ def create_branch(
     if check_rc != 0:
         return False, f"Source branch '{source_branch}' does not exist: {check_stderr}"
 
-    # Create a new branch from the source branch
+    # Create a new branch from the source branch with explicit URL
     branch_stdout, branch_stderr, branch_rc = _run_command(
         ["git", "checkout", "-b", branch_name, f"origin/{source_branch}"], check=False
     )
@@ -2684,9 +2698,16 @@ async def vibe_fix_issue(
         return repo_result
 
     repo = repo_result
+    
+    # Extract just the owner/repo part for gh commands
+    repo_match = re.search(r"github\.com/([^/]+/[^/]+?)(?:\.git)?$", repo)
+    if repo_match:
+        gh_repo = repo_match.group(1)
+    else:
+        gh_repo = repo
 
     # 3. Get vibe issues
-    success, issues, issues_msg = get_vibe_issues(repo)
+    success, issues, issues_msg = get_vibe_issues(gh_repo)
     if not success:
         return issues_msg
 
@@ -2788,6 +2809,13 @@ async def vibe_commit_fix(changelog: str) -> str:
         return repo_result
 
     repo = repo_result
+    
+    # Extract just the owner/repo part for gh commands
+    repo_match = re.search(r"github\.com/([^/]+/[^/]+?)(?:\.git)?$", repo)
+    if repo_match:
+        gh_repo = repo_match.group(1)
+    else:
+        gh_repo = repo
 
     # 3. Add a comment to the issue with the changelog
     comment_cmd = [
@@ -2796,7 +2824,7 @@ async def vibe_commit_fix(changelog: str) -> str:
         "comment",
         issue_number,
         "--repo",
-        repo,
+        gh_repo,
         "--body",
         f"## Changelog\n{changelog}",
     ]
@@ -2830,8 +2858,13 @@ async def vibe_commit_fix(changelog: str) -> str:
         return f"Error committing changes: {commit_stderr}"
 
     # 5. Push and create PR
-    # Push the branch
-    push_cmd = ["git", "push", "--set-upstream", "origin", current_branch]
+    # Get GitHub repo URL
+    success, repo_url = get_github_repo()
+    if not success:
+        return f"Error getting GitHub repository URL: {repo_url}"
+
+    # Push the branch with explicit URL
+    push_cmd = ["git", "push", "--set-upstream", repo_url, current_branch]
     push_stdout, push_stderr, push_rc = _run_command(push_cmd, check=False)
 
     if push_rc != 0:
@@ -2850,7 +2883,7 @@ async def vibe_commit_fix(changelog: str) -> str:
         "--body",
         pr_body,
         "--repo",
-        repo,
+        gh_repo,
     ]
 
     pr_stdout, pr_stderr, pr_rc = _run_command(pr_cmd, check=False)
