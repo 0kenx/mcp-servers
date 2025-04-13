@@ -9,7 +9,7 @@ import shutil
 from datetime import datetime
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Dict, Any, Union, Set
+from typing import List, Dict, Any, Union, Set, Optional
 
 from mcp.server.fastmcp import FastMCP
 
@@ -176,7 +176,7 @@ def is_command_blacklisted(command: str) -> bool:
 
 
 async def create_async_process(
-    command: Union[str, List[str]], use_fork: bool = False
+    command: Union[str, List[str]], use_fork: bool = False, working_directory: Optional[str] = None
 ) -> asyncio.subprocess.Process:
     """Create an async subprocess, optionally using fork for isolation"""
     if isinstance(command, list):
@@ -195,10 +195,11 @@ async def create_async_process(
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,  # This creates a new process group
             # preexec_fn=os.setsid  # This sets the process as session leader
+            cwd=working_directory,
         )
     else:
         return await asyncio.create_subprocess_shell(
-            command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=working_directory
         )
 
 
@@ -316,6 +317,7 @@ def run_command_sync(
     wait_time: int = DEFAULT_TIMEOUT,
     output_type: OutputType = OutputType.BOTH,
     shell: bool = False,
+    working_directory: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Run a shell command synchronously with timeout and return the result.
@@ -325,6 +327,7 @@ def run_command_sync(
         wait_time: Maximum execution time in seconds
         output_type: Which output streams to capture (stdout, stderr, or both)
         shell: Whether to run the command in a shell
+        working_directory: Directory to run the command from
 
     Returns:
         Dictionary with stdout, stderr, return code, and execution time
@@ -351,6 +354,7 @@ def run_command_sync(
             else subprocess.DEVNULL,
             text=True,
             shell=shell,
+            cwd=working_directory,
         )
 
         stdout, stderr = process.communicate(timeout=wait_time)
@@ -398,6 +402,7 @@ async def execute_command(
     output_type: str = "both",
     use_fork: bool = False,
     terminate_after_wait: bool = False,
+    working_directory: Optional[str] = None,
 ) -> str:
     """
     Execute a command asynchronously. Returns formatted output from the command if execution completed before wait_time. Otherwise, returns a session ID for the running command.
@@ -408,6 +413,10 @@ async def execute_command(
         output_type: Which outputs to return ("stdout", "stderr", "both")
         use_fork: Whether to use a new process group via fork (default: False)
         terminate_after_wait: Whether to kill the process after wait_time (default: False)
+        working_directory: Directory to run the command from
+
+    Returns:
+        Formatted output or session ID
     """
     global last_session_id, active_sessions
 
@@ -420,7 +429,7 @@ async def execute_command(
     session_id = str(last_session_id)
 
     # Start the process
-    process = await create_async_process(command, use_fork)
+    process = await create_async_process(command, use_fork, working_directory)
 
     # Create session
     session = Session(
@@ -693,6 +702,7 @@ async def execute_script(
     script_type: str = "bash",
     wait_time: int = DEFAULT_TIMEOUT,
     output_type: str = "both",
+    working_directory: Optional[str] = None,
 ) -> str:
     """
     Execute a script asynchronously and return the result.
@@ -702,6 +712,7 @@ async def execute_script(
         script_type: Type of script (bash, python, js, go, rust)
         wait_time: Maximum execution time in seconds
         output_type: Which outputs to return ("stdout", "stderr", "both")
+        working_directory: Directory to run the script from
 
     Returns:
         Formatted output from the script execution
@@ -753,7 +764,7 @@ edition = "2021"
 
             # Compile and run
             compile_process = await create_async_process(
-                f"cd {rust_dir} && cargo build --release"
+                f"cd {rust_dir} && cargo build --release", working_directory=working_directory
             )
             try:
                 compile_stdout, compile_stderr = await asyncio.wait_for(
@@ -784,7 +795,7 @@ edition = "2021"
 
             # Compile the Go code
             compile_process = await create_async_process(
-                f"go build -o {exe_file} {go_file}"
+                f"go build -o {exe_file} {go_file}", working_directory=working_directory
             )
             try:
                 compile_stdout, compile_stderr = await asyncio.wait_for(
@@ -810,7 +821,7 @@ edition = "2021"
             return f"Unsupported script type: {script_type}"
 
         # Execute the script using execute_command
-        return await execute_command(command, wait_time, output_type)
+        return await execute_command(command, wait_time, output_type, working_directory=working_directory)
     finally:
         # Clean up temporary files
         if os.path.exists(script_path):

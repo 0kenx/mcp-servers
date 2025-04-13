@@ -25,9 +25,18 @@ FROM python:3.12-slim-bookworm
 # Python executable must be the same, e.g., using `python:3.11-slim-bookworm`
 # will fail.
 
+
 RUN apt-get update \
     && apt-get install -yq --no-install-recommends \
-        build-essential git
+        build-essential git curl openssh-client gnupg
+
+# Install system dependencies (including git and gh CLI)
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update \
+    && apt-get install -y gh \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Change user to non-root
 ARG USERNAME=dev
@@ -52,6 +61,11 @@ WORKDIR /app
 
 # Set the default user.
 USER $USERNAME
+
+# Configure SSH to skip host key checking
+RUN mkdir -p /home/$USERNAME/.ssh
+RUN echo "HOST *" > /home/$USERNAME/.ssh/config
+RUN echo "StrictHostKeyChecking no" >> /home/$USERNAME/.ssh/config
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
