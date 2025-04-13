@@ -13,6 +13,7 @@ from .parser_state import ParserState
 from .symbol_table import SymbolTable
 from .rust_tokenizer import RustTokenizer
 from .generic_brace_block_parser import BraceBlockParser
+from .base import CodeElement
 
 
 class RustParser(TokenParser):
@@ -50,17 +51,18 @@ class RustParser(TokenParser):
         self.brace_stack = []
         self.paren_stack = []
 
-    def parse(self, code: str) -> Dict[str, Any]:
+    def parse(self, code: str) -> List[CodeElement]:
         """
-        Parse Rust code and build an abstract syntax tree.
+        Parse Rust code and return a list of code elements.
 
         Args:
             code: Rust source code
 
         Returns:
-            Dictionary representing the abstract syntax tree
+            List of code elements
         """
         # Reset state for a new parse
+        self.elements = []
         self.state = ParserState()
         self.symbol_table = SymbolTable()
         self.brace_stack = []
@@ -70,7 +72,64 @@ class RustParser(TokenParser):
         tokens = self.tokenize(code)
 
         # Process the tokens to build the AST
-        return self.build_ast(tokens)
+        ast = self.build_ast(tokens)
+        
+        # Extract elements from the AST's children and convert them to CodeElement objects
+        self.elements = []
+        if isinstance(ast, dict) and 'children' in ast:
+            for child in ast['children']:
+                if isinstance(child, dict):
+                    # Convert dictionary to CodeElement
+                    element_type_str = child.get('type', 'unknown')
+                    element_type = ElementType.UNKNOWN
+                    
+                    # Map string element type to ElementType enum
+                    for et in ElementType:
+                        if et.value == element_type_str:
+                            element_type = et
+                            break
+                    
+                    # Extract the code if available, or use a placeholder
+                    code = child.get('code', f"// {element_type_str} {child.get('name', '')}")
+                    
+                    element = CodeElement(
+                        name=child.get('name', ''),
+                        element_type=element_type,
+                        start_line=child.get('start_line', 1) if 'start_line' in child else 1,
+                        end_line=child.get('end_line', 1) if 'end_line' in child else 1,
+                        code=code
+                    )
+                    
+                    # Add additional properties
+                    if 'parameters' in child:
+                        element.parameters = child['parameters']
+                    if 'return_type' in child:
+                        element.return_type = child['return_type']
+                    if 'is_pub' in child:
+                        element.is_pub = child['is_pub']
+                    if 'is_async' in child:
+                        element.is_async = child['is_async']
+                    if 'is_unsafe' in child:
+                        element.is_unsafe = child['is_unsafe']
+                    if 'impl_for' in child:
+                        element.impl_for = child['impl_for']
+                    if 'trait_name' in child:
+                        element.trait_name = child['trait_name']
+                    if 'generic_params' in child:
+                        element.generic_params = child['generic_params']
+                    if 'lifetime_params' in child:
+                        element.lifetime_params = child['lifetime_params']
+                    if 'derives' in child:
+                        element.derives = child['derives']
+                    
+                    self.elements.append(element)
+                elif isinstance(child, CodeElement):
+                    self.elements.append(child)
+        
+        # Validate and repair AST
+        self.validate_and_repair_ast()
+        
+        return self.elements
 
     def build_ast(self, tokens: List[Token]) -> Dict[str, Any]:
         """

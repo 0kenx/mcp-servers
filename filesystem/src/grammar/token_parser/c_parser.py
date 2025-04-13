@@ -5,14 +5,16 @@ This module provides a parser specific to the C programming language,
 building on the base token parser framework.
 """
 
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 
 from .token import Token, TokenType
 from .token_parser import TokenParser
 from .parser_state import ParserState
 from .symbol_table import SymbolTable
+from .context_tracker import ContextTracker
 from .c_tokenizer import CTokenizer
 from .generic_brace_block_parser import BraceBlockParser
+from .base import CodeElement, ElementType
 
 
 class CParser(TokenParser):
@@ -50,27 +52,34 @@ class CParser(TokenParser):
         self.brace_stack = []
         self.paren_stack = []
 
-    def parse(self, code: str) -> Dict[str, Any]:
+    def parse(self, code: str) -> List[CodeElement]:
         """
-        Parse C code and build an abstract syntax tree.
+        Parse C code and return a list of code elements.
 
         Args:
             code: C source code
 
         Returns:
-            Dictionary representing the abstract syntax tree
+            List of code elements
         """
         # Reset state for a new parse
+        self.elements = []
         self.state = ParserState()
         self.symbol_table = SymbolTable()
+        self.context_tracker = ContextTracker()
         self.brace_stack = []
         self.paren_stack = []
 
         # Tokenize the code
         tokens = self.tokenize(code)
 
-        # Process the tokens to build the AST
-        return self.build_ast(tokens)
+        # Process the tokens to build elements directly
+        self._build_elements_from_tokens(tokens)
+        
+        # Validate and repair AST
+        self.validate_and_repair_ast()
+        
+        return self.elements
 
     def build_ast(self, tokens: List[Token]) -> Dict[str, Any]:
         """
