@@ -65,13 +65,10 @@ except ImportError:
 
 try:
     # Try relative import first
-    from .grammar import get_parser_for_file, BaseParser, CodeElement, ElementType
+    from .grammar.regex_parser import get_parser_for_file, BaseParser, CodeElement, ElementType
 except ImportError:
     # Fall back to direct import for when running as src/filesystem.py
-    from src.grammar import get_parser_for_file, ElementType
-
-
-from src.grammar import get_parser_for_file, ElementType
+    from src.grammar.regex_parser import get_parser_for_file, ElementType
 
 
 SYSTEM_PROMPT = """
