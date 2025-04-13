@@ -2625,6 +2625,13 @@ def create_branch(
     if check_rc != 0:
         return False, f"Source branch '{source_branch}' does not exist: {check_stderr}"
 
+    # Check if the destination branch already exists
+    check_stdout, check_stderr, check_rc = _run_command(
+        ["git", "rev-parse", "--verify", branch_name], check=False
+    )
+    if check_rc == 0:
+        return True, f"Branch '{branch_name}' already exists."
+
     # Create a new branch from the source branch with explicit URL
     branch_stdout, branch_stderr, branch_rc = _run_command(
         ["git", "checkout", "-b", branch_name, f"origin/{source_branch}"], check=False
