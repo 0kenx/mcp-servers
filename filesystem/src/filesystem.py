@@ -2341,16 +2341,19 @@ def echo_prompt(text: str) -> str:
 
 # --- GitHub Vibe Helper Functions ---
 
-def _run_command(command: List[str], check: bool = True, shell: bool = False) -> Tuple[str, str, int]:
+def _run_command(
+    command: List[str], check: bool = True, shell: bool = False
+) -> Tuple[str, str, int]:
     """Run a shell command and return stdout, stderr, and return code."""
     try:
         result = subprocess.run(
-            command, 
-            capture_output=True, 
-            text=True, 
-            check=check, 
+            command,
+            capture_output=True,
+            text=True,
+            check=check,
             cwd=WORKING_DIRECTORY,
-            shell=shell
+            shell=shell,
+
         )
         return result.stdout.strip(), result.stderr.strip(), result.returncode
     except subprocess.CalledProcessError as e:
@@ -2363,12 +2366,16 @@ def _run_command(command: List[str], check: bool = True, shell: bool = False) ->
 def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
     """Validate that the directory is a git repository and set up Git and GitHub CLI."""
     global WORKING_DIRECTORY
-    
+
     # Use the provided directory or fall back to the global WORKING_DIRECTORY
     directory_to_use = directory if directory else WORKING_DIRECTORY
-    
+
     if not directory_to_use:
-        return False, "Working directory is not set. Please call set_working_directory first."
+        return (
+            False,
+            "Working directory is not set. Please call set_working_directory first.",
+        )
+
 
     try:
         # Verify the directory exists and is accessible
@@ -2383,7 +2390,10 @@ def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
             ["git", "rev-parse", "--is-inside-work-tree"], check=False
         )
         if rc != 0:
-            return False, f"'{directory_to_use}' is not a git repository or git is not installed."
+            return (
+                False,
+                f"'{directory_to_use}' is not a git repository or git is not installed.",
+            )
 
         # Add SSH key to SSH agent if provided
         if GIT_SSH_KEY:
@@ -2391,7 +2401,6 @@ def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
             with open(ssh_key_path, "w") as f:
                 f.write(GIT_SSH_KEY)
             os.chmod(ssh_key_path, 0o600)
-            
 
         # Login to GitHub CLI if token is provided
         if GITHUB_AUTH_TOKEN:
@@ -2403,7 +2412,7 @@ def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
                     text=True,
                     capture_output=True,
                     check=False,
-                    cwd=WORKING_DIRECTORY
+                    cwd=WORKING_DIRECTORY,
                 )
                 if process.returncode != 0:
                     return False, f"Error logging in to GitHub: {process.stderr}"
@@ -2417,7 +2426,9 @@ def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
 
 def check_git_status() -> Tuple[bool, str]:
     """Check if the git working directory is clean."""
-    stdout, stderr, rc = _run_command(["git", "status", "-s", "--porcelain"], check=False)
+    stdout, stderr, rc = _run_command(
+        ["git", "status", "-s", "--porcelain"], check=False
+    )
 
     if rc != 0:
         return False, f"Error checking git status: {stderr}"
@@ -2458,12 +2469,12 @@ def get_github_repo() -> Tuple[bool, str]:
 def get_vibe_issues(repo: str) -> Tuple[bool, List[Dict[Any, Any]], str]:
     """Get all open vibe issues without linked PRs or blocked tag."""
     # Use gh CLI to get issues with the 'vibe' label, open status, and no linked PR
-    
+
     # Extract just the owner/repo part if a full URL is provided
     repo_match = re.search(r"github\.com/([^/]+/[^/]+?)(?:\.git)?$", repo)
     if repo_match:
         repo = repo_match.group(1)
-        
+
     cmd = [
         "gh",
         "issue",
@@ -2614,7 +2625,10 @@ def create_branch(
         return False, f"Error getting GitHub repository URL: {repo_url}"
 
     # First, fetch the latest changes with explicit URL
-    fetch_stdout, fetch_stderr, fetch_rc = _run_command(["git", "fetch", repo_url], check=False)
+    fetch_stdout, fetch_stderr, fetch_rc = _run_command(
+        ["git", "fetch", repo_url], check=False
+    )
+
     if fetch_rc != 0:
         return False, f"Error fetching latest changes: {fetch_stderr}"
 
@@ -2665,9 +2679,7 @@ def extract_debug_instructions(issue_body: str) -> str:
 # --- GitHub Vibe MCP Tools ---
 
 @mcp.tool()
-async def vibe_fix_issue(
-    issue_number: Optional[int] = None
-) -> str:
+async def vibe_fix_issue(issue_number: Optional[int] = None) -> str:
     """
     Pick a GitHub issue tagged with 'vibe' and prepare it for fixing.
 
@@ -2705,7 +2717,7 @@ async def vibe_fix_issue(
         return repo_result
 
     repo = repo_result
-    
+
     # Extract just the owner/repo part for gh commands
     repo_match = re.search(r"github\.com/([^/]+/[^/]+?)(?:\.git)?$", repo)
     if repo_match:
@@ -2816,7 +2828,7 @@ async def vibe_commit_fix(changelog: str) -> str:
         return repo_result
 
     repo = repo_result
-    
+
     # Extract just the owner/repo part for gh commands
     repo_match = re.search(r"github\.com/([^/]+/[^/]+?)(?:\.git)?$", repo)
     if repo_match:
@@ -2852,13 +2864,18 @@ async def vibe_commit_fix(changelog: str) -> str:
         return "No changes to commit. Make some changes first."
 
     # Add all changes
-    add_stdout, add_stderr, add_rc = _run_command(["git", "add", "--", "."], check=False)
+    add_stdout, add_stderr, add_rc = _run_command(
+        ["git", "add", "--", "."], check=False
+    )
+
     if add_rc != 0:
         return f"Error adding changes: {add_stderr}"
 
     # Commit changes
     commit_message = f"Fix #{issue_number}: {changelog}"
+
     commit_cmd = ["git", "commit", "-a", "-m", commit_message, f"--author={GIT_USER_NAME} <{GIT_USER_EMAIL}>"]
+
     commit_stdout, commit_stderr, commit_rc = _run_command(commit_cmd, check=False)
 
     if commit_rc != 0:

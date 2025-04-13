@@ -1,0 +1,3 @@
+pass
+
+class ServiceB(RegisteredClass):

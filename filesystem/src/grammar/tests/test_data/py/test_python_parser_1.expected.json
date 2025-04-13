@@ -1,0 +1,17 @@
+[
+  {
+    "name": "hello_world",
+    "element_type": "function",
+    "start_line": 1,
+    "end_line": 1,
+    "children": [],
+    "parameters": [
+      {
+        "name": "name",
+        "type": "str",
+        "default": "\"World\""
+      }
+    ],
+    "return_type": "str"
+  }
+]

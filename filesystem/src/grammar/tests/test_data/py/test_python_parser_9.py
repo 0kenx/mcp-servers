@@ -1,0 +1,1 @@
+def inner_function():
