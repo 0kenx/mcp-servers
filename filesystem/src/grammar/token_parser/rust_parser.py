@@ -73,46 +73,46 @@ class RustParser(TokenParser):
 
         # Process the tokens and build elements directly
         self._build_elements_from_tokens(tokens)
-        
+
         # Validate and repair AST
         self.validate_and_repair_ast()
-        
+
         return self.elements
-    
+
     def _build_elements_from_tokens(self, tokens: List[Token]) -> None:
         """
         Build CodeElement objects directly from tokens.
-        
+
         This method processes tokens and builds a list of CodeElement objects
         representing functions, structs, traits, etc. found in the code.
-        
+
         Args:
             tokens: List of tokens from the tokenizer
         """
         i = 0
         line_map = {}
         current_line = 1
-        
+
         # First pass: build a mapping of token indices to line numbers
         for i, token in enumerate(tokens):
             if token.token_type == TokenType.NEWLINE:
                 current_line += 1
             line_map[i] = current_line
-        
+
         i = 0
         while i < len(tokens):
             # Skip whitespace and newlines
             if tokens[i].token_type in [TokenType.WHITESPACE, TokenType.NEWLINE]:
                 i += 1
                 continue
-                
+
             # Handle attributes
             if tokens[i].token_type == TokenType.ATTRIBUTE:
                 attr = self._parse_attribute(tokens, i)
                 if attr:
                     i = attr["next_index"]
                     continue
-            
+
             # Check for function or struct definitions
             if tokens[i].token_type == TokenType.KEYWORD:
                 stmt = self._parse_keyword_statement(tokens, i)
@@ -124,7 +124,7 @@ class RustParser(TokenParser):
                         self.elements.append(element)
                     i = stmt["next_index"]
                     continue
-            
+
             # Check for declarations or definitions starting with identifiers
             if tokens[i].token_type == TokenType.IDENTIFIER:
                 stmt = self._parse_declaration_or_definition(tokens, i)
@@ -136,18 +136,20 @@ class RustParser(TokenParser):
                         self.elements.append(element)
                     i = stmt["next_index"]
                     continue
-            
+
             # Move to next token if no pattern matched
             i += 1
-    
-    def _convert_node_to_element(self, node: Dict[str, Any], line_map: Dict[int, int]) -> Optional[CodeElement]:
+
+    def _convert_node_to_element(
+        self, node: Dict[str, Any], line_map: Dict[int, int]
+    ) -> Optional[CodeElement]:
         """
         Convert an AST node to a CodeElement.
-        
+
         Args:
             node: The AST node to convert
             line_map: Mapping from token indices to line numbers
-            
+
         Returns:
             A CodeElement or None if the node cannot be converted
         """
@@ -156,7 +158,7 @@ class RustParser(TokenParser):
         start_line = 1
         end_line = 1
         parameters = []
-        
+
         # Get name and type based on node type
         if "type" in node:
             if node["type"] == "FunctionDefinition":
@@ -186,29 +188,29 @@ class RustParser(TokenParser):
                 element_type = ElementType.MODULE
                 if "name" in node:
                     name = node["name"]
-        
+
         # Get start and end lines
         if "start" in node and node["start"] in line_map:
             start_line = line_map[node["start"]]
         if "end" in node and node["end"] in line_map:
             end_line = line_map[node["end"]]
-            
+
         # Skip if we couldn't determine the element type
         if not element_type:
             return None
-            
+
         # Create the element
         element = CodeElement(
             name=name,
             element_type=element_type,
             start_line=start_line,
-            end_line=end_line
+            end_line=end_line,
         )
-        
+
         # Set parameters if available
         if parameters:
             element.parameters = parameters
-            
+
         # Add Rust-specific attributes
         if "is_pub" in node and node["is_pub"]:
             element.is_pub = True
@@ -216,7 +218,7 @@ class RustParser(TokenParser):
             element.is_unsafe = True
         if "return_type" in node and node["return_type"]:
             element.return_type = node["return_type"]
-            
+
         # Add children
         if "children" in node:
             for child_node in node["children"]:
@@ -224,7 +226,7 @@ class RustParser(TokenParser):
                 if child_element:
                     child_element.parent = element
                     element.children.append(child_element)
-                    
+
         return element
 
     def build_ast(self, tokens: List[Token]) -> Dict[str, Any]:
@@ -485,10 +487,10 @@ class RustParser(TokenParser):
         # Simplified parsing that skips details like generic parameters
 
         # Find opening brace for struct body (if any)
-        while (
-            index < len(tokens)
-            and tokens[index].token_type not in [TokenType.OPEN_BRACE, TokenType.SEMICOLON]
-        ):
+        while index < len(tokens) and tokens[index].token_type not in [
+            TokenType.OPEN_BRACE,
+            TokenType.SEMICOLON,
+        ]:
             index += 1
 
         # Check if this is a unit struct or a struct with fields

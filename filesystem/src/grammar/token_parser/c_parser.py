@@ -5,7 +5,7 @@ This module provides a parser specific to the C programming language,
 building on the base token parser framework.
 """
 
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any
 
 from .token import Token, TokenType
 from .token_parser import TokenParser
@@ -75,10 +75,10 @@ class CParser(TokenParser):
 
         # Process the tokens to build elements directly
         self._build_elements_from_tokens(tokens)
-        
+
         # Validate and repair AST
         self.validate_and_repair_ast()
-        
+
         return self.elements
 
     def build_ast(self, tokens: List[Token]) -> Dict[str, Any]:
@@ -565,41 +565,41 @@ class CParser(TokenParser):
         """
         # This would walk the AST and ensure all nodes have correct parent and children references
         pass
-        
+
     def _build_elements_from_tokens(self, tokens: List[Token]) -> None:
         """
         Build CodeElement objects directly from tokens.
-        
+
         This method processes tokens and builds a list of CodeElement objects
         representing functions, structs, classes, etc. found in the code.
-        
+
         Args:
             tokens: List of tokens from the tokenizer
         """
         i = 0
         line_map = {}
         current_line = 1
-        
+
         # First pass: build a mapping of token indices to line numbers
         for i, token in enumerate(tokens):
             if token.token_type == TokenType.NEWLINE:
                 current_line += 1
             line_map[i] = current_line
-        
+
         i = 0
         while i < len(tokens):
             # Skip whitespace and newlines
             if tokens[i].token_type in [TokenType.WHITESPACE, TokenType.NEWLINE]:
                 i += 1
                 continue
-                
+
             # Handle preprocessor directives
             if tokens[i].token_type == TokenType.PREPROCESSOR:
                 directive = self._parse_preprocessor_directive(tokens, i)
                 if directive:
                     i = directive["next_index"]
                     continue
-            
+
             # Check for function or struct definitions
             if tokens[i].token_type == TokenType.KEYWORD:
                 stmt = self._parse_keyword_statement(tokens, i)
@@ -611,7 +611,7 @@ class CParser(TokenParser):
                         self.elements.append(element)
                     i = stmt["next_index"]
                     continue
-            
+
             # Check for declarations or definitions starting with identifiers
             if tokens[i].token_type == TokenType.IDENTIFIER:
                 stmt = self._parse_declaration_or_definition(tokens, i)
@@ -623,18 +623,20 @@ class CParser(TokenParser):
                         self.elements.append(element)
                     i = stmt["next_index"]
                     continue
-            
+
             # Move to next token if no pattern matched
             i += 1
-    
-    def _convert_node_to_element(self, node: Dict[str, Any], line_map: Dict[int, int]) -> Optional[CodeElement]:
+
+    def _convert_node_to_element(
+        self, node: Dict[str, Any], line_map: Dict[int, int]
+    ) -> Optional[CodeElement]:
         """
         Convert an AST node to a CodeElement.
-        
+
         Args:
             node: The AST node to convert
             line_map: Mapping from token indices to line numbers
-            
+
         Returns:
             A CodeElement or None if the node cannot be converted
         """
@@ -644,7 +646,7 @@ class CParser(TokenParser):
         end_line = 1
         parameters = []
         children = []
-        
+
         # Get name and type based on node type
         if "type" in node:
             if node["type"] == "FunctionDefinition":
@@ -665,29 +667,29 @@ class CParser(TokenParser):
                 element_type = ElementType.CLASS
                 if "name" in node:
                     name = node["name"]
-        
+
         # Get start and end lines
         if "start" in node and node["start"] in line_map:
             start_line = line_map[node["start"]]
         if "end" in node and node["end"] in line_map:
             end_line = line_map[node["end"]]
-            
+
         # Skip if we couldn't determine the element type
         if not element_type:
             return None
-            
+
         # Create the element
         element = CodeElement(
             name=name,
             element_type=element_type,
             start_line=start_line,
-            end_line=end_line
+            end_line=end_line,
         )
-        
+
         # Set parameters if available
         if parameters:
             element.parameters = parameters
-            
+
         # Add children
         if "children" in node:
             for child_node in node["children"]:
@@ -695,5 +697,5 @@ class CParser(TokenParser):
                 if child_element:
                     child_element.parent = element
                     element.children.append(child_element)
-                    
+
         return element

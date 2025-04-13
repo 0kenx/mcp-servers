@@ -61,52 +61,56 @@ class CSSParser(TokenParser):
 
         # Process the tokens to build the AST
         ast = self.build_ast(tokens)
-        
+
         # Extract elements from the AST's children and convert them to CodeElement objects
         self.elements = []
-        if isinstance(ast, dict) and 'children' in ast:
-            for child in ast['children']:
+        if isinstance(ast, dict) and "children" in ast:
+            for child in ast["children"]:
                 if isinstance(child, dict):
                     # Convert dictionary to CodeElement
-                    element_type_str = child.get('type', 'unknown')
+                    element_type_str = child.get("type", "unknown")
                     element_type = ElementType.UNKNOWN
-                    
+
                     # Map string element type to ElementType enum
                     for et in ElementType:
                         if et.value == element_type_str:
                             element_type = et
                             break
-                    
+
                     # Extract the code if available, or use a placeholder
-                    code = child.get('code', f"/* {element_type_str} {child.get('name', '')} */")
-                    
-                    element = CodeElement(
-                        name=child.get('name', ''),
-                        element_type=element_type,
-                        start_line=child.get('start_line', 1) if 'start_line' in child else 1,
-                        end_line=child.get('end_line', 1) if 'end_line' in child else 1,
-                        code=code
+                    code = child.get(
+                        "code", f"/* {element_type_str} {child.get('name', '')} */"
                     )
-                    
+
+                    element = CodeElement(
+                        name=child.get("name", ""),
+                        element_type=element_type,
+                        start_line=child.get("start_line", 1)
+                        if "start_line" in child
+                        else 1,
+                        end_line=child.get("end_line", 1) if "end_line" in child else 1,
+                        code=code,
+                    )
+
                     # Add CSS-specific properties
-                    if 'selector' in child:
-                        element.selector = child['selector']
-                    if 'properties' in child:
-                        element.properties = child['properties']
-                    if 'media_query' in child:
-                        element.media_query = child['media_query']
-                    if 'is_keyframes' in child:
-                        element.is_keyframes = child['is_keyframes']
-                    if 'is_import' in child:
-                        element.is_import = child['is_import']
-                    
+                    if "selector" in child:
+                        element.selector = child["selector"]
+                    if "properties" in child:
+                        element.properties = child["properties"]
+                    if "media_query" in child:
+                        element.media_query = child["media_query"]
+                    if "is_keyframes" in child:
+                        element.is_keyframes = child["is_keyframes"]
+                    if "is_import" in child:
+                        element.is_import = child["is_import"]
+
                     self.elements.append(element)
                 elif isinstance(child, CodeElement):
                     self.elements.append(child)
-        
+
         # Validate and repair AST
         self.validate_and_repair_ast()
-        
+
         return self.elements
 
     def build_ast(self, tokens: List[Token]) -> Dict[str, Any]:

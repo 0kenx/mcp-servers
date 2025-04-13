@@ -15,7 +15,6 @@ from mcp.server.fastmcp import FastMCP, Context
 import threading
 import time
 import builtins
-import tempfile
 
 try:
     # Try to import from the local module first
@@ -2341,6 +2340,7 @@ def echo_prompt(text: str) -> str:
 
 # --- GitHub Vibe Helper Functions ---
 
+
 def _run_command(
     command: List[str], check: bool = True, shell: bool = False
 ) -> Tuple[str, str, int]:
@@ -2353,7 +2353,6 @@ def _run_command(
             check=check,
             cwd=WORKING_DIRECTORY,
             shell=shell,
-
         )
         return result.stdout.strip(), result.stderr.strip(), result.returncode
     except subprocess.CalledProcessError as e:
@@ -2362,6 +2361,7 @@ def _run_command(
             e.stderr.strip() if e.stderr else "",
             e.returncode,
         )
+
 
 def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
     """Validate that the directory is a git repository and set up Git and GitHub CLI."""
@@ -2375,7 +2375,6 @@ def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
             False,
             "Working directory is not set. Please call set_working_directory first.",
         )
-
 
     try:
         # Verify the directory exists and is accessible
@@ -2423,6 +2422,7 @@ def setup_directory_and_tools(directory: str = None) -> Tuple[bool, str]:
         return True, f"Working directory '{directory_to_use}' is valid."
     except Exception as e:
         return False, f"Error validating directory: {str(e)}"
+
 
 def check_git_status() -> Tuple[bool, str]:
     """Check if the git working directory is clean."""
@@ -2678,6 +2678,7 @@ def extract_debug_instructions(issue_body: str) -> str:
 
 # --- GitHub Vibe MCP Tools ---
 
+
 @mcp.tool()
 async def vibe_fix_issue(issue_number: Optional[int] = None) -> str:
     """
@@ -2874,7 +2875,14 @@ async def vibe_commit_fix(changelog: str) -> str:
     # Commit changes
     commit_message = f"Fix #{issue_number}: {changelog}"
 
-    commit_cmd = ["git", "commit", "-a", "-m", commit_message, f"--author={GIT_USER_NAME} <{GIT_USER_EMAIL}>"]
+    commit_cmd = [
+        "git",
+        "commit",
+        "-a",
+        "-m",
+        commit_message,
+        f"--author={GIT_USER_NAME} <{GIT_USER_EMAIL}>",
+    ]
 
     commit_stdout, commit_stderr, commit_rc = _run_command(commit_cmd, check=False)
 

@@ -176,7 +176,9 @@ def is_command_blacklisted(command: str) -> bool:
 
 
 async def create_async_process(
-    command: Union[str, List[str]], use_fork: bool = False, working_directory: Optional[str] = None
+    command: Union[str, List[str]],
+    use_fork: bool = False,
+    working_directory: Optional[str] = None,
 ) -> asyncio.subprocess.Process:
     """Create an async subprocess, optionally using fork for isolation"""
     if isinstance(command, list):
@@ -199,7 +201,10 @@ async def create_async_process(
         )
     else:
         return await asyncio.create_subprocess_shell(
-            command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=working_directory
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=working_directory,
         )
 
 
@@ -764,7 +769,8 @@ edition = "2021"
 
             # Compile and run
             compile_process = await create_async_process(
-                f"cd {rust_dir} && cargo build --release", working_directory=working_directory
+                f"cd {rust_dir} && cargo build --release",
+                working_directory=working_directory,
             )
             try:
                 compile_stdout, compile_stderr = await asyncio.wait_for(
@@ -821,7 +827,9 @@ edition = "2021"
             return f"Unsupported script type: {script_type}"
 
         # Execute the script using execute_command
-        return await execute_command(command, wait_time, output_type, working_directory=working_directory)
+        return await execute_command(
+            command, wait_time, output_type, working_directory=working_directory
+        )
     finally:
         # Clean up temporary files
         if os.path.exists(script_path):

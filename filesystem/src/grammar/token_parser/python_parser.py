@@ -78,10 +78,10 @@ class PythonParser(TokenParser):
 
         # Process the tokens to build the elements directly
         self._build_elements_from_tokens(tokens)
-        
+
         # Validate and repair AST
         self.validate_and_repair_ast()
-        
+
         return self.elements
 
     def _build_elements_from_tokens(self, tokens: List[Token]) -> None:
@@ -97,7 +97,9 @@ class PythonParser(TokenParser):
         i = 0
         while i < len(tokens):
             # Track indentation changes
-            if tokens[i].token_type == TokenType.WHITESPACE and (i == 0 or tokens[i-1].token_type == TokenType.NEWLINE):
+            if tokens[i].token_type == TokenType.WHITESPACE and (
+                i == 0 or tokens[i - 1].token_type == TokenType.NEWLINE
+            ):
                 indent_size = len(tokens[i].value)
                 if "indent_size" in tokens[i].metadata:
                     indent_size = tokens[i].metadata["indent_size"]
@@ -143,8 +145,10 @@ class PythonParser(TokenParser):
                 else:
                     # Other token types
                     i += 1
-    
-    def _parse_function_direct(self, tokens: List[Token], index: int) -> Tuple[Optional[CodeElement], int]:
+
+    def _parse_function_direct(
+        self, tokens: List[Token], index: int
+    ) -> Tuple[Optional[CodeElement], int]:
         """
         Parse a function definition directly into a CodeElement.
 
@@ -157,34 +161,34 @@ class PythonParser(TokenParser):
         """
         start_index = index
         start_line = tokens[index].line
-        
+
         # Skip 'def' keyword
         index += 1
-        
+
         # Skip whitespace
         while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
             index += 1
-            
+
         # Get function name
         if index >= len(tokens) or tokens[index].token_type != TokenType.IDENTIFIER:
             return None, index  # Not a valid function definition
-            
+
         function_name = tokens[index].value
         index += 1
-        
+
         # Skip to opening parenthesis
         while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
             index += 1
-            
+
         if index >= len(tokens) or tokens[index].token_type != TokenType.OPEN_PAREN:
             return None, index  # Not a valid function definition
-            
+
         # Skip opening parenthesis
         index += 1
-        
+
         # Parse parameters
         parameters = []
-        
+
         # Process parameters until closing parenthesis
         param_start = index
         current_param = None
@@ -192,136 +196,177 @@ class PythonParser(TokenParser):
         param_type = None
         param_default = None
         paren_depth = 1  # Initialize paren_depth to 1 (we've already consumed the opening parenthesis)
-        
+
         # For each parameter (separated by comma)
         while index < len(tokens) and paren_depth > 0:
             token = tokens[index]
-            
+
             # Parameter name
             if token.token_type == TokenType.IDENTIFIER and param_name == "":
                 param_name = token.value
-                
+
             # Type annotation
             elif token.token_type == TokenType.COLON:
                 index += 1  # Skip colon
-                
+
                 # Skip whitespace
-                while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
+                while (
+                    index < len(tokens)
+                    and tokens[index].token_type == TokenType.WHITESPACE
+                ):
                     index += 1
-                    
-                if index < len(tokens) and tokens[index].token_type == TokenType.IDENTIFIER:
+
+                if (
+                    index < len(tokens)
+                    and tokens[index].token_type == TokenType.IDENTIFIER
+                ):
                     param_type = tokens[index].value
-                    
+
             # Default value
             elif token.token_type == TokenType.EQUALS:
                 index += 1  # Skip equals
-                
+
                 # Skip whitespace
-                while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
+                while (
+                    index < len(tokens)
+                    and tokens[index].token_type == TokenType.WHITESPACE
+                ):
                     index += 1
-                
+
                 # Collect default value (can be complex)
                 default_start = index
                 default_depth = 0
-                
+
                 # Parse until comma or closing paren
-                while index < len(tokens) and not (tokens[index].token_type == TokenType.COMMA and default_depth == 0) and not (tokens[index].token_type == TokenType.CLOSE_PAREN and default_depth == 0):
-                    if tokens[index].token_type in (TokenType.OPEN_PAREN, TokenType.OPEN_BRACKET, TokenType.OPEN_BRACE):
+                while (
+                    index < len(tokens)
+                    and not (
+                        tokens[index].token_type == TokenType.COMMA
+                        and default_depth == 0
+                    )
+                    and not (
+                        tokens[index].token_type == TokenType.CLOSE_PAREN
+                        and default_depth == 0
+                    )
+                ):
+                    if tokens[index].token_type in (
+                        TokenType.OPEN_PAREN,
+                        TokenType.OPEN_BRACKET,
+                        TokenType.OPEN_BRACE,
+                    ):
                         default_depth += 1
-                    elif tokens[index].token_type in (TokenType.CLOSE_PAREN, TokenType.CLOSE_BRACKET, TokenType.CLOSE_BRACE):
+                    elif tokens[index].token_type in (
+                        TokenType.CLOSE_PAREN,
+                        TokenType.CLOSE_BRACKET,
+                        TokenType.CLOSE_BRACE,
+                    ):
                         default_depth -= 1
-                        if tokens[index].token_type == TokenType.CLOSE_PAREN and default_depth < 0:
+                        if (
+                            tokens[index].token_type == TokenType.CLOSE_PAREN
+                            and default_depth < 0
+                        ):
                             # We've reached the end of the parameter list
                             break
-                            
+
                     index += 1
-                    
+
                 # Extract the default value
-                default_text = ''.join(tokens[i].value for i in range(default_start, index))
+                default_text = "".join(
+                    tokens[i].value for i in range(default_start, index)
+                )
                 param_default = default_text
-                
+
                 # Back up one position since we'll increment at the end of the loop
                 index -= 1
-                
+
             # Parameter separator (comma)
             elif token.token_type == TokenType.COMMA:
                 # Save the current parameter if we have a name
                 if param_name:
-                    parameters.append({
-                        'name': param_name,
-                        'type': param_type,
-                        'default': param_default
-                    })
+                    parameters.append(
+                        {
+                            "name": param_name,
+                            "type": param_type,
+                            "default": param_default,
+                        }
+                    )
                     # Reset for next parameter
                     param_name = ""
                     param_type = None
                     param_default = None
-                    
+
             # Update paren depth
             if token.token_type == TokenType.OPEN_PAREN:
                 paren_depth += 1
             elif token.token_type == TokenType.CLOSE_PAREN:
                 paren_depth -= 1
-                
+
                 # If we're at the end of parameters, add the last one
                 if paren_depth == 0 and param_name:
-                    parameters.append({
-                        'name': param_name,
-                        'type': param_type,
-                        'default': param_default
-                    })
-                    
+                    parameters.append(
+                        {
+                            "name": param_name,
+                            "type": param_type,
+                            "default": param_default,
+                        }
+                    )
+
             index += 1
-        
+
         # Index should now be at the position after closing parenthesis
-        
+
         # Check for return type annotation (-> type)
         return_type = None
         # Skip whitespace after parenthesis
         while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
             index += 1
-        
+
         # Look for the arrow token
         if index < len(tokens) and tokens[index].token_type == TokenType.ARROW:
             index += 1  # Skip the arrow
-            
+
             # Skip whitespace after arrow
-            while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
+            while (
+                index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE
+            ):
                 index += 1
-            
+
             # Get the return type
             if index < len(tokens) and tokens[index].token_type == TokenType.IDENTIFIER:
                 return_type = tokens[index].value
                 index += 1
-                
+
                 # Handle complex return types like List[str]
-                if index < len(tokens) and tokens[index].token_type == TokenType.OPEN_BRACKET:
+                if (
+                    index < len(tokens)
+                    and tokens[index].token_type == TokenType.OPEN_BRACKET
+                ):
                     # Just collect the entire type up to the matching bracket
                     bracket_depth = 1
                     index += 1
                     type_suffix = "["
-                    
+
                     while index < len(tokens) and bracket_depth > 0:
                         if tokens[index].token_type == TokenType.OPEN_BRACKET:
                             bracket_depth += 1
                         elif tokens[index].token_type == TokenType.CLOSE_BRACKET:
                             bracket_depth -= 1
-                            
+
                         type_suffix += tokens[index].value
                         index += 1
-                        
+
                     return_type += type_suffix
-        
+
         # Skip to colon
         while index < len(tokens) and tokens[index].token_type != TokenType.COLON:
             index += 1
-            
+
         if index >= len(tokens):
             return None, index  # Not a valid function definition
-            
+
         # Skip colon
         index += 1
-        
+
         # Find the end of the function body based on indentation
         end_line = start_line
         next_index = index
@@ -329,29 +374,31 @@ class PythonParser(TokenParser):
             if tokens[next_index].line > end_line:
                 end_line = tokens[next_index].line
             next_index += 1
-            
+
         # Create the CodeElement for the function
         # Extract the actual code
-        code_fragment = ''
+        code_fragment = ""
         for i in range(start_index, next_index):
             if i < len(tokens):
                 code_fragment += tokens[i].value
-                
+
         function = CodeElement(
             name=function_name,
             element_type=ElementType.FUNCTION,
             start_line=start_line,
             end_line=end_line,
-            code=code_fragment
+            code=code_fragment,
         )
-        
+
         # Add parameters and return type metadata
         function.parameters = parameters
         function.return_type = return_type
-        
+
         return function, next_index
-        
-    def _parse_class_direct(self, tokens: List[Token], index: int) -> Tuple[Optional[CodeElement], int]:
+
+    def _parse_class_direct(
+        self, tokens: List[Token], index: int
+    ) -> Tuple[Optional[CodeElement], int]:
         """
         Parse a class definition directly into a CodeElement.
 
@@ -365,7 +412,7 @@ class PythonParser(TokenParser):
         # Similar implementation as _parse_function_direct but for classes
         # TODO: Implement class parsing
         return None, index
-    
+
     def build_ast(self, tokens: List[Token]) -> Dict[str, Any]:
         """
         Build an abstract syntax tree from a list of tokens.

@@ -82,10 +82,10 @@ class JavaScriptParser(TokenParser):
 
         # Process the tokens to build elements directly
         self._build_elements_from_tokens(tokens)
-        
+
         # Validate and repair AST
         self.validate_and_repair_ast()
-        
+
         return self.elements
 
     def _build_elements_from_tokens(self, tokens: List[Token]) -> None:
@@ -100,7 +100,7 @@ class JavaScriptParser(TokenParser):
         """
         i = 0
         current_class = None  # Keep track of current class for methods
-        
+
         while i < len(tokens):
             # Skip whitespace and newlines for element building
             if tokens[i].token_type in [TokenType.WHITESPACE, TokenType.NEWLINE]:
@@ -111,7 +111,12 @@ class JavaScriptParser(TokenParser):
             if i < len(tokens):
                 if tokens[i].token_type == TokenType.KEYWORD:
                     # Process JavaScript keywords (function, class, etc.)
-                    if tokens[i].value == "function" or tokens[i].value == "async" and i+1 < len(tokens) and tokens[i+1].value == "function":
+                    if (
+                        tokens[i].value == "function"
+                        or tokens[i].value == "async"
+                        and i + 1 < len(tokens)
+                        and tokens[i + 1].value == "function"
+                    ):
                         # Function declaration
                         function, next_index = self._parse_function_direct(tokens, i)
                         if function:
@@ -124,7 +129,9 @@ class JavaScriptParser(TokenParser):
                         class_element, next_index = self._parse_class_direct(tokens, i)
                         if class_element:
                             self.elements.append(class_element)
-                            current_class = class_element  # Update current class context
+                            current_class = (
+                                class_element  # Update current class context
+                            )
                             i = next_index
                         else:
                             i += 1
@@ -137,17 +144,21 @@ class JavaScriptParser(TokenParser):
                         i += 1
                 elif tokens[i].token_type == TokenType.IDENTIFIER:
                     # This could be an object method or property
-                    if i + 1 < len(tokens) and tokens[i+1].token_type == TokenType.OPERATOR and tokens[i+1].value == "=":
+                    if (
+                        i + 1 < len(tokens)
+                        and tokens[i + 1].token_type == TokenType.OPERATOR
+                        and tokens[i + 1].value == "="
+                    ):
                         # Potential assignment (including arrow functions)
                         name = tokens[i].value
                         i += 2  # Skip past the name and equals sign
-                        
+
                         # Check for arrow function
                         arrow_fn = self._try_parse_arrow_function(tokens, i, name)
                         if arrow_fn:
                             self.elements.append(arrow_fn)
                             # Skip to the end of the arrow function
-                            i = arrow_fn.code.rfind('}') + 1
+                            i = arrow_fn.code.rfind("}") + 1
                         else:
                             # Regular assignment, not a function
                             i += 1
@@ -157,136 +168,157 @@ class JavaScriptParser(TokenParser):
                 else:
                     # Other token types
                     i += 1
-                    
-    def _try_parse_arrow_function(self, tokens: List[Token], index: int, name: str) -> Optional[CodeElement]:
+
+    def _try_parse_arrow_function(
+        self, tokens: List[Token], index: int, name: str
+    ) -> Optional[CodeElement]:
         """
         Try to parse an arrow function expression.
-        
+
         Args:
             tokens: List of tokens
             index: Current token index
             name: Name of the variable being assigned to
-            
+
         Returns:
             A CodeElement if an arrow function is found, None otherwise
         """
         start_index = index
         start_line = tokens[index].line if index < len(tokens) else 0
-        
+
         # Skip whitespace
         while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
             index += 1
-            
+
         # Check for arrow function syntax: either (params) => {...} or param => {...}
         parameters = []
-        
+
         # Check for parameters in parentheses: (param1, param2) => {...}
         if index < len(tokens) and tokens[index].token_type == TokenType.OPEN_PAREN:
             # Parse parameters in parentheses
             index += 1  # Skip opening parenthesis
             param_name = ""
             paren_depth = 1
-            
+
             while index < len(tokens) and paren_depth > 0:
                 token = tokens[index]
-                
+
                 # Parameter name
                 if token.token_type == TokenType.IDENTIFIER and not param_name:
                     param_name = token.value
-                
+
                 # Parameter separator (comma)
                 elif token.token_type == TokenType.COMMA:
                     if param_name:
-                        parameters.append({'name': param_name})
+                        parameters.append({"name": param_name})
                         param_name = ""
-                
+
                 # Update paren depth
                 if token.token_type == TokenType.OPEN_PAREN:
                     paren_depth += 1
                 elif token.token_type == TokenType.CLOSE_PAREN:
                     paren_depth -= 1
-                    
+
                     # If we're at the end of parameters, add the last one
                     if paren_depth == 0 and param_name:
-                        parameters.append({'name': param_name})
-                
+                        parameters.append({"name": param_name})
+
                 index += 1
-                
+
             # Skip whitespace after closing parenthesis
-            while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
+            while (
+                index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE
+            ):
                 index += 1
-        
+
         # Check for single parameter without parentheses: param => {...}
         elif index < len(tokens) and tokens[index].token_type == TokenType.IDENTIFIER:
-            parameters.append({'name': tokens[index].value})
+            parameters.append({"name": tokens[index].value})
             index += 1
-            
+
             # Skip whitespace after parameter
-            while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
+            while (
+                index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE
+            ):
                 index += 1
-        
+
         # Check for arrow token
-        if index + 1 < len(tokens) and tokens[index].token_type == TokenType.OPERATOR and tokens[index].value == "=" and tokens[index+1].token_type == TokenType.OPERATOR and tokens[index+1].value == ">":
+        if (
+            index + 1 < len(tokens)
+            and tokens[index].token_type == TokenType.OPERATOR
+            and tokens[index].value == "="
+            and tokens[index + 1].token_type == TokenType.OPERATOR
+            and tokens[index + 1].value == ">"
+        ):
             # We have an arrow function!
             index += 2  # Skip past the arrow (=>)
-            
+
             # Skip whitespace after arrow
-            while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
+            while (
+                index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE
+            ):
                 index += 1
-                
+
             # Find function body (either block or expression)
             end_index = index
             end_line = start_line
-            
+
             if index < len(tokens) and tokens[index].token_type == TokenType.OPEN_BRACE:
                 # Block body: {...}
                 brace_depth = 1
                 index += 1
-                
+
                 while index < len(tokens) and brace_depth > 0:
                     if tokens[index].token_type == TokenType.OPEN_BRACE:
                         brace_depth += 1
                     elif tokens[index].token_type == TokenType.CLOSE_BRACE:
                         brace_depth -= 1
-                        
+
                     if tokens[index].line > end_line:
                         end_line = tokens[index].line
-                        
+
                     index += 1
                     end_index = index
             else:
                 # Expression body (find the end of the expression)
-                while index < len(tokens) and tokens[index].token_type not in (TokenType.SEMICOLON, TokenType.NEWLINE):
+                while index < len(tokens) and tokens[index].token_type not in (
+                    TokenType.SEMICOLON,
+                    TokenType.NEWLINE,
+                ):
                     if tokens[index].line > end_line:
                         end_line = tokens[index].line
                     index += 1
                     end_index = index
-            
+
             # Extract code
-            code_fragment = ''
-            for i in range(start_index - 2, end_index):  # Include the variable name and equals sign
+            code_fragment = ""
+            for i in range(
+                start_index - 2, end_index
+            ):  # Include the variable name and equals sign
                 if i >= 0 and i < len(tokens):
                     code_fragment += tokens[i].value
-            
+
             # Create CodeElement
             arrow_function = CodeElement(
                 name=name,
                 element_type=ElementType.FUNCTION,
                 start_line=start_line,
                 end_line=end_line,
-                code=code_fragment
+                code=code_fragment,
             )
-            
+
             # Add metadata
             arrow_function.parameters = parameters
             arrow_function.is_arrow_function = True
-            
+
             return arrow_function
-            
+
         # Not an arrow function
         return None
-    
-    def _parse_function_direct(self, tokens: List[Token], index: int) -> Tuple[Optional[CodeElement], int]:
+
+    def _parse_function_direct(
+        self, tokens: List[Token], index: int
+    ) -> Tuple[Optional[CodeElement], int]:
         """
         Parse a function definition directly into a CodeElement.
 
@@ -299,157 +331,187 @@ class JavaScriptParser(TokenParser):
         """
         start_index = index
         start_line = tokens[index].line
-        
+
         # Check for async keyword
         is_async = False
         if tokens[index].value == "async":
             is_async = True
             index += 1  # Skip async keyword
             # Skip whitespace
-            while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
+            while (
+                index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE
+            ):
                 index += 1
             # Make sure we have 'function' next
             if index >= len(tokens) or tokens[index].value != "function":
                 return None, index  # Not a valid async function
-        
+
         # Skip 'function' keyword
         index += 1
-        
+
         # Check for generator function (function*)
         is_generator = False
-        if index < len(tokens) and tokens[index].token_type == TokenType.OPERATOR and tokens[index].value == "*":
+        if (
+            index < len(tokens)
+            and tokens[index].token_type == TokenType.OPERATOR
+            and tokens[index].value == "*"
+        ):
             is_generator = True
             index += 1  # Skip * operator
-        
+
         # Skip whitespace
         while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
             index += 1
-            
+
         # Get function name (might be empty for anonymous functions)
         function_name = ""
         if index < len(tokens) and tokens[index].token_type == TokenType.IDENTIFIER:
             function_name = tokens[index].value
             index += 1
-            
+
         # Skip to opening parenthesis
         while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
             index += 1
-            
+
         if index >= len(tokens) or tokens[index].token_type != TokenType.OPEN_PAREN:
             return None, index  # Not a valid function definition
-            
+
         # Skip opening parenthesis
         index += 1
-        
+
         # Parse parameters
         parameters = []
         param_name = ""
         paren_depth = 1
-        
+
         # For each parameter (separated by comma)
         while index < len(tokens) and paren_depth > 0:
             token = tokens[index]
-            
+
             # Parameter name
             if token.token_type == TokenType.IDENTIFIER and not param_name:
                 param_name = token.value
-            
+
             # Default value (handle = sign)
             elif token.token_type == TokenType.OPERATOR and token.value == "=":
                 index += 1  # Skip = sign
-                
+
                 # Parse default value expression
                 default_start = index
                 default_depth = 0
-                
+
                 # Collect until comma or closing paren
-                while index < len(tokens) and not (
-                    tokens[index].token_type == TokenType.COMMA and default_depth == 0
-                ) and not (
-                    tokens[index].token_type == TokenType.CLOSE_PAREN and default_depth == 0 and paren_depth == 1
+                while (
+                    index < len(tokens)
+                    and not (
+                        tokens[index].token_type == TokenType.COMMA
+                        and default_depth == 0
+                    )
+                    and not (
+                        tokens[index].token_type == TokenType.CLOSE_PAREN
+                        and default_depth == 0
+                        and paren_depth == 1
+                    )
                 ):
-                    if tokens[index].token_type in (TokenType.OPEN_PAREN, TokenType.OPEN_BRACKET, TokenType.OPEN_BRACE):
+                    if tokens[index].token_type in (
+                        TokenType.OPEN_PAREN,
+                        TokenType.OPEN_BRACKET,
+                        TokenType.OPEN_BRACE,
+                    ):
                         default_depth += 1
-                    elif tokens[index].token_type in (TokenType.CLOSE_PAREN, TokenType.CLOSE_BRACKET, TokenType.CLOSE_BRACE):
+                    elif tokens[index].token_type in (
+                        TokenType.CLOSE_PAREN,
+                        TokenType.CLOSE_BRACKET,
+                        TokenType.CLOSE_BRACE,
+                    ):
                         default_depth -= 1
-                        if tokens[index].token_type == TokenType.CLOSE_PAREN and default_depth < 0:
+                        if (
+                            tokens[index].token_type == TokenType.CLOSE_PAREN
+                            and default_depth < 0
+                        ):
                             paren_depth -= 1
                             break
-                    
+
                     index += 1
-                    
+
                 # We don't add default value to the parameter yet, but we've parsed it
                 continue
-            
+
             # Parameter separator (comma)
             elif token.token_type == TokenType.COMMA:
                 if param_name:
-                    parameters.append({
-                        'name': param_name,
-                    })
+                    parameters.append(
+                        {
+                            "name": param_name,
+                        }
+                    )
                     # Reset for next parameter
                     param_name = ""
-            
+
             # Update paren depth
             if token.token_type == TokenType.OPEN_PAREN:
                 paren_depth += 1
             elif token.token_type == TokenType.CLOSE_PAREN:
                 paren_depth -= 1
-                
+
                 # If we're at the end of parameters, add the last one
                 if paren_depth == 0 and param_name:
-                    parameters.append({
-                        'name': param_name,
-                    })
-            
+                    parameters.append(
+                        {
+                            "name": param_name,
+                        }
+                    )
+
             index += 1
-        
+
         # Skip to opening brace
         while index < len(tokens) and tokens[index].token_type != TokenType.OPEN_BRACE:
             index += 1
-            
+
         if index >= len(tokens):
             return None, index  # Not a valid function definition
-            
+
         # Open brace found, now find matching closing brace
         index += 1
         brace_depth = 1
         end_line = start_line
-        
+
         while index < len(tokens) and brace_depth > 0:
             if tokens[index].token_type == TokenType.OPEN_BRACE:
                 brace_depth += 1
             elif tokens[index].token_type == TokenType.CLOSE_BRACE:
                 brace_depth -= 1
-                
+
             if tokens[index].line > end_line:
                 end_line = tokens[index].line
-                
+
             index += 1
-        
+
         # Create the CodeElement for the function
         # Extract the actual code
-        code_fragment = ''
+        code_fragment = ""
         for i in range(start_index, index):
             if i < len(tokens):
                 code_fragment += tokens[i].value
-                
+
         function = CodeElement(
             name=function_name if function_name else "<anonymous>",
             element_type=ElementType.FUNCTION,
             start_line=start_line,
             end_line=end_line,
-            code=code_fragment
+            code=code_fragment,
         )
-        
+
         # Add metadata
         function.parameters = parameters
         function.is_async = is_async
         function.is_generator = is_generator
-        
+
         return function, index
-        
-    def _parse_class_direct(self, tokens: List[Token], index: int) -> Tuple[Optional[CodeElement], int]:
+
+    def _parse_class_direct(
+        self, tokens: List[Token], index: int
+    ) -> Tuple[Optional[CodeElement], int]:
         """
         Parse a class definition directly into a CodeElement.
 
@@ -462,14 +524,14 @@ class JavaScriptParser(TokenParser):
         """
         start_index = index
         start_line = tokens[index].line
-        
+
         # Skip 'class' keyword
         index += 1
-        
+
         # Skip whitespace
         while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
             index += 1
-            
+
         # Get class name
         class_name = ""
         if index < len(tokens) and tokens[index].token_type == TokenType.IDENTIFIER:
@@ -478,70 +540,76 @@ class JavaScriptParser(TokenParser):
         else:
             # Anonymous classes aren't valid in standard JavaScript
             return None, index
-        
+
         # Skip whitespace
         while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
             index += 1
-            
+
         # Check for extends clause
         extends = None
-        if index < len(tokens) and tokens[index].token_type == TokenType.KEYWORD and tokens[index].value == "extends":
+        if (
+            index < len(tokens)
+            and tokens[index].token_type == TokenType.KEYWORD
+            and tokens[index].value == "extends"
+        ):
             index += 1  # Skip 'extends' keyword
-            
+
             # Skip whitespace
-            while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
+            while (
+                index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE
+            ):
                 index += 1
-                
+
             # Get superclass name
             if index < len(tokens) and tokens[index].token_type == TokenType.IDENTIFIER:
                 extends = tokens[index].value
                 index += 1
-        
+
         # Skip to opening brace
         while index < len(tokens) and tokens[index].token_type != TokenType.OPEN_BRACE:
             index += 1
-            
+
         if index >= len(tokens):
             return None, index  # Not a valid class definition
-            
+
         # Found opening brace, now match closing brace
         index += 1
         brace_depth = 1
         end_line = start_line
-        
+
         # Parse class body (find matching closing brace)
         while index < len(tokens) and brace_depth > 0:
             if tokens[index].token_type == TokenType.OPEN_BRACE:
                 brace_depth += 1
             elif tokens[index].token_type == TokenType.CLOSE_BRACE:
                 brace_depth -= 1
-                
+
             if tokens[index].line > end_line:
                 end_line = tokens[index].line
-                
+
             index += 1
-        
+
         # Create the CodeElement for the class
         # Extract the actual code
-        code_fragment = ''
+        code_fragment = ""
         for i in range(start_index, index):
             if i < len(tokens):
                 code_fragment += tokens[i].value
-        
+
         class_element = CodeElement(
             name=class_name,
             element_type=ElementType.CLASS,
             start_line=start_line,
             end_line=end_line,
-            code=code_fragment
+            code=code_fragment,
         )
-        
+
         # Add inheritance information if available
         if extends:
             class_element.extends = extends
-        
+
         return class_element, index
-    
+
     def build_ast(self, tokens: List[Token]) -> Dict[str, Any]:
         """
         Build an abstract syntax tree from a list of tokens.

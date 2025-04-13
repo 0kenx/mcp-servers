@@ -8,7 +8,7 @@ verifies the results against expected JSON outputs.
 import os
 import json
 import unittest
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any
 
 from token_parser.parser_factory import ParserFactory
 
@@ -53,54 +53,66 @@ class TestPythonTokenParser(unittest.TestCase):
             # Now we're primarily dealing with CodeElement objects
             if hasattr(element, "element_type"):
                 # Convert element_type enum to string
-                element_type = element.element_type.value if hasattr(element.element_type, "value") else str(element.element_type)
-                
+                element_type = (
+                    element.element_type.value
+                    if hasattr(element.element_type, "value")
+                    else str(element.element_type)
+                )
+
                 serialized = {
                     "name": element.name if hasattr(element, "name") else "",
                     "element_type": element_type,
-                    "start_line": element.start_line if hasattr(element, "start_line") else 0,
+                    "start_line": element.start_line
+                    if hasattr(element, "start_line")
+                    else 0,
                     "end_line": element.end_line if hasattr(element, "end_line") else 0,
-                    "children": self._serialize_elements(element.children if hasattr(element, "children") else [])
+                    "children": self._serialize_elements(
+                        element.children if hasattr(element, "children") else []
+                    ),
                 }
-                
+
                 # Add parameters if available
                 if hasattr(element, "parameters") and element.parameters:
                     serialized["parameters"] = element.parameters
-                
+
                 # Add return type if available
                 if hasattr(element, "return_type") and element.return_type is not None:
                     serialized["return_type"] = element.return_type
-                    
+
             # Fallback for dict representation (for backward compatibility)
             elif isinstance(element, dict):
                 serialized = {}
-                
+
                 # Map common fields
-                if 'name' in element:
-                    serialized['name'] = element['name']
-                
+                if "name" in element:
+                    serialized["name"] = element["name"]
+
                 # Map 'type' to 'element_type'
-                if 'type' in element:
-                    serialized['element_type'] = element['type']
-                
+                if "type" in element:
+                    serialized["element_type"] = element["type"]
+
                 # Line numbers
-                serialized['start_line'] = element.get('start_line', element.get('start', 1))
-                serialized['end_line'] = element.get('end_line', element.get('end', 1))
-                
+                serialized["start_line"] = element.get(
+                    "start_line", element.get("start", 1)
+                )
+                serialized["end_line"] = element.get("end_line", element.get("end", 1))
+
                 # Process children recursively
-                serialized['children'] = self._serialize_elements(element.get('children', []))
-                
+                serialized["children"] = self._serialize_elements(
+                    element.get("children", [])
+                )
+
                 # Add parameters if available
-                if 'parameters' in element:
-                    serialized['parameters'] = element['parameters']
-                
+                if "parameters" in element:
+                    serialized["parameters"] = element["parameters"]
+
                 # Add return type if available
-                if 'return_type' in element:
-                    serialized['return_type'] = element['return_type']
+                if "return_type" in element:
+                    serialized["return_type"] = element["return_type"]
             else:
                 # Skip unknown element types
                 continue
-                
+
             result.append(serialized)
         return result
 
@@ -112,7 +124,9 @@ class TestPythonTokenParser(unittest.TestCase):
             test_file: Name of the test file
         """
         source_path = os.path.join(self.test_data_dir, test_file)
-        expected_path = os.path.join(self.test_data_dir, f"{os.path.splitext(test_file)[0]}.expected.json")
+        expected_path = os.path.join(
+            self.test_data_dir, f"{os.path.splitext(test_file)[0]}.expected.json"
+        )
 
         print(f"Testing file: {test_file}")
         print(f"Source path: {source_path}")
@@ -167,8 +181,9 @@ class TestPythonTokenParser(unittest.TestCase):
             print(f"Serialized result preview: {serialized}")
 
             self.assertEqual(
-                expected, serialized,
-                f"Mismatch in parsing {test_file}: Expected {expected}, got {serialized}"
+                expected,
+                serialized,
+                f"Mismatch in parsing {test_file}: Expected {expected}, got {serialized}",
             )
             print("Test passed successfully!")
         except Exception as e:
@@ -178,7 +193,9 @@ class TestPythonTokenParser(unittest.TestCase):
     def test_specific_file(self):
         """Test a specific Python file that we know exists."""
         test_file = "test_python_parser_1.py"
-        expected_path = os.path.join(self.test_data_dir, "test_python_parser_1.expected.json")
+        expected_path = os.path.join(
+            self.test_data_dir, "test_python_parser_1.expected.json"
+        )
 
         if not os.path.exists(os.path.join(self.test_data_dir, test_file)):
             self.fail(f"Test file not found: {test_file}")
@@ -187,22 +204,24 @@ class TestPythonTokenParser(unittest.TestCase):
             self.fail(f"Expected JSON not found: {expected_path}")
 
         self._test_file(test_file)
-        
+
     def test_all_python_files(self):
         """Test all Python files with corresponding expected JSON files."""
         # This test can be uncommented when more expected JSON files are created
-        json_files = [f for f in os.listdir(self.test_data_dir) if f.endswith('.expected.json')]
-        
+        json_files = [
+            f for f in os.listdir(self.test_data_dir) if f.endswith(".expected.json")
+        ]
+
         if not json_files:
             self.skipTest("No expected JSON files found")
-        
+
         print(f"Found {len(json_files)} expected JSON files")
-        
+
         # For each JSON file, test the corresponding Python file
         for json_file in json_files:
-            py_file = json_file.replace('.expected.json', '.py')
+            py_file = json_file.replace(".expected.json", ".py")
             py_path = os.path.join(self.test_data_dir, py_file)
-            
+
             if os.path.exists(py_path):
                 with self.subTest(file=py_file):
                     self._test_file(py_file)
