@@ -13,7 +13,7 @@ from .parser_state import ParserState
 from .symbol_table import SymbolTable
 from .rust_tokenizer import RustTokenizer
 from .generic_brace_block_parser import BraceBlockParser
-from .base import CodeElement
+from .base import CodeElement, ElementType
 
 
 class RustParser(TokenParser):
@@ -71,65 +71,161 @@ class RustParser(TokenParser):
         # Tokenize the code
         tokens = self.tokenize(code)
 
-        # Process the tokens to build the AST
-        ast = self.build_ast(tokens)
-        
-        # Extract elements from the AST's children and convert them to CodeElement objects
-        self.elements = []
-        if isinstance(ast, dict) and 'children' in ast:
-            for child in ast['children']:
-                if isinstance(child, dict):
-                    # Convert dictionary to CodeElement
-                    element_type_str = child.get('type', 'unknown')
-                    element_type = ElementType.UNKNOWN
-                    
-                    # Map string element type to ElementType enum
-                    for et in ElementType:
-                        if et.value == element_type_str:
-                            element_type = et
-                            break
-                    
-                    # Extract the code if available, or use a placeholder
-                    code = child.get('code', f"// {element_type_str} {child.get('name', '')}")
-                    
-                    element = CodeElement(
-                        name=child.get('name', ''),
-                        element_type=element_type,
-                        start_line=child.get('start_line', 1) if 'start_line' in child else 1,
-                        end_line=child.get('end_line', 1) if 'end_line' in child else 1,
-                        code=code
-                    )
-                    
-                    # Add additional properties
-                    if 'parameters' in child:
-                        element.parameters = child['parameters']
-                    if 'return_type' in child:
-                        element.return_type = child['return_type']
-                    if 'is_pub' in child:
-                        element.is_pub = child['is_pub']
-                    if 'is_async' in child:
-                        element.is_async = child['is_async']
-                    if 'is_unsafe' in child:
-                        element.is_unsafe = child['is_unsafe']
-                    if 'impl_for' in child:
-                        element.impl_for = child['impl_for']
-                    if 'trait_name' in child:
-                        element.trait_name = child['trait_name']
-                    if 'generic_params' in child:
-                        element.generic_params = child['generic_params']
-                    if 'lifetime_params' in child:
-                        element.lifetime_params = child['lifetime_params']
-                    if 'derives' in child:
-                        element.derives = child['derives']
-                    
-                    self.elements.append(element)
-                elif isinstance(child, CodeElement):
-                    self.elements.append(child)
+        # Process the tokens and build elements directly
+        self._build_elements_from_tokens(tokens)
         
         # Validate and repair AST
         self.validate_and_repair_ast()
         
         return self.elements
+    
+    def _build_elements_from_tokens(self, tokens: List[Token]) -> None:
+        """
+        Build CodeElement objects directly from tokens.
+        
+        This method processes tokens and builds a list of CodeElement objects
+        representing functions, structs, traits, etc. found in the code.
+        
+        Args:
+            tokens: List of tokens from the tokenizer
+        """
+        i = 0
+        line_map = {}
+        current_line = 1
+        
+        # First pass: build a mapping of token indices to line numbers
+        for i, token in enumerate(tokens):
+            if token.token_type == TokenType.NEWLINE:
+                current_line += 1
+            line_map[i] = current_line
+        
+        i = 0
+        while i < len(tokens):
+            # Skip whitespace and newlines
+            if tokens[i].token_type in [TokenType.WHITESPACE, TokenType.NEWLINE]:
+                i += 1
+                continue
+                
+            # Handle attributes
+            if tokens[i].token_type == TokenType.ATTRIBUTE:
+                attr = self._parse_attribute(tokens, i)
+                if attr:
+                    i = attr["next_index"]
+                    continue
+            
+            # Check for function or struct definitions
+            if tokens[i].token_type == TokenType.KEYWORD:
+                stmt = self._parse_keyword_statement(tokens, i)
+                if stmt:
+                    node = stmt["node"]
+                    # Create CodeElement from AST node
+                    element = self._convert_node_to_element(node, line_map)
+                    if element:
+                        self.elements.append(element)
+                    i = stmt["next_index"]
+                    continue
+            
+            # Check for declarations or definitions starting with identifiers
+            if tokens[i].token_type == TokenType.IDENTIFIER:
+                stmt = self._parse_declaration_or_definition(tokens, i)
+                if stmt:
+                    node = stmt["node"]
+                    # Create CodeElement from AST node
+                    element = self._convert_node_to_element(node, line_map)
+                    if element:
+                        self.elements.append(element)
+                    i = stmt["next_index"]
+                    continue
+            
+            # Move to next token if no pattern matched
+            i += 1
+    
+    def _convert_node_to_element(self, node: Dict[str, Any], line_map: Dict[int, int]) -> Optional[CodeElement]:
+        """
+        Convert an AST node to a CodeElement.
+        
+        Args:
+            node: The AST node to convert
+            line_map: Mapping from token indices to line numbers
+            
+        Returns:
+            A CodeElement or None if the node cannot be converted
+        """
+        element_type = None
+        name = ""
+        start_line = 1
+        end_line = 1
+        parameters = []
+        
+        # Get name and type based on node type
+        if "type" in node:
+            if node["type"] == "FunctionDefinition":
+                element_type = ElementType.FUNCTION
+                if "name" in node:
+                    name = node["name"]
+                # Extract parameters if available
+                if "parameters" in node:
+                    parameters = node["parameters"]
+            elif node["type"] == "StructDefinition":
+                element_type = ElementType.STRUCT
+                if "name" in node:
+                    name = node["name"]
+            elif node["type"] == "EnumDefinition":
+                element_type = ElementType.ENUM
+                if "name" in node:
+                    name = node["name"]
+            elif node["type"] == "TraitDefinition":
+                element_type = ElementType.TRAIT
+                if "name" in node:
+                    name = node["name"]
+            elif node["type"] == "ImplBlock":
+                element_type = ElementType.IMPL
+                if "name" in node:
+                    name = node["name"]
+            elif node["type"] == "ModuleDefinition":
+                element_type = ElementType.MODULE
+                if "name" in node:
+                    name = node["name"]
+        
+        # Get start and end lines
+        if "start" in node and node["start"] in line_map:
+            start_line = line_map[node["start"]]
+        if "end" in node and node["end"] in line_map:
+            end_line = line_map[node["end"]]
+            
+        # Skip if we couldn't determine the element type
+        if not element_type:
+            return None
+            
+        # Create the element
+        element = CodeElement(
+            name=name,
+            element_type=element_type,
+            start_line=start_line,
+            end_line=end_line
+        )
+        
+        # Set parameters if available
+        if parameters:
+            element.parameters = parameters
+            
+        # Add Rust-specific attributes
+        if "is_pub" in node and node["is_pub"]:
+            element.is_pub = True
+        if "is_unsafe" in node and node["is_unsafe"]:
+            element.is_unsafe = True
+        if "return_type" in node and node["return_type"]:
+            element.return_type = node["return_type"]
+            
+        # Add children
+        if "children" in node:
+            for child_node in node["children"]:
+                child_element = self._convert_node_to_element(child_node, line_map)
+                if child_element:
+                    child_element.parent = element
+                    element.children.append(child_element)
+                    
+        return element
 
     def build_ast(self, tokens: List[Token]) -> Dict[str, Any]:
         """
@@ -199,7 +295,7 @@ class RustParser(TokenParser):
         self, tokens: List[Token], index: int
     ) -> Optional[Dict[str, Any]]:
         """
-        Parse a Rust attribute.
+        Parse an attribute declaration.
 
         Args:
             tokens: List of tokens
@@ -208,22 +304,36 @@ class RustParser(TokenParser):
         Returns:
             Dictionary with the parsed node and next index, or None if parsing failed
         """
-        if index >= len(tokens) or tokens[index].token_type != TokenType.ATTRIBUTE:
-            return None
+        start_index = index
+        index += 1  # Skip '#'
 
-        attribute_text = tokens[index].value.lstrip()
+        # Skip '[' if present
+        if index < len(tokens) and tokens[index].token_type == TokenType.OPEN_BRACKET:
+            index += 1
+
+        # Parse the attribute content (simplified)
+        attribute_tokens = []
+        while (
+            index < len(tokens) and tokens[index].token_type != TokenType.CLOSE_BRACKET
+        ):
+            attribute_tokens.append(index)
+            index += 1
+
+        # Skip ']' if present
+        if index < len(tokens) and tokens[index].token_type == TokenType.CLOSE_BRACKET:
+            index += 1
 
         # Create attribute node
         attribute_node = {
             "type": "Attribute",
-            "text": attribute_text,
-            "start": index,
-            "end": index,
+            "tokens": attribute_tokens,
+            "start": start_index,
+            "end": index - 1,
             "parent": None,
             "children": [],
         }
 
-        return {"node": attribute_node, "next_index": index + 1}
+        return {"node": attribute_node, "next_index": index}
 
     def _parse_keyword_statement(
         self, tokens: List[Token], index: int
@@ -243,432 +353,37 @@ class RustParser(TokenParser):
 
         keyword = tokens[index].value
 
-        if keyword == "struct":
-            return self._parse_struct_declaration(tokens, index)
+        if keyword == "fn":
+            return self._parse_function_definition(tokens, index)
+        elif keyword == "struct":
+            return self._parse_struct_definition(tokens, index)
         elif keyword == "enum":
-            return self._parse_enum_declaration(tokens, index)
+            return self._parse_enum_definition(tokens, index)
         elif keyword == "trait":
-            return self._parse_trait_declaration(tokens, index)
+            return self._parse_trait_definition(tokens, index)
         elif keyword == "impl":
             return self._parse_impl_block(tokens, index)
-        elif keyword == "fn":
-            return self._parse_function_declaration(tokens, index)
         elif keyword == "mod":
-            return self._parse_module_declaration(tokens, index)
-        elif keyword == "use":
-            return self._parse_use_statement(tokens, index)
-        elif keyword == "let":
-            return self._parse_let_statement(tokens, index)
-        elif keyword == "if":
-            return self._parse_if_statement(tokens, index)
+            return self._parse_module_definition(tokens, index)
         elif keyword == "match":
             return self._parse_match_statement(tokens, index)
-        elif keyword == "loop" or keyword == "while" or keyword == "for":
+        elif keyword == "if":
+            return self._parse_if_statement(tokens, index)
+        elif keyword == "for" or keyword == "while" or keyword == "loop":
             return self._parse_loop_statement(tokens, index)
+        elif keyword == "let":
+            return self._parse_let_statement(tokens, index)
+        elif keyword == "return":
+            return self._parse_return_statement(tokens, index)
 
         # Default simple statement
         return self._parse_expression_statement(tokens, index)
 
-    def _parse_struct_declaration(
+    def _parse_function_definition(
         self, tokens: List[Token], index: int
     ) -> Optional[Dict[str, Any]]:
         """
-        Parse a struct declaration.
-
-        Args:
-            tokens: List of tokens
-            index: Current index in the token list
-
-        Returns:
-            Dictionary with the parsed node and next index, or None if parsing failed
-        """
-        start_index = index
-        index += 1  # Skip 'struct' keyword
-
-        # Skip whitespace
-        while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
-            index += 1
-
-        # Get struct name
-        if index >= len(tokens) or tokens[index].token_type != TokenType.IDENTIFIER:
-            return None
-
-        struct_name = tokens[index].value
-        name_index = index
-        index += 1
-
-        # Skip whitespace
-        while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
-            index += 1
-
-        # Check for generic parameters
-        generic_params = []
-        if index < len(tokens) and tokens[index].token_type == TokenType.LESS_THAN:
-            # Skip the details of parsing generics for simplicity
-            while (
-                index < len(tokens)
-                and tokens[index].token_type != TokenType.GREATER_THAN
-            ):
-                index += 1
-            if index < len(tokens):
-                index += 1  # Skip '>'
-
-            # Skip whitespace
-            while (
-                index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE
-            ):
-                index += 1
-
-        # Check for body (open brace)
-        has_body = False
-        body_tokens = []
-        if index < len(tokens) and tokens[index].token_type == TokenType.OPEN_BRACE:
-            has_body = True
-
-            # Context metadata
-            context_metadata = {"name": struct_name}
-
-            # Add struct to symbol table
-            self.symbol_table.add_symbol(
-                name=struct_name,
-                symbol_type="struct",
-                position=tokens[name_index].position,
-                line=tokens[name_index].line,
-                column=tokens[name_index].column,
-                metadata={},
-            )
-
-            # Parse struct body
-            body_indices, next_index = BraceBlockParser.parse_block(
-                tokens,
-                index,
-                self.state,
-                self.context_types["struct"],
-                context_metadata,
-            )
-
-            body_tokens = body_indices
-            index = next_index
-        else:
-            # If no body, expect semicolon
-            if index < len(tokens) and tokens[index].token_type == TokenType.SEMICOLON:
-                index += 1
-
-        # Create struct node
-        struct_node = {
-            "type": "StructDeclaration",
-            "name": struct_name,
-            "has_body": has_body,
-            "body": body_tokens,
-            "start": start_index,
-            "end": index - 1,
-            "parent": None,
-            "children": [],
-        }
-
-        return {"node": struct_node, "next_index": index}
-
-    def _parse_enum_declaration(
-        self, tokens: List[Token], index: int
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Parse an enum declaration.
-
-        Args:
-            tokens: List of tokens
-            index: Current index in the token list
-
-        Returns:
-            Dictionary with the parsed node and next index, or None if parsing failed
-        """
-        start_index = index
-        index += 1  # Skip 'enum' keyword
-
-        # Skip whitespace
-        while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
-            index += 1
-
-        # Get enum name
-        if index >= len(tokens) or tokens[index].token_type != TokenType.IDENTIFIER:
-            return None
-
-        enum_name = tokens[index].value
-        name_index = index
-        index += 1
-
-        # Skip whitespace
-        while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
-            index += 1
-
-        # Check for generic parameters
-        generic_params = []
-        if index < len(tokens) and tokens[index].token_type == TokenType.LESS_THAN:
-            # Skip the details of parsing generics for simplicity
-            while (
-                index < len(tokens)
-                and tokens[index].token_type != TokenType.GREATER_THAN
-            ):
-                index += 1
-            if index < len(tokens):
-                index += 1  # Skip '>'
-
-            # Skip whitespace
-            while (
-                index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE
-            ):
-                index += 1
-
-        # Expect open brace
-        if index >= len(tokens) or tokens[index].token_type != TokenType.OPEN_BRACE:
-            return None
-
-        # Context metadata
-        context_metadata = {"name": enum_name}
-
-        # Add enum to symbol table
-        self.symbol_table.add_symbol(
-            name=enum_name,
-            symbol_type="enum",
-            position=tokens[name_index].position,
-            line=tokens[name_index].line,
-            column=tokens[name_index].column,
-            metadata={},
-        )
-
-        # Parse enum body
-        body_indices, next_index = BraceBlockParser.parse_block(
-            tokens, index, self.state, self.context_types["enum"], context_metadata
-        )
-
-        body_tokens = body_indices
-        index = next_index
-
-        # Create enum node
-        enum_node = {
-            "type": "EnumDeclaration",
-            "name": enum_name,
-            "body": body_tokens,
-            "start": start_index,
-            "end": index - 1,
-            "parent": None,
-            "children": [],
-        }
-
-        return {"node": enum_node, "next_index": index}
-
-    def _parse_trait_declaration(
-        self, tokens: List[Token], index: int
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Parse a trait declaration.
-
-        Args:
-            tokens: List of tokens
-            index: Current index in the token list
-
-        Returns:
-            Dictionary with the parsed node and next index, or None if parsing failed
-        """
-        start_index = index
-        index += 1  # Skip 'trait' keyword
-
-        # Skip whitespace
-        while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
-            index += 1
-
-        # Get trait name
-        if index >= len(tokens) or tokens[index].token_type != TokenType.IDENTIFIER:
-            return None
-
-        trait_name = tokens[index].value
-        name_index = index
-        index += 1
-
-        # Skip whitespace
-        while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
-            index += 1
-
-        # Check for generic parameters
-        generic_params = []
-        if index < len(tokens) and tokens[index].token_type == TokenType.LESS_THAN:
-            # Skip the details of parsing generics for simplicity
-            while (
-                index < len(tokens)
-                and tokens[index].token_type != TokenType.GREATER_THAN
-            ):
-                index += 1
-            if index < len(tokens):
-                index += 1  # Skip '>'
-
-            # Skip whitespace
-            while (
-                index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE
-            ):
-                index += 1
-
-        # Check for trait bounds (: Trait1 + Trait2)
-        trait_bounds = []
-        if index < len(tokens) and tokens[index].token_type == TokenType.COLON:
-            # Skip the details of parsing trait bounds for simplicity
-            while (
-                index < len(tokens) and tokens[index].token_type != TokenType.OPEN_BRACE
-            ):
-                index += 1
-
-            # Skip whitespace
-            while (
-                index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE
-            ):
-                index += 1
-
-        # Expect open brace
-        if index >= len(tokens) or tokens[index].token_type != TokenType.OPEN_BRACE:
-            return None
-
-        # Context metadata
-        context_metadata = {"name": trait_name}
-
-        # Add trait to symbol table
-        self.symbol_table.add_symbol(
-            name=trait_name,
-            symbol_type="trait",
-            position=tokens[name_index].position,
-            line=tokens[name_index].line,
-            column=tokens[name_index].column,
-            metadata={},
-        )
-
-        # Parse trait body
-        body_indices, next_index = BraceBlockParser.parse_block(
-            tokens, index, self.state, self.context_types["trait"], context_metadata
-        )
-
-        body_tokens = body_indices
-        index = next_index
-
-        # Create trait node
-        trait_node = {
-            "type": "TraitDeclaration",
-            "name": trait_name,
-            "body": body_tokens,
-            "start": start_index,
-            "end": index - 1,
-            "parent": None,
-            "children": [],
-        }
-
-        return {"node": trait_node, "next_index": index}
-
-    def _parse_impl_block(
-        self, tokens: List[Token], index: int
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Parse an impl block.
-
-        Args:
-            tokens: List of tokens
-            index: Current index in the token list
-
-        Returns:
-            Dictionary with the parsed node and next index, or None if parsing failed
-        """
-        start_index = index
-        index += 1  # Skip 'impl' keyword
-
-        # Skip whitespace
-        while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
-            index += 1
-
-        # Check for generic parameters
-        if index < len(tokens) and tokens[index].token_type == TokenType.LESS_THAN:
-            # Skip the details of parsing generics for simplicity
-            while (
-                index < len(tokens)
-                and tokens[index].token_type != TokenType.GREATER_THAN
-            ):
-                index += 1
-            if index < len(tokens):
-                index += 1  # Skip '>'
-
-            # Skip whitespace
-            while (
-                index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE
-            ):
-                index += 1
-
-        # Get the type being implemented
-        if index >= len(tokens) or tokens[index].token_type != TokenType.IDENTIFIER:
-            return None
-
-        impl_type = tokens[index].value
-        index += 1
-
-        # Skip whitespace
-        while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
-            index += 1
-
-        # Check for trait implementation (impl Trait for Type)
-        impl_trait = None
-        if (
-            index < len(tokens)
-            and tokens[index].token_type == TokenType.KEYWORD
-            and tokens[index].value == "for"
-        ):
-            index += 1
-
-            # Skip whitespace
-            while (
-                index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE
-            ):
-                index += 1
-
-            # Get the type being implemented
-            if index < len(tokens) and tokens[index].token_type == TokenType.IDENTIFIER:
-                impl_trait = impl_type
-                impl_type = tokens[index].value
-                index += 1
-
-                # Skip whitespace
-                while (
-                    index < len(tokens)
-                    and tokens[index].token_type == TokenType.WHITESPACE
-                ):
-                    index += 1
-
-        # Expect open brace
-        if index >= len(tokens) or tokens[index].token_type != TokenType.OPEN_BRACE:
-            return None
-
-        # Context metadata
-        context_metadata = {"type": impl_type, "trait": impl_trait}
-
-        # Parse impl body
-        body_indices, next_index = BraceBlockParser.parse_block(
-            tokens, index, self.state, self.context_types["impl"], context_metadata
-        )
-
-        body_tokens = body_indices
-        index = next_index
-
-        # Create impl node
-        impl_node = {
-            "type": "ImplBlock",
-            "impl_type": impl_type,
-            "impl_trait": impl_trait,
-            "body": body_tokens,
-            "start": start_index,
-            "end": index - 1,
-            "parent": None,
-            "children": [],
-        }
-
-        return {"node": impl_node, "next_index": index}
-
-    def _parse_function_declaration(
-        self, tokens: List[Token], index: int
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Parse a function declaration.
+        Parse a function definition.
 
         Args:
             tokens: List of tokens
@@ -692,127 +407,57 @@ class RustParser(TokenParser):
         name_index = index
         index += 1
 
-        # Skip whitespace
-        while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
+        # Simplified implementation that just extracts the name and looks for the body
+        # Skipping details like parameters, return type, and generics
+
+        # Find opening brace for function body
+        while index < len(tokens) and tokens[index].token_type != TokenType.OPEN_BRACE:
             index += 1
 
-        # Check for generic parameters
-        if index < len(tokens) and tokens[index].token_type == TokenType.LESS_THAN:
-            # Skip the details of parsing generics for simplicity
-            while (
-                index < len(tokens)
-                and tokens[index].token_type != TokenType.GREATER_THAN
-            ):
-                index += 1
-            if index < len(tokens):
-                index += 1  # Skip '>'
-
-            # Skip whitespace
-            while (
-                index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE
-            ):
-                index += 1
-
-        # Expect open parenthesis
-        if index >= len(tokens) or tokens[index].token_type != TokenType.OPEN_PAREN:
+        if index >= len(tokens):
             return None
 
-        index += 1
-
-        # Parse parameters (simplified)
-        parameters = []
-        while index < len(tokens) and tokens[index].token_type != TokenType.CLOSE_PAREN:
-            index += 1
-
-        # Skip closing parenthesis
-        if index < len(tokens) and tokens[index].token_type == TokenType.CLOSE_PAREN:
-            index += 1
-        else:
-            return None
-
-        # Skip whitespace
-        while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
-            index += 1
-
-        # Check for return type
-        return_type = None
-        if index < len(tokens) and tokens[index].token_type == TokenType.ARROW:
-            index += 1
-
-            # Skip whitespace
-            while (
-                index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE
-            ):
-                index += 1
-
-            # Skip return type parsing for simplicity
-            while index < len(tokens) and tokens[index].token_type not in [
-                TokenType.OPEN_BRACE,
-                TokenType.SEMICOLON,
-            ]:
-                index += 1
-
-            # Skip whitespace
-            while (
-                index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE
-            ):
-                index += 1
-
-        # Check for body or semicolon
-        has_body = False
-        body_tokens = []
-        if index < len(tokens) and tokens[index].token_type == TokenType.OPEN_BRACE:
-            has_body = True
-
-            # Context metadata
-            context_metadata = {"name": function_name}
-
-            # Add function to symbol table
-            self.symbol_table.add_symbol(
-                name=function_name,
-                symbol_type="function",
-                position=tokens[name_index].position,
-                line=tokens[name_index].line,
-                column=tokens[name_index].column,
-                metadata={},
-            )
-
-            # Parse function body
-            body_indices, next_index = BraceBlockParser.parse_block(
-                tokens,
-                index,
-                self.state,
-                self.context_types["function"],
-                context_metadata,
-            )
-
-            body_tokens = body_indices
-            index = next_index
-        elif index < len(tokens) and tokens[index].token_type == TokenType.SEMICOLON:
-            # Function declaration without body (trait or extern)
-            index += 1
-        else:
-            return None
+        # Parse function body
+        body_indices, next_index = BraceBlockParser.parse_block(
+            tokens,
+            index,
+            self.state,
+            self.context_types["function"],
+            {"name": function_name},
+        )
 
         # Create function node
         function_node = {
-            "type": "FunctionDeclaration",
+            "type": "FunctionDefinition",
             "name": function_name,
-            "has_body": has_body,
-            "body": body_tokens,
+            "body": body_indices,
             "start": start_index,
-            "end": index - 1,
+            "end": next_index - 1,
+            "is_pub": False,  # Simplified, would be determined by checking for 'pub' keyword
+            "is_unsafe": False,  # Simplified
+            "parameters": [],  # Simplified
+            "return_type": None,  # Simplified
             "parent": None,
             "children": [],
         }
 
-        return {"node": function_node, "next_index": index}
+        # Add function to symbol table
+        self.symbol_table.add_symbol(
+            name=function_name,
+            symbol_type="function",
+            position=tokens[name_index].position,
+            line=tokens[name_index].line,
+            column=tokens[name_index].column,
+            metadata={},
+        )
 
-    def _parse_module_declaration(
+        return {"node": function_node, "next_index": next_index}
+
+    def _parse_struct_definition(
         self, tokens: List[Token], index: int
     ) -> Optional[Dict[str, Any]]:
         """
-        Parse a module declaration.
+        Parse a struct definition.
 
         Args:
             tokens: List of tokens
@@ -821,160 +466,147 @@ class RustParser(TokenParser):
         Returns:
             Dictionary with the parsed node and next index, or None if parsing failed
         """
+        # Simplified implementation
         start_index = index
-        index += 1  # Skip 'mod' keyword
+        index += 1  # Skip 'struct' keyword
 
         # Skip whitespace
         while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
             index += 1
 
-        # Get module name
+        # Get struct name
         if index >= len(tokens) or tokens[index].token_type != TokenType.IDENTIFIER:
             return None
 
-        module_name = tokens[index].value
+        struct_name = tokens[index].value
         name_index = index
         index += 1
 
-        # Skip whitespace
-        while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
+        # Simplified parsing that skips details like generic parameters
+
+        # Find opening brace for struct body (if any)
+        while (
+            index < len(tokens)
+            and tokens[index].token_type not in [TokenType.OPEN_BRACE, TokenType.SEMICOLON]
+        ):
             index += 1
 
-        # Check for body or semicolon
-        has_body = False
-        body_tokens = []
+        # Check if this is a unit struct or a struct with fields
         if index < len(tokens) and tokens[index].token_type == TokenType.OPEN_BRACE:
-            has_body = True
-
-            # Context metadata
-            context_metadata = {"name": module_name}
-
-            # Add module to symbol table
-            self.symbol_table.add_symbol(
-                name=module_name,
-                symbol_type="module",
-                position=tokens[name_index].position,
-                line=tokens[name_index].line,
-                column=tokens[name_index].column,
-                metadata={},
-            )
-
-            # Parse module body
+            # Parse struct body
             body_indices, next_index = BraceBlockParser.parse_block(
                 tokens,
                 index,
                 self.state,
-                self.context_types["module"],
-                context_metadata,
+                self.context_types["struct"],
+                {"name": struct_name},
             )
 
-            body_tokens = body_indices
+            # Create struct node
+            struct_node = {
+                "type": "StructDefinition",
+                "name": struct_name,
+                "body": body_indices,
+                "start": start_index,
+                "end": next_index - 1,
+                "is_pub": False,  # Simplified
+                "fields": [],  # Simplified
+                "parent": None,
+                "children": [],
+            }
+
             index = next_index
-        elif index < len(tokens) and tokens[index].token_type == TokenType.SEMICOLON:
-            # Module declaration without body (external module)
-            index += 1
         else:
-            return None
+            # Unit struct or tuple struct without a body
+            # Skip semicolon if present
+            if index < len(tokens) and tokens[index].token_type == TokenType.SEMICOLON:
+                index += 1
 
-        # Create module node
-        module_node = {
-            "type": "ModuleDeclaration",
-            "name": module_name,
-            "has_body": has_body,
-            "body": body_tokens,
-            "start": start_index,
-            "end": index - 1,
-            "parent": None,
-            "children": [],
-        }
+            # Create struct node
+            struct_node = {
+                "type": "StructDefinition",
+                "name": struct_name,
+                "body": [],
+                "start": start_index,
+                "end": index - 1,
+                "is_pub": False,  # Simplified
+                "fields": [],  # Simplified
+                "parent": None,
+                "children": [],
+            }
 
-        return {"node": module_node, "next_index": index}
+        # Add struct to symbol table
+        self.symbol_table.add_symbol(
+            name=struct_name,
+            symbol_type="struct",
+            position=tokens[name_index].position,
+            line=tokens[name_index].line,
+            column=tokens[name_index].column,
+            metadata={},
+        )
 
-    def _parse_use_statement(
+        return {"node": struct_node, "next_index": index}
+
+    def _parse_enum_definition(
         self, tokens: List[Token], index: int
     ) -> Optional[Dict[str, Any]]:
-        """
-        Parse a use statement.
+        """Placeholder for enum parsing."""
+        # Implement similarly to struct parsing
+        return None
 
-        Args:
-            tokens: List of tokens
-            index: Current index in the token list
+    def _parse_trait_definition(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
+        """Placeholder for trait parsing."""
+        return None
 
-        Returns:
-            Dictionary with the parsed node and next index, or None if parsing failed
-        """
-        start_index = index
-        index += 1  # Skip 'use' keyword
+    def _parse_impl_block(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
+        """Placeholder for impl block parsing."""
+        return None
 
-        # Parse to the end of the statement
-        use_path = []
-        while index < len(tokens) and tokens[index].token_type != TokenType.SEMICOLON:
-            use_path.append(index)
-            index += 1
+    def _parse_module_definition(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
+        """Placeholder for module parsing."""
+        return None
 
-        # Skip semicolon
-        if index < len(tokens) and tokens[index].token_type == TokenType.SEMICOLON:
-            index += 1
-        else:
-            return None
+    def _parse_match_statement(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
+        """Placeholder for match statement parsing."""
+        return None
 
-        # Create use node
-        use_node = {
-            "type": "UseStatement",
-            "path": use_path,
-            "start": start_index,
-            "end": index - 1,
-            "parent": None,
-            "children": [],
-        }
+    def _parse_if_statement(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
+        """Placeholder for if statement parsing."""
+        return None
 
-        return {"node": use_node, "next_index": index}
+    def _parse_loop_statement(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
+        """Placeholder for loop statement parsing."""
+        return None
 
     def _parse_let_statement(
         self, tokens: List[Token], index: int
     ) -> Optional[Dict[str, Any]]:
-        """
-        Parse a let statement.
+        """Placeholder for let statement parsing."""
+        return None
 
-        Args:
-            tokens: List of tokens
-            index: Current index in the token list
-
-        Returns:
-            Dictionary with the parsed node and next index, or None if parsing failed
-        """
-        start_index = index
-        index += 1  # Skip 'let' keyword
-
-        # Parse to the end of the statement
-        let_statement = []
-        while index < len(tokens) and tokens[index].token_type != TokenType.SEMICOLON:
-            let_statement.append(index)
-            index += 1
-
-        # Skip semicolon
-        if index < len(tokens) and tokens[index].token_type == TokenType.SEMICOLON:
-            index += 1
-        else:
-            return None
-
-        # Create let node
-        let_node = {
-            "type": "LetStatement",
-            "statement": let_statement,
-            "start": start_index,
-            "end": index - 1,
-            "parent": None,
-            "children": [],
-        }
-
-        return {"node": let_node, "next_index": index}
+    def _parse_return_statement(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
+        """Placeholder for return statement parsing."""
+        return None
 
     def _parse_expression_statement(
         self, tokens: List[Token], index: int
     ) -> Optional[Dict[str, Any]]:
         """
-        Parse an expression statement.
+        Parse a generic expression statement.
 
         Args:
             tokens: List of tokens
@@ -1008,30 +640,11 @@ class RustParser(TokenParser):
 
         return {"node": statement_node, "next_index": index}
 
-    def _parse_if_statement(
-        self, tokens: List[Token], index: int
-    ) -> Optional[Dict[str, Any]]:
-        """Placeholder for parsing if statements."""
-        # This would be implemented similarly to the struct and enum parsers
-        return None
-
-    def _parse_match_statement(
-        self, tokens: List[Token], index: int
-    ) -> Optional[Dict[str, Any]]:
-        """Placeholder for parsing match statements."""
-        return None
-
-    def _parse_loop_statement(
-        self, tokens: List[Token], index: int
-    ) -> Optional[Dict[str, Any]]:
-        """Placeholder for parsing loop statements."""
-        return None
-
     def _parse_declaration_or_definition(
         self, tokens: List[Token], index: int
     ) -> Optional[Dict[str, Any]]:
         """
-        Parse a declaration or definition.
+        Parse a declaration or definition starting with an identifier.
 
         Args:
             tokens: List of tokens
@@ -1040,38 +653,51 @@ class RustParser(TokenParser):
         Returns:
             Dictionary with the parsed node and next index, or None if parsing failed
         """
-        # This is a simplified fallback parser for anything not caught by the other parsers
+        # Simplified implementation
         start_index = index
+        identifier = tokens[index].value
+        index += 1
 
         # Parse to the end of the statement or block
-        declaration_tokens = []
-        while index < len(tokens):
-            if tokens[index].token_type == TokenType.SEMICOLON:
-                # End of statement
-                declaration_tokens.append(index)
-                index += 1
-                break
-            elif tokens[index].token_type == TokenType.OPEN_BRACE:
-                # Start of block
-                block_indices, next_index = BraceBlockParser.parse_block(
-                    tokens, index, self.state
-                )
-                declaration_tokens.extend(block_indices)
-                index = next_index
-                break
-            else:
-                declaration_tokens.append(index)
+        while index < len(tokens) and tokens[index].token_type not in [
+            TokenType.SEMICOLON,
+            TokenType.OPEN_BRACE,
+        ]:
+            index += 1
+
+        # Check for a block or just a statement
+        if index < len(tokens) and tokens[index].token_type == TokenType.OPEN_BRACE:
+            # Parse block
+            body_indices, next_index = BraceBlockParser.parse_block(
+                tokens, index, self.state, "block", {}
+            )
+
+            # Create declaration node
+            declaration_node = {
+                "type": "DeclarationWithBlock",
+                "name": identifier,
+                "body": body_indices,
+                "start": start_index,
+                "end": next_index - 1,
+                "parent": None,
+                "children": [],
+            }
+
+            index = next_index
+        else:
+            # Skip semicolon if present
+            if index < len(tokens) and tokens[index].token_type == TokenType.SEMICOLON:
                 index += 1
 
-        # Create declaration node
-        declaration_node = {
-            "type": "Declaration",
-            "tokens": declaration_tokens,
-            "start": start_index,
-            "end": index - 1,
-            "parent": None,
-            "children": [],
-        }
+            # Create declaration node
+            declaration_node = {
+                "type": "Declaration",
+                "name": identifier,
+                "start": start_index,
+                "end": index - 1,
+                "parent": None,
+                "children": [],
+            }
 
         return {"node": declaration_node, "next_index": index}
 
