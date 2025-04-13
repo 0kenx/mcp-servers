@@ -34,20 +34,24 @@ def function_with_mixed():
     print("Back to spaces")
 """
         elements = self.parser.parse(code)
-        
+
         # Should find the functions despite inconsistent indentation
         functions = [e for e in elements if e.element_type == ElementType.FUNCTION]
         self.assertGreaterEqual(len(functions), 2)
-        
+
         # Check for specific functions
-        spaces_func = next((f for f in functions if f.name == "function_with_spaces"), None)
+        spaces_func = next(
+            (f for f in functions if f.name == "function_with_spaces"), None
+        )
         self.assertIsNotNone(spaces_func)
-        
+
         tabs_func = next((f for f in functions if f.name == "function_with_tabs"), None)
         self.assertIsNotNone(tabs_func)
-        
+
         # The mixed function might be partially parsed or its body might be incomplete
-        mixed_func = next((f for f in functions if f.name == "function_with_mixed"), None)
+        mixed_func = next(
+            (f for f in functions if f.name == "function_with_mixed"), None
+        )
         if mixed_func:
             # If found, just check that it has at least a start and end line
             self.assertLess(mixed_func.start_line, mixed_func.end_line)
@@ -68,19 +72,22 @@ def normal_function():
         print("Still consistent")
 """
         elements = self.parser.parse(code)
-        
+
         # Should find both functions
         functions = [e for e in elements if e.element_type == ElementType.FUNCTION]
         self.assertEqual(len(functions), 2)
-        
+
         # The inconsistent function's body might be parsed differently depending on the parser
-        inconsistent_func = next((f for f in functions if f.name == "function_with_inconsistent_indent"), None)
+        inconsistent_func = next(
+            (f for f in functions if f.name == "function_with_inconsistent_indent"),
+            None,
+        )
         self.assertIsNotNone(inconsistent_func)
-        
+
         # Normal function should be correctly identified
         normal_func = next((f for f in functions if f.name == "normal_function"), None)
         self.assertIsNotNone(normal_func)
-        
+
         # Test that the parser didn't crash on inconsistent indentation
         self.assertTrue(True)
 
@@ -134,24 +141,31 @@ def function_with_complex_blocks():
         return x + y
 """
         elements = self.parser.parse(code)
-        
+
         # Should find various elements with complex indentation
         self.assertGreaterEqual(len(elements), 3)
-        
+
         # Check for the class and its methods
-        class_el = next((e for e in elements if e.element_type == ElementType.CLASS), None)
+        class_el = next(
+            (e for e in elements if e.element_type == ElementType.CLASS), None
+        )
         self.assertIsNotNone(class_el)
-        
+
         methods = [e for e in elements if e.element_type == ElementType.METHOD]
         self.assertGreaterEqual(len(methods), 2)
-        
+
         # Check for functions
-        functions = [e for e in elements if e.element_type == ElementType.FUNCTION 
-                   and e.name != "inner_function"]
+        functions = [
+            e
+            for e in elements
+            if e.element_type == ElementType.FUNCTION and e.name != "inner_function"
+        ]
         self.assertEqual(len(functions), 2)
-        
+
         # Inner function may or may not be identified depending on parser capabilities
-        complex_func = next((f for f in functions if f.name == "function_with_complex_blocks"), None)
+        complex_func = next(
+            (f for f in functions if f.name == "function_with_complex_blocks"), None
+        )
         self.assertIsNotNone(complex_func)
 
     def test_indentation_edge_cases(self):
@@ -185,29 +199,35 @@ def outer():
     return inner
 """
         elements = self.parser.parse(code)
-        
+
         # Should find at least some of the edge case functions
         functions = [e for e in elements if e.element_type == ElementType.FUNCTION]
         self.assertGreaterEqual(len(functions), 3)
-        
+
         # Check for specific functions
-        without_body = next((f for f in functions if f.name == "function_without_body"), None)
+        without_body = next(
+            (f for f in functions if f.name == "function_without_body"), None
+        )
         if without_body:
             # If found, there shouldn't be multiple lines of code inside
             self.assertLessEqual(without_body.end_line - without_body.start_line, 1)
-        
+
         with_gap = next((f for f in functions if f.name == "function_with_gap"), None)
         self.assertIsNotNone(with_gap)
-        
+
         empty_func = next((f for f in functions if f.name == "empty_function"), None)
         self.assertIsNotNone(empty_func)
-        
+
         outer_func = next((f for f in functions if f.name == "outer"), None)
         self.assertIsNotNone(outer_func)
-        
+
         # Nested functions may or may not be detected depending on parser capabilities
         if len(functions) > 4:
-            nested_functions = [f for f in functions if f.name in ("inner", "outer") and f.parent is not None]
+            nested_functions = [
+                f
+                for f in functions
+                if f.name in ("inner", "outer") and f.parent is not None
+            ]
             self.assertGreaterEqual(len(nested_functions), 1)
 
 

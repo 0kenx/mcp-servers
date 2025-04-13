@@ -50,20 +50,24 @@ function level1() {
   return "Done";
 }"""
         elements = self.parser.parse(code)
-        
+
         # Check that we found the nested functions
         self.assertGreaterEqual(len(elements), 2)
-        
+
         # Check for the top-level function
         level1_func = next((e for e in elements if e.name == "level1"), None)
         self.assertIsNotNone(level1_func)
-        
+
         # Check for nested functions - depending on how deep the parser can go
         nested_funcs = [e for e in elements if e.name in ("level2", "level3")]
         self.assertGreaterEqual(len(nested_funcs), 1)
-        
+
         # Check nested relationships if the parser supports parent-child relationships
-        if nested_funcs and hasattr(nested_funcs[0], 'parent') and nested_funcs[0].parent is not None:
+        if (
+            nested_funcs
+            and hasattr(nested_funcs[0], "parent")
+            and nested_funcs[0].parent is not None
+        ):
             level2_func = next((e for e in nested_funcs if e.name == "level2"), None)
             if level2_func:
                 # level2 should be a child of level1
@@ -93,14 +97,16 @@ function validDespiteAppearance() {
 """
         try:
             elements = self.parser.parse(code)
-            
+
             # Should find at least some elements despite unbalanced braces
             self.assertGreaterEqual(len(elements), 1)
-            
+
             # Check that we found the valid function
-            valid_func = next((e for e in elements if e.name == "validDespiteAppearance"), None)
+            valid_func = next(
+                (e for e in elements if e.name == "validDespiteAppearance"), None
+            )
             self.assertIsNotNone(valid_func)
-            
+
             # The parser should either skip or correct invalid elements
             # For robustness, it should not crash
         except Exception as e:
@@ -148,20 +154,20 @@ function php_function($param) {
 ?>
 """
         elements = self.parser.parse(code)
-        
+
         # Should recognize elements across different language-like syntaxes
         self.assertGreaterEqual(len(elements), 3)
-        
+
         # Check that we found various elements
         c_func = next((e for e in elements if e.name == "c_function"), None)
         self.assertIsNotNone(c_func)
-        
+
         java_class = next((e for e in elements if e.name == "JavaClass"), None)
         self.assertIsNotNone(java_class)
-        
+
         js_func = next((e for e in elements if e.name == "jsFunction"), None)
         self.assertIsNotNone(js_func)
-        
+
         # PHP function may or may not be detected depending on parser capabilities
         php_func = next((e for e in elements if e.name == "php_function"), None)
         if php_func:
@@ -205,11 +211,11 @@ function gnuStyle()
   }
 """
         elements = self.parser.parse(code)
-        
+
         # Should recognize functions with different brace styles
         functions = [e for e in elements if e.element_type == ElementType.FUNCTION]
         self.assertEqual(len(functions), 4)
-        
+
         # Check that we found each function
         style_names = ["krStyle", "allmanStyle", "whitesmithsStyle", "gnuStyle"]
         for name in style_names:
@@ -239,12 +245,14 @@ function handleStrings() {
 }
 """
         elements = self.parser.parse(code)
-        
+
         # Should correctly parse the function despite braces in literals and comments
         self.assertEqual(len(elements), 1)
-        
+
         # Check that we found the function
-        handle_strings_func = next((e for e in elements if e.name == "handleStrings"), None)
+        handle_strings_func = next(
+            (e for e in elements if e.name == "handleStrings"), None
+        )
         self.assertIsNotNone(handle_strings_func)
         self.assertEqual(handle_strings_func.element_type, ElementType.FUNCTION)
 

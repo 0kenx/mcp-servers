@@ -15,8 +15,14 @@ class TestKeywordPatternParserEdgeCases(unittest.TestCase):
         self.parser = KeywordPatternParser()
         # Configure with multiple keywords and patterns
         self.parser.keywords = [
-            "function", "class", "method", "procedure", "subroutine", 
-            "package", "module", "namespace"
+            "function",
+            "class",
+            "method",
+            "procedure",
+            "subroutine",
+            "package",
+            "module",
+            "namespace",
         ]
         self.parser.patterns = [
             (r"function\s+(\w+)", ElementType.FUNCTION),
@@ -63,17 +69,17 @@ myCustomHandler as function {
 }
 """
         elements = self.parser.parse(code)
-        
+
         # Should identify all elements based on patterns
         self.assertEqual(len(elements), 7)
-        
+
         # Check element types
         element_types = [e.element_type for e in elements]
         self.assertIn(ElementType.FUNCTION, element_types)
         self.assertIn(ElementType.CLASS, element_types)
         self.assertIn(ElementType.MODULE, element_types)
         self.assertIn(ElementType.NAMESPACE, element_types)
-        
+
         # Check specific names
         element_names = [e.name for e in elements]
         self.assertIn("normalFunction", element_names)
@@ -114,37 +120,45 @@ multiline
 functionality(); // Should not match 'function'
 """
         elements = self.parser.parse(code)
-        
+
         # Check that we found the expected elements
         self.assertGreaterEqual(len(elements), 2)
-        
+
         # Keywords in comments and strings should not be matched
-        elements_in_strings = [e for e in elements if e.name in ("shouldNotMatch", "shouldNotMatchEither")]
+        elements_in_strings = [
+            e for e in elements if e.name in ("shouldNotMatch", "shouldNotMatchEither")
+        ]
         self.assertEqual(len(elements_in_strings), 0)
-        
+
         # Check that keywords as part of other words are not matched
-        functionality_element = next((e for e in elements if e.name == "functionality"), None)
+        functionality_element = next(
+            (e for e in elements if e.name == "functionality"), None
+        )
         self.assertIsNone(functionality_element)
-        
+
         # Both 'function' and 'class' keywords should be found
-        function_elements = [e for e in elements if e.element_type == ElementType.FUNCTION]
+        function_elements = [
+            e for e in elements if e.element_type == ElementType.FUNCTION
+        ]
         self.assertGreaterEqual(len(function_elements), 1)
-        
+
         class_elements = [e for e in elements if e.element_type == ElementType.CLASS]
         self.assertGreaterEqual(len(class_elements), 1)
 
     def test_custom_patterns(self):
         """Test the keyword pattern parser with custom patterns for different language styles."""
         # Add more complex patterns
-        self.parser.patterns.extend([
-            (r"def\s+(\w+)\s*\(", ElementType.FUNCTION),  # Python-style functions
-            (r"CREATE\s+TABLE\s+(\w+)", ElementType.STRUCT),  # SQL-style tables
-            (r"^\s*@interface\s+(\w+)", ElementType.CLASS),  # Objective-C style
-            (r"trait\s+(\w+)", ElementType.TRAIT),  # Rust/Scala traits
-            (r"struct\s+(\w+)", ElementType.STRUCT),  # C/Rust structs
-            (r"enum\s+(\w+)", ElementType.ENUM),  # Enums
-        ])
-        
+        self.parser.patterns.extend(
+            [
+                (r"def\s+(\w+)\s*\(", ElementType.FUNCTION),  # Python-style functions
+                (r"CREATE\s+TABLE\s+(\w+)", ElementType.STRUCT),  # SQL-style tables
+                (r"^\s*@interface\s+(\w+)", ElementType.CLASS),  # Objective-C style
+                (r"trait\s+(\w+)", ElementType.TRAIT),  # Rust/Scala traits
+                (r"struct\s+(\w+)", ElementType.STRUCT),  # C/Rust structs
+                (r"enum\s+(\w+)", ElementType.ENUM),  # Enums
+            ]
+        )
+
         code = """
 // Python-style
 def python_function(arg1, arg2):
@@ -180,31 +194,31 @@ enum Color {
 }
 """
         elements = self.parser.parse(code)
-        
+
         # Should identify elements across different language styles
         self.assertGreaterEqual(len(elements), 5)
-        
+
         # Check specific elements
         python_func = next((e for e in elements if e.name == "python_function"), None)
         self.assertIsNotNone(python_func)
         self.assertEqual(python_func.element_type, ElementType.FUNCTION)
-        
+
         users_table = next((e for e in elements if e.name == "users"), None)
         self.assertIsNotNone(users_table)
         self.assertEqual(users_table.element_type, ElementType.STRUCT)
-        
+
         my_class = next((e for e in elements if e.name == "MyClass"), None)
         self.assertIsNotNone(my_class)
         self.assertEqual(my_class.element_type, ElementType.CLASS)
-        
+
         drawable_trait = next((e for e in elements if e.name == "Drawable"), None)
         self.assertIsNotNone(drawable_trait)
         self.assertEqual(drawable_trait.element_type, ElementType.TRAIT)
-        
+
         point_struct = next((e for e in elements if e.name == "Point"), None)
         self.assertIsNotNone(point_struct)
         self.assertEqual(point_struct.element_type, ElementType.STRUCT)
-        
+
         color_enum = next((e for e in elements if e.name == "Color"), None)
         self.assertIsNotNone(color_enum)
         self.assertEqual(color_enum.element_type, ElementType.ENUM)
@@ -237,31 +251,33 @@ function λ() { }
 #define function not_a_real_function() // Shouldn't match
 """
         elements = self.parser.parse(code)
-        
+
         # Check that valid elements were found
         self.assertGreaterEqual(len(elements), 3)
-        
+
         # Special function names should be detected
         special_func = next((e for e in elements if e.name == "$special_func"), None)
         self.assertIsNotNone(special_func)
-        
+
         private_func = next((e for e in elements if e.name == "_private"), None)
         self.assertIsNotNone(private_func)
-        
+
         # Very long name should be detected
         long_name_funcs = [e for e in elements if "Really" in e.name]
         self.assertEqual(len(long_name_funcs), 1)
-        
+
         # Non-ASCII names might be detected depending on parser capabilities
         non_ascii_funcs = [e for e in elements if any(ord(c) > 127 for c in e.name)]
         # We won't assert on this as it's dependent on parser capabilities
-        
+
         # Elements in comments should not be detected
         fake_func = next((e for e in elements if e.name == "fake"), None)
         self.assertIsNone(fake_func)
-        
+
         # Preprocessor directives should not create false matches
-        not_real_func = next((e for e in elements if e.name == "not_a_real_function"), None)
+        not_real_func = next(
+            (e for e in elements if e.name == "not_a_real_function"), None
+        )
         self.assertIsNone(not_real_func)
 
 

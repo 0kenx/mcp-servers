@@ -16,30 +16,30 @@ class TestJavaScriptEdgeCases(unittest.TestCase):
 
     def test_template_literals_with_expressions(self):
         """Test parsing JavaScript template literals with complex expressions."""
-        code = '''
+        code = """
 const greeting = (name, age) => `Hello ${name}, you are ${age > 18 ? "an adult" : "a minor"}!`;
 const html = `
   <div class="${isActive ? 'active' : 'inactive'}">
     ${items.map(item => `<p>${item.name}</p>`).join('')}
   </div>
 `;
-'''
+"""
         elements = self.parser.parse(code)
-        
+
         # Should find const variables and the arrow function
         self.assertGreaterEqual(len(elements), 2)
-        
+
         greeting_func = next((e for e in elements if e.name == "greeting"), None)
         self.assertIsNotNone(greeting_func)
         self.assertEqual(greeting_func.element_type, ElementType.FUNCTION)
-        
+
         html_const = next((e for e in elements if e.name == "html"), None)
         self.assertIsNotNone(html_const)
         self.assertEqual(html_const.element_type, ElementType.CONSTANT)
 
     def test_nested_destructuring(self):
         """Test parsing complex nested destructuring patterns."""
-        code = '''
+        code = """
 const { 
     user: { 
         name, 
@@ -54,22 +54,22 @@ const {
 function processData({ items = [], config: { sort = true, filter = false } = {} }) {
     return items.filter(x => x > 10);
 }
-'''
+"""
         elements = self.parser.parse(code)
-        
+
         # Should find variables and the function
         self.assertGreaterEqual(len(elements), 2)
-        
+
         # Check that we found the named variables despite complex destructuring
         self.assertTrue(any(e.name == "response" for e in elements))
-        
+
         process_func = next((e for e in elements if e.name == "processData"), None)
         self.assertIsNotNone(process_func)
         self.assertEqual(process_func.element_type, ElementType.FUNCTION)
 
     def test_uncommon_function_names(self):
         """Test parsing functions with uncommon names or edge case formats."""
-        code = '''
+        code = """
 // Function with keyword as name
 function if(condition) { return condition ? "true" : "false"; }
 
@@ -81,9 +81,9 @@ function sum💰(a, b) { return a + b; }
 
 // Unnamed function expression
 const unnamed = function() { return "anonymous"; };
-'''
+"""
         elements = self.parser.parse(code)
-        
+
         # Should identify at least some of these
         self.assertGreaterEqual(len(elements), 2)
 
@@ -95,7 +95,7 @@ const unnamed = function() { return "anonymous"; };
 
     def test_incomplete_functions_and_classes(self):
         """Test parsing incomplete function and class definitions."""
-        code = '''
+        code = """
 function calculateTotal(items, tax
     return items.reduce((sum, item) => sum + item.price, 0) * (1 + tax);
 
@@ -108,27 +108,29 @@ class ShoppingCart {
     getTotal(
         return this.items.reduce((sum, item) => sum + item.price, 0);
 }
-'''
+"""
         elements = self.parser.parse(code)
-        
+
         # Should attempt to parse these despite syntax errors
         self.assertGreaterEqual(len(elements), 2)
-        
+
         # Check that we found the function and class
         calc_func = next((e for e in elements if e.name == "calculateTotal"), None)
         self.assertIsNotNone(calc_func)
-        
+
         cart_class = next((e for e in elements if e.name == "ShoppingCart"), None)
         self.assertIsNotNone(cart_class)
         self.assertEqual(cart_class.element_type, ElementType.CLASS)
-        
+
         # Check that at least one method was detected
-        method = next((e for e in elements if e.element_type == ElementType.METHOD), None)
+        method = next(
+            (e for e in elements if e.element_type == ElementType.METHOD), None
+        )
         self.assertIsNotNone(method)
 
     def test_generator_functions(self):
         """Test parsing generator functions and methods."""
-        code = '''
+        code = """
 function* numberGenerator() {
     let i = 0;
     while (true) {
@@ -150,32 +152,44 @@ class SequenceGenerator {
         }
     }
 }
-'''
+"""
         elements = self.parser.parse(code)
-        
+
         # Check for generator function
         gen_func = next((e for e in elements if e.name == "numberGenerator"), None)
         self.assertIsNotNone(gen_func)
         self.assertEqual(gen_func.element_type, ElementType.FUNCTION)
-        
+
         # Check for class with generator methods
         class_el = next((e for e in elements if e.name == "SequenceGenerator"), None)
         self.assertIsNotNone(class_el)
-        
+
         # Check for generator methods
-        gen_method = next((e for e in elements 
-                          if e.element_type == ElementType.METHOD and e.name == "generate"), None)
+        gen_method = next(
+            (
+                e
+                for e in elements
+                if e.element_type == ElementType.METHOD and e.name == "generate"
+            ),
+            None,
+        )
         self.assertIsNotNone(gen_method)
-        
-        async_gen_method = next((e for e in elements 
-                                if e.element_type == ElementType.METHOD and e.name == "asyncGenerate"), None)
+
+        async_gen_method = next(
+            (
+                e
+                for e in elements
+                if e.element_type == ElementType.METHOD and e.name == "asyncGenerate"
+            ),
+            None,
+        )
         self.assertIsNotNone(async_gen_method)
         # Check that the async property is captured
         self.assertTrue(async_gen_method.metadata.get("is_async", False))
 
     def test_comments_and_directives(self):
         """Test handling comments and directives that may affect parsing."""
-        code = '''
+        code = """
 "use strict";
 // @ts-check
 
@@ -193,23 +207,23 @@ class SequenceGenerator {
 function greet(name) {
     return `Hello, ${name}!`;
 }
-'''
+"""
         elements = self.parser.parse(code)
-        
+
         # Should only find the real function, not the one in comments
         greet_func = next((e for e in elements if e.name == "greet"), None)
         self.assertIsNotNone(greet_func)
-        
+
         # "fakeFunction" should not be found as it's in a comment
         fake_func = next((e for e in elements if e.name == "fakeFunction"), None)
         self.assertIsNone(fake_func)
-        
+
         # Directives like "use strict" should be ignored or properly categorized
         # We'll just make sure they don't cause errors in parsing
 
     def test_computed_properties(self):
         """Test parsing computed property names in objects and classes."""
-        code = '''
+        code = """
 const propertyName = "dynamicProp";
 const obj = {
     [propertyName]: "value",
@@ -230,24 +244,26 @@ class ComputedMethods {
         this._value = value;
     }
 }
-'''
+"""
         elements = self.parser.parse(code)
-        
+
         # Check that we found the object and its variables
         self.assertGreaterEqual(len(elements), 2)
-        
+
         # Check for the class
         class_el = next((e for e in elements if e.name == "ComputedMethods"), None)
         self.assertIsNotNone(class_el)
-        
+
         # This is a stretch goal - checking if computed methods were parsed
         # Even if they weren't fully captured, the parser should at least not crash
         method_count = sum(1 for e in elements if e.element_type == ElementType.METHOD)
-        self.assertGreaterEqual(method_count, 0, "Should at least not crash on computed properties")
+        self.assertGreaterEqual(
+            method_count, 0, "Should at least not crash on computed properties"
+        )
 
     def test_private_class_features(self):
         """Test parsing private class fields and methods."""
-        code = '''
+        code = """
 class PrivateMembers {
     #privateField = 42;
     publicField = "public";
@@ -272,17 +288,17 @@ class PrivateMembers {
         return this.#privateField;
     }
 }
-'''
+"""
         elements = self.parser.parse(code)
-        
+
         # Check for the class
         class_el = next((e for e in elements if e.name == "PrivateMembers"), None)
         self.assertIsNotNone(class_el)
-        
+
         # Check that we found at least the public method and field
         methods = [e for e in elements if e.element_type == ElementType.METHOD]
         self.assertGreaterEqual(len(methods), 1)
-        
+
         # This is a stretch goal - checking if private fields and methods were parsed
         # The parser may or may not handle these correctly, but it should not crash
         # If the parser does handle private fields, there should be more than just the constructor
@@ -292,7 +308,7 @@ class PrivateMembers {
 
     def test_nested_classes_and_functions(self):
         """Test parsing nested class and function definitions."""
-        code = '''
+        code = """
 class Outer {
     constructor() {
         this.value = 42;
@@ -327,16 +343,16 @@ function outer() {
     
     return new LocalClass();
 }
-'''
+"""
         elements = self.parser.parse(code)
-        
+
         # Check for the outer class and function
         outer_class = next((e for e in elements if e.name == "Outer"), None)
         self.assertIsNotNone(outer_class)
-        
+
         outer_func = next((e for e in elements if e.name == "outer"), None)
         self.assertIsNotNone(outer_func)
-        
+
         # This is a stretch goal - checking if nested elements were parsed
         # The parser may or may not handle these correctly, but it should not crash
         # If the parser handles nested elements, there should be more elements
@@ -346,7 +362,7 @@ function outer() {
 
     def test_jsx_and_tsx_like_syntax(self):
         """Test parsing JSX and TSX like syntax in JavaScript."""
-        code = '''
+        code = """
 function App() {
     return (
         <div className="app">
@@ -369,30 +385,36 @@ class ClassComponent extends React.Component {
         return <div>{this.props.children}</div>;
     }
 }
-'''
+"""
         # JSX isn't valid JavaScript syntax, so this shouldn't crash the parser
         # but it might not parse everything correctly
         try:
             elements = self.parser.parse(code)
-            
+
             # Check that at least some elements were detected
-            self.assertGreaterEqual(len(elements), 1, "Should find at least one element")
-            
+            self.assertGreaterEqual(
+                len(elements), 1, "Should find at least one element"
+            )
+
             # This is a stretch goal - checking if any of the components were parsed
             # The parser may not handle JSX syntax well, which is expected
-            func_names = [e.name for e in elements if e.element_type == ElementType.FUNCTION]
-            class_names = [e.name for e in elements if e.element_type == ElementType.CLASS]
-            
+            func_names = [
+                e.name for e in elements if e.element_type == ElementType.FUNCTION
+            ]
+            class_names = [
+                e.name for e in elements if e.element_type == ElementType.CLASS
+            ]
+
             # Print parsed elements for analysis
             print(f"Functions found in JSX-like code: {func_names}")
             print(f"Classes found in JSX-like code: {class_names}")
-            
+
         except Exception as e:
             self.fail(f"Parser crashed on JSX-like syntax: {e}")
 
     def test_spread_and_rest(self):
         """Test parsing spread and rest operators."""
-        code = '''
+        code = """
 function sum(...numbers) {
     return numbers.reduce((total, n) => total + n, 0);
 }
@@ -407,28 +429,28 @@ function processConfig({ name, ...rest }) {
 
 const array1 = [1, 2, 3];
 const array2 = [...array1, 4, 5];
-'''
+"""
         elements = self.parser.parse(code)
-        
+
         # Check for the sum function
         sum_func = next((e for e in elements if e.name == "sum"), None)
         self.assertIsNotNone(sum_func)
-        
+
         # Check for the processConfig function
         process_func = next((e for e in elements if e.name == "processConfig"), None)
         self.assertIsNotNone(process_func)
-        
+
         # Check for the object variables
         obj1_var = next((e for e in elements if e.name == "obj1"), None)
         self.assertIsNotNone(obj1_var)
-        
+
         obj2_var = next((e for e in elements if e.name == "obj2"), None)
         self.assertIsNotNone(obj2_var)
-        
+
         # Check for array variables
         array1_var = next((e for e in elements if e.name == "array1"), None)
         self.assertIsNotNone(array1_var)
-        
+
         array2_var = next((e for e in elements if e.name == "array2"), None)
         self.assertIsNotNone(array2_var)
 

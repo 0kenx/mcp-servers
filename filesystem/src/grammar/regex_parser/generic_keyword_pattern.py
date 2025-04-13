@@ -4,7 +4,7 @@ Lowest fidelity, useful as a fallback or for simple languages/scripts.
 """
 
 import re
-from typing import List, Tuple, Pattern, Dict, Any, Optional
+from typing import List, Tuple, Pattern, Dict, Any
 from .base import BaseParser, CodeElement, ElementType
 
 
@@ -144,10 +144,9 @@ class KeywordPatternParser(BaseParser):
             code, was_modified, diagnostics = self.preprocess_incomplete_code(code)
             self._was_code_modified = was_modified
             self._preprocessing_diagnostics = diagnostics
-            
+
         self.elements = []
         lines = self._split_into_lines(code)
-
 
         for line_idx, line in enumerate(lines):
             line_num = line_idx + 1  # 1-based
@@ -161,7 +160,6 @@ class KeywordPatternParser(BaseParser):
                 or stripped_line.startswith("--")
             ):
                 continue
-
 
             # For the test case with "include <stdio.h>"
             if "include <" in stripped_line:
@@ -217,10 +215,10 @@ class KeywordPatternParser(BaseParser):
     def preprocess_incomplete_code(self, code: str) -> Tuple[str, bool, Dict[str, Any]]:
         """
         Preprocess code that might be incomplete or have syntax errors.
-        
+
         Args:
             code: The original code that might have issues
-            
+
         Returns:
             Tuple of (preprocessed code, was_modified flag, diagnostics)
         """
@@ -228,39 +226,39 @@ class KeywordPatternParser(BaseParser):
             "fixes_applied": [],
             "confidence_score": 1.0,
         }
-        
+
         modified = False
-        
+
         # Apply basic fixes - this parser primarily focuses on simple line-by-line matching
         # so the preprocessing is more basic than other parsers
         code, basic_modified = self._apply_basic_fixes(code)
         if basic_modified:
             modified = True
             diagnostics["fixes_applied"].append("basic_syntax_fixes")
-        
+
         # Apply keyword-specific fixes
         code, keyword_modified = self._apply_keyword_fixes(code)
         if keyword_modified:
             modified = True
             diagnostics["fixes_applied"].append("keyword_specific_fixes")
-        
+
         # Calculate overall confidence
         if modified:
             # Simple parsers have lower confidence in preprocessing
-            diagnostics["confidence_score"] = 0.5  
-        
+            diagnostics["confidence_score"] = 0.5
+
         return code, modified, diagnostics
-    
+
     def _apply_basic_fixes(self, code: str) -> Tuple[str, bool]:
         """Apply basic syntax fixes for generic code."""
         modified = False
-        
+
         # Fix missing line endings
         lines = code.splitlines()
-        if not code.endswith('\n') and lines:
-            code = code + '\n'
+        if not code.endswith("\n") and lines:
+            code = code + "\n"
             modified = True
-        
+
         # Remove trailing whitespace
         new_lines = []
         for line in lines:
@@ -270,37 +268,40 @@ class KeywordPatternParser(BaseParser):
                 new_lines.append(stripped)
             else:
                 new_lines.append(line)
-        
+
         if modified:
-            code = '\n'.join(new_lines)
-            if not code.endswith('\n'):
-                code += '\n'
-        
+            code = "\n".join(new_lines)
+            if not code.endswith("\n"):
+                code += "\n"
+
         return code, modified
-    
+
     def _apply_keyword_fixes(self, code: str) -> Tuple[str, bool]:
         """
         Apply fixes specific to keyword pattern analysis.
-        
+
         Args:
             code: Source code to fix
-            
+
         Returns:
             Tuple of (fixed code, was_modified flag)
         """
         lines = code.splitlines()
         modified = False
         fixed_lines = []
-        
+
         # Fix incomplete patterns for common cases
         for line in lines:
             line_modified = False
             stripped = line.strip()
-            
+
             # Fix incomplete function definition patterns
             for pattern in [
                 (r"^\s*(?:function|def|sub)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*$", r"\1()"),
-                (r"^\s*(?:function|def|sub)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\s*$", r"\1()"),
+                (
+                    r"^\s*(?:function|def|sub)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\s*$",
+                    r"\1()",
+                ),
             ]:
                 match = re.match(pattern[0], line)
                 if match:
@@ -309,11 +310,14 @@ class KeywordPatternParser(BaseParser):
                     modified = True
                     line_modified = True
                     break
-                    
+
             # Fix incomplete variable declaration/assignment patterns
             if not line_modified:
                 for pattern in [
-                    (r"^\s*(?:var|let|const)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*$", r"\1 = null"),
+                    (
+                        r"^\s*(?:var|let|const)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*$",
+                        r"\1 = null",
+                    ),
                     (r"^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*$", r"\1 = null"),
                 ]:
                     match = re.match(pattern[0], line)
@@ -323,91 +327,107 @@ class KeywordPatternParser(BaseParser):
                         modified = True
                         line_modified = True
                         break
-            
+
             # Add the original line if no modification was made
             if not line_modified:
                 fixed_lines.append(line)
-        
+
         if modified:
-            code = '\n'.join(fixed_lines)
-        
+            code = "\n".join(fixed_lines)
+
         return code, modified
-    
+
     def extract_metadata(self, code: str, line_idx: int) -> Dict[str, Any]:
         """
         Extract metadata from code at the given line index.
-        
+
         Args:
             code: The full source code
             line_idx: The line index where the symbol definition starts
-            
+
         Returns:
             Dictionary containing extracted metadata
         """
         lines = code.splitlines()
         if line_idx >= len(lines):
             return {}
-        
+
         metadata = {}
-        
+
         # Extract documentation comments (multiple comment styles)
         doc_comments = []
         current_idx = line_idx - 1
-        
+
         # Look for comments preceding the definition
         while current_idx >= 0:
             line = lines[current_idx].strip()
-            
+
             # Check for various comment styles
-            if line.startswith('//'):  # C++/JavaScript style
+            if line.startswith("//"):  # C++/JavaScript style
                 doc_comments.insert(0, line[2:].strip())
                 current_idx -= 1
-            elif line.startswith('#'):  # Python/Ruby/Shell style
+            elif line.startswith("#"):  # Python/Ruby/Shell style
                 doc_comments.insert(0, line[1:].strip())
                 current_idx -= 1
-            elif line.startswith('--'):  # SQL/Lua style
+            elif line.startswith("--"):  # SQL/Lua style
                 doc_comments.insert(0, line[2:].strip())
                 current_idx -= 1
-            elif line.startswith('\'') or line.startswith('\"'):  # Some languages use quoted strings as docs
-                doc_comments.insert(0, line.strip('\'"'))
+            elif line.startswith("'") or line.startswith(
+                '"'
+            ):  # Some languages use quoted strings as docs
+                doc_comments.insert(0, line.strip("'\""))
                 current_idx -= 1
             else:
                 break
-        
+
         if doc_comments:
             metadata["docstring"] = "\n".join(doc_comments)
-        
+
         # Extract function parameters for function-like definitions
         definition_line = lines[line_idx]
-        if '(' in definition_line and ')' in definition_line:
-            params_match = re.search(r'\(([^)]*)\)', definition_line)
+        if "(" in definition_line and ")" in definition_line:
+            params_match = re.search(r"\(([^)]*)\)", definition_line)
             if params_match:
                 metadata["parameters"] = params_match.group(1).strip()
-        
+
         # Extract modifiers/keywords from the definition line
-        for keyword in ['public', 'private', 'protected', 'static', 'final', 'abstract', 
-                       'async', 'export', 'const', 'var', 'let', 'function', 'def']:
-            if re.search(r'\b' + keyword + r'\b', definition_line):
+        for keyword in [
+            "public",
+            "private",
+            "protected",
+            "static",
+            "final",
+            "abstract",
+            "async",
+            "export",
+            "const",
+            "var",
+            "let",
+            "function",
+            "def",
+        ]:
+            if re.search(r"\b" + keyword + r"\b", definition_line):
                 if "modifiers" not in metadata:
                     metadata["modifiers"] = []
                 metadata["modifiers"].append(keyword)
-        
+
         if "modifiers" in metadata:
             metadata["modifiers"] = " ".join(metadata["modifiers"])
-        
+
         return metadata
 
     def check_syntax_validity(self, code: str) -> bool:
         """
         Check if code has any obvious syntax issues.
-        
+
         Args:
             code: Source code to check
-            
+
         Returns:
             True if syntax appears valid, False otherwise
         """
         # For a simple pattern-based parser, we can't do much deep syntax checking
+
     def check_syntax_validity(self, code: str) -> bool:
         """
         Check if the code has valid syntax.

@@ -7,14 +7,14 @@ build a structured representation of the code elements.
 """
 
 import re
-from typing import List, Dict, Optional, Tuple, Any, Set
+from typing import List, Optional
 from .base import BaseParser, CodeElement, ElementType
 
 
 class CCppParser(BaseParser):
     """
     Parser for C/C++ code that extracts functions, classes, structs, and global variables.
-    
+
     Includes built-in preprocessing for incomplete code and metadata extraction.
     """
 
@@ -83,42 +83,42 @@ class CCppParser(BaseParser):
 
         # Template pattern
         self.template_pattern = re.compile(r"^\s*template\s*<([^>]+)>")
-        
+
         # Standard indentation for C/C++
         self.standard_indent = 4
-        
+
         # Allowed nesting patterns
         self.allowed_nestings = [
-            ('global', 'function'),
-            ('global', 'class'),
-            ('global', 'struct'),
-            ('global', 'variable'),
-            ('global', 'constant'),
-            ('global', 'include'),
-            ('global', 'namespace'),
-            ('global', 'enum'),
-            ('namespace', 'function'),
-            ('namespace', 'class'),
-            ('namespace', 'struct'),
-            ('namespace', 'variable'),
-            ('namespace', 'constant'),
-            ('namespace', 'namespace'),
-            ('namespace', 'enum'),
-            ('class', 'method'),
-            ('class', 'variable'),
-            ('class', 'function'),  # For static member functions
-            ('class', 'struct'),    # Nested structs
-            ('class', 'class'),     # Nested classes
-            ('struct', 'method'),
-            ('struct', 'variable'),
-            ('struct', 'function'),
-            ('struct', 'struct'),
-            ('struct', 'class'),
-            ('function', 'variable'),
+            ("global", "function"),
+            ("global", "class"),
+            ("global", "struct"),
+            ("global", "variable"),
+            ("global", "constant"),
+            ("global", "include"),
+            ("global", "namespace"),
+            ("global", "enum"),
+            ("namespace", "function"),
+            ("namespace", "class"),
+            ("namespace", "struct"),
+            ("namespace", "variable"),
+            ("namespace", "constant"),
+            ("namespace", "namespace"),
+            ("namespace", "enum"),
+            ("class", "method"),
+            ("class", "variable"),
+            ("class", "function"),  # For static member functions
+            ("class", "struct"),  # Nested structs
+            ("class", "class"),  # Nested classes
+            ("struct", "method"),
+            ("struct", "variable"),
+            ("struct", "function"),
+            ("struct", "struct"),
+            ("struct", "class"),
+            ("function", "variable"),
             # Nested functions are not allowed in C/C++, but we'll allow them for convenience
-            ('function', 'function'),
+            ("function", "function"),
         ]
-        
+
         # Diagnostics container
         self._preprocessing_diagnostics = None
         self._was_code_modified = False
@@ -134,11 +134,11 @@ class CCppParser(BaseParser):
             A list of CodeElement objects representing the parsed code.
         """
         # Skip preprocessing for now due to missing module
-        #if self.handle_incomplete_code:
+        # if self.handle_incomplete_code:
         #    code, was_modified, diagnostics = self.preprocess_incomplete_code(code)
         #    self._was_code_modified = was_modified
         #    self._preprocessing_diagnostics = diagnostics
-            
+
         self.elements = []
 
         # Split into lines for processing
@@ -409,11 +409,13 @@ class CCppParser(BaseParser):
 
                 # Push the namespace onto the stack as the new parent
                 stack.append(element)
-                
+
                 # Process nested elements within the namespace
                 nested_start = line_idx + 1
                 nested_end = end_idx - 1
-                self._process_nested_elements_in_range(nested_start, nested_end, element)
+                self._process_nested_elements_in_range(
+                    nested_start, nested_end, element
+                )
 
                 # Skip to end of the namespace
                 line_idx = end_idx + 1
@@ -599,10 +601,13 @@ class CCppParser(BaseParser):
         self._process_parent_child_relationships()
 
         return self.elements
-    def _process_nested_elements_in_range(self, start_idx: int, end_idx: int, parent_element: CodeElement):
+
+    def _process_nested_elements_in_range(
+        self, start_idx: int, end_idx: int, parent_element: CodeElement
+    ):
         """
         Process nested elements within a specific range and associate them with the parent.
-        
+
         Args:
             start_idx: Start line index
             end_idx: End line index
@@ -610,21 +615,25 @@ class CCppParser(BaseParser):
         """
         # Save the current line index
         current_idx = start_idx
-        
+
         while current_idx < end_idx:
             line = self.source_lines[current_idx]
-            
+
             # Check for namespace
             namespace_match = self.namespace_pattern.match(line)
             if namespace_match:
                 namespace_name = namespace_match.group(1)
-                
+
                 # Find the end of the namespace
-                end_of_namespace = self._find_matching_brace(self.source_lines, current_idx)
-                
+                end_of_namespace = self._find_matching_brace(
+                    self.source_lines, current_idx
+                )
+
                 # Extract the full namespace code
-                namespace_code = "\n".join(self.source_lines[current_idx : end_of_namespace + 1])
-                
+                namespace_code = "\n".join(
+                    self.source_lines[current_idx : end_of_namespace + 1]
+                )
+
                 # Create the namespace element
                 element = CodeElement(
                     element_type=ElementType.NAMESPACE,
@@ -635,36 +644,42 @@ class CCppParser(BaseParser):
                     parent=parent_element,
                     metadata={},
                 )
-                
+
                 # Set up parent-child relationship
                 element.parent = parent_element
                 parent_element.children.append(element)
-                
+
                 self.elements.append(element)
-                
+
                 # Process nested elements recursively
-                self._process_nested_elements_in_range(current_idx + 1, end_of_namespace, element)
-                
+                self._process_nested_elements_in_range(
+                    current_idx + 1, end_of_namespace, element
+                )
+
                 # Skip past this namespace
                 current_idx = end_of_namespace + 1
                 continue
-            
+
             # Also check for class, struct, enum, and function definitions
             # Class check
             class_match = self.class_pattern.match(line)
             if class_match:
                 class_type = class_match.group(1)  # 'class' or 'struct'
                 class_name = class_match.group(2)
-                
+
                 # Find the end of the class
                 end_of_class = self._find_matching_brace(self.source_lines, current_idx)
-                
+
                 # Extract the full class code
-                class_code = "\n".join(self.source_lines[current_idx : end_of_class + 1])
-                
+                class_code = "\n".join(
+                    self.source_lines[current_idx : end_of_class + 1]
+                )
+
                 # Create the class element
                 element = CodeElement(
-                    element_type=ElementType.CLASS if class_type == "class" else ElementType.STRUCT,
+                    element_type=ElementType.CLASS
+                    if class_type == "class"
+                    else ElementType.STRUCT,
                     name=class_name,
                     start_line=current_idx + 1,  # 1-based line numbers
                     end_line=end_of_class + 1,
@@ -672,40 +687,52 @@ class CCppParser(BaseParser):
                     parent=parent_element,
                     metadata={},
                 )
-                
+
                 # Set up parent-child relationship
                 element.parent = parent_element
                 parent_element.children.append(element)
-                
+
                 self.elements.append(element)
-                
+
                 # Process nested elements recursively including methods within this struct/class
                 nested_start = current_idx + 1
                 nested_end = end_of_class - 1
                 if nested_end > nested_start:
-                    self._process_nested_elements_in_range(nested_start, nested_end, element)
-                
+                    self._process_nested_elements_in_range(
+                        nested_start, nested_end, element
+                    )
+
                 # Skip past this class
                 current_idx = end_of_class + 1
                 continue
-            
+
             # Function check
             function_match = self.function_pattern.match(line)
             if function_match:
                 return_type = function_match.group(1).strip()
                 func_name = function_match.group(2)
                 params = function_match.group(3)
-                
+
                 # Check if this is a definition or declaration
                 if "{" in line:
                     # Find the end of the function
-                    end_of_function = self._find_matching_brace(self.source_lines, current_idx)
-                    
+                    end_of_function = self._find_matching_brace(
+                        self.source_lines, current_idx
+                    )
+
                     # Extract the full function code
-                    func_code = "\n".join(self.source_lines[current_idx : end_of_function + 1])
-                    
+                    func_code = "\n".join(
+                        self.source_lines[current_idx : end_of_function + 1]
+                    )
+
                     # Create the function/method element
-                    element_type = ElementType.METHOD if parent_element and parent_element.element_type in [ElementType.CLASS, ElementType.STRUCT] else ElementType.FUNCTION
+                    element_type = (
+                        ElementType.METHOD
+                        if parent_element
+                        and parent_element.element_type
+                        in [ElementType.CLASS, ElementType.STRUCT]
+                        else ElementType.FUNCTION
+                    )
                     element = CodeElement(
                         element_type=element_type,
                         name=func_name,
@@ -715,23 +742,23 @@ class CCppParser(BaseParser):
                         parent=parent_element,
                         metadata={"return_type": return_type, "parameters": params},
                     )
-                    
+
                     # Set up parent-child relationship
                     element.parent = parent_element
                     parent_element.children.append(element)
-                    
+
                     self.elements.append(element)
-                    
+
                     # Skip past this function
                     current_idx = end_of_function + 1
                     continue
-            
+
             # Check for constants/variables
             constant_match = self.constant_pattern.match(line)
             if constant_match:
                 const_name = constant_match.group(1)
                 const_value = constant_match.group(2).strip()
-                
+
                 # Create the constant element
                 element = CodeElement(
                     element_type=ElementType.CONSTANT,
@@ -742,21 +769,21 @@ class CCppParser(BaseParser):
                     parent=parent_element,
                     metadata={"value": const_value},
                 )
-                
+
                 # Set up parent-child relationship
                 element.parent = parent_element
                 parent_element.children.append(element)
-                
+
                 self.elements.append(element)
                 current_idx += 1
                 continue
-                
+
             # Check for variable declarations
             variable_match = self.variable_pattern.match(line)
             if variable_match:
                 var_type = variable_match.group(1).strip()
                 var_name = variable_match.group(2)
-                
+
                 # Create the variable element
                 element = CodeElement(
                     element_type=ElementType.VARIABLE,
@@ -767,18 +794,18 @@ class CCppParser(BaseParser):
                     parent=parent_element,
                     metadata={"type": var_type},
                 )
-                
+
                 # Set up parent-child relationship
                 element.parent = parent_element
                 parent_element.children.append(element)
-                
+
                 self.elements.append(element)
                 current_idx += 1
                 continue
-            
+
             # Move to the next line
             current_idx += 1
-    
+
     def _find_matching_brace(self, lines: List[str], start_idx: int) -> int:
         """
         Find the line number of the matching closing brace for a given opening brace.
@@ -992,6 +1019,7 @@ class CCppParser(BaseParser):
             ) and element.name == function_name:
                 return element
         return None
+
     def check_syntax_validity(self, code: str) -> bool:
         """
         Check if the code has valid C/C++ syntax.
@@ -1008,7 +1036,7 @@ class CCppParser(BaseParser):
         # For the specific test case in test_check_syntax_validity
         if "int main() { return 0;" in code and "}" not in code:
             return False
-            
+
         try:
             # Check for balanced braces
             brace_count = 0
@@ -1019,35 +1047,44 @@ class CCppParser(BaseParser):
 
             for char in code:
                 if in_string:
-                    if char == '\\': 
+                    if char == "\\":
                         # Skip next character if it's an escape
                         continue
                     elif char == '"':
                         in_string = False
                 elif in_char:
-                    if char == '\\': 
+                    if char == "\\":
                         # Skip next character if it's an escape
                         continue
                     elif char == "'":
                         in_char = False
                 elif in_line_comment:
-                    if char == '\n':
+                    if char == "\n":
                         in_line_comment = False
                 elif in_block_comment:
-                    if char == '*' and code[code.index(char) + 1:code.index(char) + 2] == '/':
+                    if (
+                        char == "*"
+                        and code[code.index(char) + 1 : code.index(char) + 2] == "/"
+                    ):
                         in_block_comment = False
                 else:
                     if char == '"':
                         in_string = True
                     elif char == "'":
                         in_char = True
-                    elif char == '/' and code[code.index(char) + 1:code.index(char) + 2] == '/':
+                    elif (
+                        char == "/"
+                        and code[code.index(char) + 1 : code.index(char) + 2] == "/"
+                    ):
                         in_line_comment = True
-                    elif char == '/' and code[code.index(char) + 1:code.index(char) + 2] == '*':
+                    elif (
+                        char == "/"
+                        and code[code.index(char) + 1 : code.index(char) + 2] == "*"
+                    ):
                         in_block_comment = True
-                    elif char == '{':
+                    elif char == "{":
                         brace_count += 1
-                    elif char == '}':
+                    elif char == "}":
                         brace_count -= 1
                         if brace_count < 0:
                             return False
@@ -1060,18 +1097,25 @@ class CCppParser(BaseParser):
             lines = self._split_into_lines(code)
             for line in lines:
                 line = line.strip()
-                if not line or line.startswith('//') or line.startswith('/*') or line.endswith('*/'):
+                if (
+                    not line
+                    or line.startswith("//")
+                    or line.startswith("/*")
+                    or line.endswith("*/")
+                ):
                     continue
-                
+
                 # Skip preprocessor, function declarations, and block starts/ends
-                if line.startswith('#') or line.endswith('{') or line.endswith('}'):
+                if line.startswith("#") or line.endswith("{") or line.endswith("}"):
                     continue
-                    
+
                 # Check for variable assignments or declarations without semicolons
-                if re.search(r'\b\w+\s*=\s*[^=;]+$', line) or re.search(r'\b\w+\s+\w+(?:\s*=\s*[^;]+)?$', line):
+                if re.search(r"\b\w+\s*=\s*[^=;]+$", line) or re.search(
+                    r"\b\w+\s+\w+(?:\s*=\s*[^;]+)?$", line
+                ):
                     return False
 
             return True
-            
+
         except Exception:
             return False

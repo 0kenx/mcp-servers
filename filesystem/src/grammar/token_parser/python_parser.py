@@ -5,13 +5,12 @@ This module provides a parser specific to the Python programming language,
 building on the base token parser framework.
 """
 
-from typing import List, Dict, Set, Optional, Any, Tuple, cast
-import re
+from typing import List, Dict, Optional, Any
 
 from .token import Token, TokenType
 from .token_parser import TokenParser
 from .parser_state import ParserState, ContextInfo
-from .symbol_table import SymbolTable, Symbol
+from .symbol_table import SymbolTable
 from .python_tokenizer import PythonTokenizer
 from .generic_indentation_block_parser import IndentationBlockParser
 
@@ -19,18 +18,18 @@ from .generic_indentation_block_parser import IndentationBlockParser
 class PythonParser(TokenParser):
     """
     Parser for Python code.
-    
+
     This parser processes Python-specific syntax, handling indentation-based blocks,
     function and class definitions, and produces an abstract syntax tree.
     """
-    
+
     def __init__(self):
         """Initialize the Python parser."""
         super().__init__()
         self.tokenizer = PythonTokenizer()
         self.state = ParserState()
         self.symbol_table = SymbolTable()
-        
+
         # Context types specific to Python
         self.context_types = {
             "function": "function",
@@ -49,18 +48,18 @@ class PythonParser(TokenParser):
             "lambda": "lambda",
             "decorator": "decorator",
         }
-        
+
         # Mapping of indentation levels to their line numbers
         self.indent_levels: Dict[int, int] = {}
         self.current_indent_level = 0
-    
+
     def parse(self, code: str) -> Dict[str, Any]:
         """
         Parse Python code and build an abstract syntax tree.
-        
+
         Args:
             code: Python source code
-            
+
         Returns:
             Dictionary representing the abstract syntax tree
         """
@@ -69,20 +68,20 @@ class PythonParser(TokenParser):
         self.symbol_table = SymbolTable()
         self.indent_levels = {}
         self.current_indent_level = 0
-        
+
         # Tokenize the code
         tokens = self.tokenize(code)
-        
+
         # Process the tokens to build the AST
         return self.build_ast(tokens)
-    
+
     def build_ast(self, tokens: List[Token]) -> Dict[str, Any]:
         """
         Build an abstract syntax tree from a list of tokens.
-        
+
         Args:
             tokens: List of tokens from the tokenizer
-            
+
         Returns:
             Dictionary representing the abstract syntax tree
         """
@@ -92,9 +91,9 @@ class PythonParser(TokenParser):
             "tokens": tokens,
             "start": 0,
             "end": len(tokens) - 1 if tokens else 0,
-            "children": []
+            "children": [],
         }
-        
+
         i = 0
         while i < len(tokens):
             # Track indentation changes
@@ -102,7 +101,7 @@ class PythonParser(TokenParser):
                 indent_size = len(tokens[i].value)
                 if "indent_size" in tokens[i].metadata:
                     indent_size = tokens[i].metadata["indent_size"]
-                    
+
                 if indent_size > self.current_indent_level:
                     # Indentation increased - start a new block
                     self.indent_levels[indent_size] = tokens[i].line
@@ -114,12 +113,12 @@ class PythonParser(TokenParser):
                             # End this block
                             del self.indent_levels[level]
                     self.current_indent_level = indent_size
-            
+
             # Skip whitespace and newlines for AST building
             if tokens[i].token_type in [TokenType.WHITESPACE, TokenType.NEWLINE]:
                 i += 1
                 continue
-            
+
             # Parse statements based on token type
             if i < len(tokens):
                 if tokens[i].token_type == TokenType.KEYWORD:
@@ -141,31 +140,33 @@ class PythonParser(TokenParser):
                 else:
                     # Other token types
                     i += 1
-        
+
         # Post-process the AST to fix parent-child relationships
         self._fix_parent_child_relationships(ast)
-        
+
         # Validate and repair the AST
         self.validate_and_repair_ast()
-        
+
         return ast
-    
-    def _parse_keyword_statement(self, tokens: List[Token], index: int) -> Optional[Dict[str, Any]]:
+
+    def _parse_keyword_statement(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
         """
         Parse a statement that starts with a keyword.
-        
+
         Args:
             tokens: List of tokens
             index: Current index in the token list
-            
+
         Returns:
             Dictionary with the parsed node and next index, or None if parsing failed
         """
         if index >= len(tokens):
             return None
-            
+
         keyword = tokens[index].value
-        
+
         if keyword == "def":
             return self._parse_function_definition(tokens, index)
         elif keyword == "class":
@@ -184,46 +185,48 @@ class PythonParser(TokenParser):
             return self._parse_try_statement(tokens, index)
         elif keyword == "with":
             return self._parse_with_statement(tokens, index)
-        
+
         # Default simple statement
         return self._parse_expression_statement(tokens, index)
-    
-    def _parse_function_definition(self, tokens: List[Token], index: int) -> Optional[Dict[str, Any]]:
+
+    def _parse_function_definition(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
         """
         Parse a function definition.
-        
+
         Args:
             tokens: List of tokens
             index: Current index in the token list
-            
+
         Returns:
             Dictionary with the parsed node and next index, or None if parsing failed
         """
         start_index = index
         index += 1  # Skip 'def' keyword
-        
+
         # Skip whitespace
         while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
             index += 1
-        
+
         # Get function name
         if index >= len(tokens) or tokens[index].token_type != TokenType.IDENTIFIER:
             return None
-        
+
         function_name = tokens[index].value
         name_index = index
         index += 1
-        
+
         # Skip whitespace
         while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
             index += 1
-        
+
         # Expect open parenthesis
         if index >= len(tokens) or tokens[index].token_type != TokenType.OPEN_PAREN:
             return None
-        
+
         index += 1
-        
+
         # Parse parameters
         parameters = []
         while index < len(tokens) and tokens[index].token_type != TokenType.CLOSE_PAREN:
@@ -231,32 +234,41 @@ class PythonParser(TokenParser):
             if tokens[index].token_type == TokenType.WHITESPACE:
                 index += 1
                 continue
-                
+
             # Parameter name
             if tokens[index].token_type == TokenType.IDENTIFIER:
                 param_name = tokens[index].value
                 param_index = index
                 index += 1
-                
+
                 # Check for type annotation
                 param_type = None
                 if index < len(tokens) and tokens[index].token_type == TokenType.COLON:
                     index += 1
-                    
+
                     # Skip whitespace
-                    while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
+                    while (
+                        index < len(tokens)
+                        and tokens[index].token_type == TokenType.WHITESPACE
+                    ):
                         index += 1
-                    
+
                     # Get type annotation
-                    if index < len(tokens) and tokens[index].token_type == TokenType.IDENTIFIER:
+                    if (
+                        index < len(tokens)
+                        and tokens[index].token_type == TokenType.IDENTIFIER
+                    ):
                         param_type = tokens[index].value
                         index += 1
-                    
+
                     # Support complex type annotations like List[str], Dict[str, int], etc.
-                    if index < len(tokens) and tokens[index].token_type == TokenType.OPEN_BRACKET:
+                    if (
+                        index < len(tokens)
+                        and tokens[index].token_type == TokenType.OPEN_BRACKET
+                    ):
                         bracket_depth = 1
                         index += 1
-                        
+
                         # Collect the entire type annotation
                         while index < len(tokens) and bracket_depth > 0:
                             if tokens[index].token_type == TokenType.OPEN_BRACKET:
@@ -264,22 +276,25 @@ class PythonParser(TokenParser):
                             elif tokens[index].token_type == TokenType.CLOSE_BRACKET:
                                 bracket_depth -= 1
                             index += 1
-                
+
                 # Check for default value
                 default_value = None
                 if index < len(tokens) and tokens[index].token_type == TokenType.EQUALS:
                     index += 1
-                    
+
                     # Skip whitespace
-                    while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
+                    while (
+                        index < len(tokens)
+                        and tokens[index].token_type == TokenType.WHITESPACE
+                    ):
                         index += 1
-                    
+
                     # Parse default value expression
                     default_expr = self._parse_expression(tokens, index)
                     if default_expr:
                         default_value = default_expr["node"]
                         index = default_expr["next_index"]
-                
+
                 # Create parameter node
                 param_node = {
                     "type": "Parameter",
@@ -289,9 +304,9 @@ class PythonParser(TokenParser):
                     "start": param_index,
                     "end": index - 1,
                     "parent": None,
-                    "children": []
+                    "children": [],
                 }
-                
+
                 # Add parameter to symbol table
                 self.symbol_table.add_symbol(
                     name=param_name,
@@ -299,44 +314,49 @@ class PythonParser(TokenParser):
                     position=tokens[param_index].position,
                     line=tokens[param_index].line,
                     column=tokens[param_index].column,
-                    metadata={"type": param_type}
+                    metadata={"type": param_type},
                 )
-                
+
                 parameters.append(param_node)
-                
+
                 # Set parent-child relationship for default value
                 if default_value:
                     default_value["parent"] = param_node
                     param_node["children"].append(default_value)
-            
+
             # Skip comma
             if index < len(tokens) and tokens[index].token_type == TokenType.COMMA:
                 index += 1
                 continue
-        
+
         # Skip closing parenthesis
         if index < len(tokens) and tokens[index].token_type == TokenType.CLOSE_PAREN:
             index += 1
-        
+
         # Check for return type annotation
         return_type = None
         if index < len(tokens) and tokens[index].token_type == TokenType.ARROW:
             index += 1
-            
+
             # Skip whitespace
-            while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
+            while (
+                index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE
+            ):
                 index += 1
-            
+
             # Get return type annotation
             if index < len(tokens) and tokens[index].token_type == TokenType.IDENTIFIER:
                 return_type = tokens[index].value
                 index += 1
-                
+
                 # Support complex return types like List[str], Dict[str, int], etc.
-                if index < len(tokens) and tokens[index].token_type == TokenType.OPEN_BRACKET:
+                if (
+                    index < len(tokens)
+                    and tokens[index].token_type == TokenType.OPEN_BRACKET
+                ):
                     bracket_depth = 1
                     index += 1
-                    
+
                     # Collect the entire return type
                     while index < len(tokens) and bracket_depth > 0:
                         if tokens[index].token_type == TokenType.OPEN_BRACKET:
@@ -344,41 +364,48 @@ class PythonParser(TokenParser):
                         elif tokens[index].token_type == TokenType.CLOSE_BRACKET:
                             bracket_depth -= 1
                         index += 1
-        
+
         # Skip whitespace and colon
         while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
             index += 1
-            
+
         if index < len(tokens) and tokens[index].token_type == TokenType.COLON:
             index += 1
         else:
             return None  # Malformed function definition
-        
+
         # Calculate the current indentation level
         current_indent_level = 0
         for i in range(start_index - 1, -1, -1):
             if tokens[i].token_type == TokenType.NEWLINE:
                 # Found the start of the current line
-                if i + 1 < len(tokens) and tokens[i + 1].token_type == TokenType.WHITESPACE:
+                if (
+                    i + 1 < len(tokens)
+                    and tokens[i + 1].token_type == TokenType.WHITESPACE
+                ):
                     # Get indentation level
                     indent_token = tokens[i + 1]
                     current_indent_level = len(indent_token.value)
                     if "indent_size" in indent_token.metadata:
                         current_indent_level = indent_token.metadata["indent_size"]
                 break
-        
+
         # Determine if we're in a class context (method vs function)
         is_method = self.is_in_context(self.context_types["class"])
-        context_type = self.context_types["method"] if is_method else self.context_types["function"]
-        
+        context_type = (
+            self.context_types["method"]
+            if is_method
+            else self.context_types["function"]
+        )
+
         # Context metadata
         context_metadata = {
             "name": function_name,
             "parameters": [p["name"] for p in parameters],
             "return_type": return_type,
-            "is_method": is_method
+            "is_method": is_method,
         }
-        
+
         # Add function/method to symbol table
         self.symbol_table.add_symbol(
             name=function_name,
@@ -388,22 +415,19 @@ class PythonParser(TokenParser):
             column=tokens[name_index].column,
             metadata={
                 "parameters": [p["name"] for p in parameters],
-                "return_type": return_type
-            }
+                "return_type": return_type,
+            },
         )
-        
+
         # Enter function context
         if self.context_tracker:
             self.context_tracker.enter_context(
-                context_type, 
-                function_name, 
-                context_metadata,
-                start_index
+                context_type, function_name, context_metadata, start_index
             )
         else:
             # For backward compatibility
             self.state.enter_context(ContextInfo(context_type, context_metadata))
-        
+
         # Parse function body using generic indentation block parser
         body_token_indices, next_index = IndentationBlockParser.parse_block(
             tokens,
@@ -411,27 +435,33 @@ class PythonParser(TokenParser):
             current_indent_level,
             self.state,
             None,  # Don't push context again, we already did it above
-            context_metadata
+            context_metadata,
         )
-        
+
         # Process the body tokens into actual nodes
         body_nodes = []
         i = 0
         while i < len(body_token_indices):
             token_index = body_token_indices[i]
-            
+
             # Skip whitespace and newlines
-            if tokens[token_index].token_type in [TokenType.WHITESPACE, TokenType.NEWLINE]:
+            if tokens[token_index].token_type in [
+                TokenType.WHITESPACE,
+                TokenType.NEWLINE,
+            ]:
                 i += 1
                 continue
-            
+
             # Parse statement based on token type
             if tokens[token_index].token_type == TokenType.KEYWORD:
                 stmt = self._parse_keyword_statement(tokens, token_index)
                 if stmt:
                     body_nodes.append(stmt["node"])
                     # Skip ahead to tokens after this statement
-                    while i < len(body_token_indices) and body_token_indices[i] < stmt["next_index"]:
+                    while (
+                        i < len(body_token_indices)
+                        and body_token_indices[i] < stmt["next_index"]
+                    ):
                         i += 1
                 else:
                     i += 1
@@ -440,21 +470,24 @@ class PythonParser(TokenParser):
                 if stmt:
                     body_nodes.append(stmt["node"])
                     # Skip ahead to tokens after this statement
-                    while i < len(body_token_indices) and body_token_indices[i] < stmt["next_index"]:
+                    while (
+                        i < len(body_token_indices)
+                        and body_token_indices[i] < stmt["next_index"]
+                    ):
                         i += 1
                 else:
                     i += 1
             else:
                 # Other token types
                 i += 1
-        
+
         # Exit function context
         if self.context_tracker:
             self.context_tracker.exit_context(next_index)
         else:
             # For backward compatibility
             self.state.exit_context()
-        
+
         # Create function node
         function_node = {
             "type": "FunctionDefinition" if not is_method else "MethodDefinition",
@@ -465,116 +498,123 @@ class PythonParser(TokenParser):
             "start": start_index,
             "end": next_index - 1,
             "parent": None,
-            "children": []
+            "children": [],
         }
-        
+
         # Set parent-child relationships for parameters and body nodes
         for param in parameters:
             param["parent"] = function_node
             function_node["children"].append(param)
-        
+
         for node in body_nodes:
             node["parent"] = function_node
             function_node["children"].append(node)
-        
-        return {
-            "node": function_node,
-            "next_index": next_index
-        }
-    
-    def _parse_class_definition(self, tokens: List[Token], index: int) -> Optional[Dict[str, Any]]:
+
+        return {"node": function_node, "next_index": next_index}
+
+    def _parse_class_definition(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
         """
         Parse a class definition.
-        
+
         Args:
             tokens: List of tokens
             index: Current index in the token list
-            
+
         Returns:
             Dictionary with the parsed node and next index, or None if parsing failed
         """
         start_index = index
         index += 1  # Skip 'class' keyword
-        
+
         # Skip whitespace
         while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
             index += 1
-        
+
         # Get class name
         if index >= len(tokens) or tokens[index].token_type != TokenType.IDENTIFIER:
             return None
-        
+
         class_name = tokens[index].value
         name_index = index
         index += 1
-        
+
         # Skip whitespace
         while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
             index += 1
-        
+
         # Check for inheritance
         bases = []
         if index < len(tokens) and tokens[index].token_type == TokenType.OPEN_PAREN:
             index += 1
-            
-            while index < len(tokens) and tokens[index].token_type != TokenType.CLOSE_PAREN:
+
+            while (
+                index < len(tokens)
+                and tokens[index].token_type != TokenType.CLOSE_PAREN
+            ):
                 # Skip whitespace
                 if tokens[index].token_type == TokenType.WHITESPACE:
                     index += 1
                     continue
-                    
+
                 # Base class name
                 if tokens[index].token_type == TokenType.IDENTIFIER:
                     base_name = tokens[index].value
                     base_index = index
                     index += 1
-                    
-                    bases.append({
-                        "type": "Identifier",
-                        "name": base_name,
-                        "start": base_index,
-                        "end": base_index,
-                        "parent": None,
-                        "children": []
-                    })
-                
+
+                    bases.append(
+                        {
+                            "type": "Identifier",
+                            "name": base_name,
+                            "start": base_index,
+                            "end": base_index,
+                            "parent": None,
+                            "children": [],
+                        }
+                    )
+
                 # Skip comma
                 if index < len(tokens) and tokens[index].token_type == TokenType.COMMA:
                     index += 1
                     continue
-            
+
             # Skip closing parenthesis
-            if index < len(tokens) and tokens[index].token_type == TokenType.CLOSE_PAREN:
+            if (
+                index < len(tokens)
+                and tokens[index].token_type == TokenType.CLOSE_PAREN
+            ):
                 index += 1
-        
+
         # Skip whitespace and colon
         while index < len(tokens) and tokens[index].token_type == TokenType.WHITESPACE:
             index += 1
-            
+
         if index < len(tokens) and tokens[index].token_type == TokenType.COLON:
             index += 1
         else:
             return None  # Malformed class definition
-        
+
         # Calculate the current indentation level
         current_indent_level = 0
         for i in range(start_index - 1, -1, -1):
             if tokens[i].token_type == TokenType.NEWLINE:
                 # Found the start of the current line
-                if i + 1 < len(tokens) and tokens[i + 1].token_type == TokenType.WHITESPACE:
+                if (
+                    i + 1 < len(tokens)
+                    and tokens[i + 1].token_type == TokenType.WHITESPACE
+                ):
                     # Get indentation level
                     indent_token = tokens[i + 1]
                     current_indent_level = len(indent_token.value)
                     if "indent_size" in indent_token.metadata:
                         current_indent_level = indent_token.metadata["indent_size"]
                 break
-        
+
         # Context metadata
-        context_metadata = {
-            "name": class_name,
-            "bases": [b["name"] for b in bases]
-        }
-        
+        context_metadata = {"name": class_name, "bases": [b["name"] for b in bases]}
+
         # Add class to symbol table
         self.symbol_table.add_symbol(
             name=class_name,
@@ -582,21 +622,20 @@ class PythonParser(TokenParser):
             position=tokens[name_index].position,
             line=tokens[name_index].line,
             column=tokens[name_index].column,
-            metadata={"bases": [b["name"] for b in bases]}
+            metadata={"bases": [b["name"] for b in bases]},
         )
-        
+
         # Enter class context
         if self.context_tracker:
             self.context_tracker.enter_context(
-                self.context_types["class"], 
-                class_name, 
-                context_metadata,
-                start_index
+                self.context_types["class"], class_name, context_metadata, start_index
             )
         else:
             # For backward compatibility
-            self.state.enter_context(ContextInfo(self.context_types["class"], context_metadata))
-        
+            self.state.enter_context(
+                ContextInfo(self.context_types["class"], context_metadata)
+            )
+
         # Parse class body using generic indentation block parser
         body_token_indices, next_index = IndentationBlockParser.parse_block(
             tokens,
@@ -604,27 +643,33 @@ class PythonParser(TokenParser):
             current_indent_level,
             self.state,
             None,  # Don't push context again, we already did it above
-            context_metadata
+            context_metadata,
         )
-        
+
         # Process the body tokens into actual nodes
         body_nodes = []
         i = 0
         while i < len(body_token_indices):
             token_index = body_token_indices[i]
-            
+
             # Skip whitespace and newlines
-            if tokens[token_index].token_type in [TokenType.WHITESPACE, TokenType.NEWLINE]:
+            if tokens[token_index].token_type in [
+                TokenType.WHITESPACE,
+                TokenType.NEWLINE,
+            ]:
                 i += 1
                 continue
-            
+
             # Parse statement based on token type
             if tokens[token_index].token_type == TokenType.KEYWORD:
                 stmt = self._parse_keyword_statement(tokens, token_index)
                 if stmt:
                     body_nodes.append(stmt["node"])
                     # Skip ahead to tokens after this statement
-                    while i < len(body_token_indices) and body_token_indices[i] < stmt["next_index"]:
+                    while (
+                        i < len(body_token_indices)
+                        and body_token_indices[i] < stmt["next_index"]
+                    ):
                         i += 1
                 else:
                     i += 1
@@ -633,21 +678,24 @@ class PythonParser(TokenParser):
                 if stmt:
                     body_nodes.append(stmt["node"])
                     # Skip ahead to tokens after this statement
-                    while i < len(body_token_indices) and body_token_indices[i] < stmt["next_index"]:
+                    while (
+                        i < len(body_token_indices)
+                        and body_token_indices[i] < stmt["next_index"]
+                    ):
                         i += 1
                 else:
                     i += 1
             else:
                 # Other token types
                 i += 1
-        
+
         # Exit class context
         if self.context_tracker:
             self.context_tracker.exit_context(next_index)
         else:
             # For backward compatibility
             self.state.exit_context()
-        
+
         # Create class node
         class_node = {
             "type": "ClassDefinition",
@@ -657,87 +705,88 @@ class PythonParser(TokenParser):
             "start": start_index,
             "end": next_index - 1,
             "parent": None,
-            "children": []
+            "children": [],
         }
-        
+
         # Set parent-child relationships for bases and body nodes
         for base in bases:
             base["parent"] = class_node
             class_node["children"].append(base)
-        
+
         for node in body_nodes:
             node["parent"] = class_node
             class_node["children"].append(node)
-        
-        return {
-            "node": class_node,
-            "next_index": next_index
-        }
-    
-    def _parse_expression_statement(self, tokens: List[Token], index: int) -> Optional[Dict[str, Any]]:
+
+        return {"node": class_node, "next_index": next_index}
+
+    def _parse_expression_statement(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
         """
         Parse an expression statement.
-        
+
         Args:
             tokens: List of tokens
             index: Current index in the token list
-            
+
         Returns:
             Dictionary with the parsed node and next index, or None if parsing failed
         """
         expr = self._parse_expression(tokens, index)
         if not expr:
             return None
-        
+
         stmt = {
             "type": "ExpressionStatement",
             "expression": expr["node"],
             "start": expr["node"]["start"],
             "end": expr["node"]["end"],
             "parent": None,
-            "children": [expr["node"]]
+            "children": [expr["node"]],
         }
-        
+
         expr["node"]["parent"] = stmt
-        
-        return {
-            "node": stmt,
-            "next_index": expr["next_index"]
-        }
-    
-    def _parse_expression(self, tokens: List[Token], index: int) -> Optional[Dict[str, Any]]:
+
+        return {"node": stmt, "next_index": expr["next_index"]}
+
+    def _parse_expression(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
         """
         Parse an expression.
-        
+
         Args:
             tokens: List of tokens
             index: Current index in the token list
-            
+
         Returns:
             Dictionary with the parsed node and next index, or None if parsing failed
         """
         # For simplicity, we'll just parse basic expressions
         if index >= len(tokens):
             return None
-        
+
         if tokens[index].token_type == TokenType.IDENTIFIER:
             # Variable reference or function call
             identifier = tokens[index].value
             start_index = index
             index += 1
-            
+
             # Check if it's a function call
             if index < len(tokens) and tokens[index].token_type == TokenType.OPEN_PAREN:
                 index += 1
-                
+
                 # Parse arguments
                 arguments = []
-                while index < len(tokens) and tokens[index].token_type != TokenType.CLOSE_PAREN:
+                while (
+                    index < len(tokens)
+                    and tokens[index].token_type != TokenType.CLOSE_PAREN
+                ):
                     # Skip whitespace
                     if tokens[index].token_type == TokenType.WHITESPACE:
                         index += 1
                         continue
-                    
+
                     # Parse argument expression
                     arg_expr = self._parse_expression(tokens, index)
                     if arg_expr:
@@ -746,15 +795,21 @@ class PythonParser(TokenParser):
                     else:
                         # Skip this token if we couldn't parse an expression
                         index += 1
-                    
+
                     # Skip comma
-                    if index < len(tokens) and tokens[index].token_type == TokenType.COMMA:
+                    if (
+                        index < len(tokens)
+                        and tokens[index].token_type == TokenType.COMMA
+                    ):
                         index += 1
-                
+
                 # Skip closing parenthesis
-                if index < len(tokens) and tokens[index].token_type == TokenType.CLOSE_PAREN:
+                if (
+                    index < len(tokens)
+                    and tokens[index].token_type == TokenType.CLOSE_PAREN
+                ):
                     index += 1
-                
+
                 # Create call expression node
                 call_node = {
                     "type": "CallExpression",
@@ -764,27 +819,24 @@ class PythonParser(TokenParser):
                         "start": start_index,
                         "end": start_index,
                         "parent": None,
-                        "children": []
+                        "children": [],
                     },
                     "arguments": arguments,
                     "start": start_index,
                     "end": index - 1,
                     "parent": None,
-                    "children": []
+                    "children": [],
                 }
-                
+
                 # Set parent-child relationships
                 call_node["callee"]["parent"] = call_node
                 call_node["children"].append(call_node["callee"])
-                
+
                 for arg in arguments:
                     arg["parent"] = call_node
                     call_node["children"].append(arg)
-                
-                return {
-                    "node": call_node,
-                    "next_index": index
-                }
+
+                return {"node": call_node, "next_index": index}
             else:
                 # Simple identifier
                 return {
@@ -794,9 +846,9 @@ class PythonParser(TokenParser):
                         "start": start_index,
                         "end": start_index,
                         "parent": None,
-                        "children": []
+                        "children": [],
                     },
-                    "next_index": index
+                    "next_index": index,
                 }
         elif tokens[index].token_type == TokenType.NUMBER:
             # Numeric literal
@@ -807,25 +859,25 @@ class PythonParser(TokenParser):
                     "start": index,
                     "end": index,
                     "parent": None,
-                    "children": []
+                    "children": [],
                 },
-                "next_index": index + 1
+                "next_index": index + 1,
             }
         elif tokens[index].token_type == TokenType.STRING_START:
             # String literal
             start_index = index
             string_value = ""
             index += 1
-            
+
             # Collect string content
             while index < len(tokens):
                 if tokens[index].token_type == TokenType.STRING_END:
                     index += 1
                     break
-                
+
                 string_value += tokens[index].value
                 index += 1
-            
+
             return {
                 "node": {
                     "type": "StringLiteral",
@@ -833,50 +885,64 @@ class PythonParser(TokenParser):
                     "start": start_index,
                     "end": index - 1,
                     "parent": None,
-                    "children": []
+                    "children": [],
                 },
-                "next_index": index
+                "next_index": index,
             }
-        
+
         # Default case
         return None
-    
-    def _parse_if_statement(self, tokens: List[Token], index: int) -> Optional[Dict[str, Any]]:
+
+    def _parse_if_statement(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
         """Placeholder for parsing if statements."""
         # This would be implemented similarly to the function and class parsers
         return None
-    
-    def _parse_for_statement(self, tokens: List[Token], index: int) -> Optional[Dict[str, Any]]:
+
+    def _parse_for_statement(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
         """Placeholder for parsing for statements."""
         return None
-    
-    def _parse_while_statement(self, tokens: List[Token], index: int) -> Optional[Dict[str, Any]]:
+
+    def _parse_while_statement(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
         """Placeholder for parsing while statements."""
         return None
-    
-    def _parse_return_statement(self, tokens: List[Token], index: int) -> Optional[Dict[str, Any]]:
+
+    def _parse_return_statement(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
         """Placeholder for parsing return statements."""
         return None
-    
-    def _parse_import_statement(self, tokens: List[Token], index: int) -> Optional[Dict[str, Any]]:
+
+    def _parse_import_statement(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
         """Placeholder for parsing import statements."""
         return None
-    
-    def _parse_try_statement(self, tokens: List[Token], index: int) -> Optional[Dict[str, Any]]:
+
+    def _parse_try_statement(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
         """Placeholder for parsing try-except statements."""
         return None
-    
-    def _parse_with_statement(self, tokens: List[Token], index: int) -> Optional[Dict[str, Any]]:
+
+    def _parse_with_statement(
+        self, tokens: List[Token], index: int
+    ) -> Optional[Dict[str, Any]]:
         """Placeholder for parsing with statements."""
         return None
-    
+
     def _fix_parent_child_relationships(self, ast: Dict[str, Any]) -> None:
         """
         Fix parent-child relationships in the AST.
-        
+
         Args:
             ast: The abstract syntax tree to fix
         """
         # Implement parent-child relationship fixing logic here
         # This would walk the AST and ensure all nodes have correct parent and children references
-        pass 
+        pass

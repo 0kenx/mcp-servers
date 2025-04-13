@@ -20,56 +20,58 @@ from grammar.token_parser import ParserFactory
 def parse_cpp_code(code: str) -> None:
     """
     Parse C++ code and print the AST.
-    
+
     Args:
         code: C++ source code to parse
     """
     # Get a C++ parser from the factory
-    parser = ParserFactory.create_parser('cpp')
+    parser = ParserFactory.create_parser("cpp")
     if not parser:
         print("C++ parser is not available")
         return
-    
+
     # Parse the code
     ast = parser.parse(code)
-    
+
     # Create a function to remove circular references for JSON serialization
     def remove_circular_refs(node, visited=None):
         if visited is None:
             visited = set()
-        
+
         # Handle non-dict/list types
         if not isinstance(node, (dict, list)):
             return node
-        
+
         # Handle recursive structures
         node_id = id(node)
         if node_id in visited:
             return None  # or some placeholder like "[Circular]"
-        
+
         visited.add(node_id)
-        
+
         if isinstance(node, dict):
             # Create a new dict excluding 'parent' and any circular references
             result = {}
             for k, v in node.items():
-                if k != 'parent':  # Skip parent to avoid circular refs
+                if k != "parent":  # Skip parent to avoid circular refs
                     result[k] = remove_circular_refs(v, visited.copy())
             return result
-        
+
         elif isinstance(node, list):
             return [remove_circular_refs(item, visited.copy()) for item in node]
         else:
             return node
-    
+
     # Remove circular references and print the AST as JSON
     serializable_ast = remove_circular_refs(ast)
     print(json.dumps(serializable_ast, indent=2, default=str))
-    
+
     # Print the symbol table
     print("\nSymbol Table:")
     for symbol in parser.symbol_table.get_symbols_by_scope():
-        print(f"{symbol.name} ({symbol.symbol_type}) at line {symbol.line}, column {symbol.column}")
+        print(
+            f"{symbol.name} ({symbol.symbol_type}) at line {symbol.line}, column {symbol.column}"
+        )
 
 
 def main() -> None:
@@ -184,9 +186,9 @@ int main() {
     return 0;
 }
 """
-    
+
     parse_cpp_code(sample_code)
 
 
 if __name__ == "__main__":
-    main() 
+    main()

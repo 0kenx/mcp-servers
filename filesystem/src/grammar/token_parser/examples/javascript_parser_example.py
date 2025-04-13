@@ -21,31 +21,33 @@ from grammar.token_parser.ast_utils import format_ast_for_output
 def parse_javascript_code(code: str) -> None:
     """
     Parse JavaScript code and print the AST.
-    
+
     Args:
         code: JavaScript source code to parse
     """
     # Get a JavaScript parser from the factory
-    parser = ParserFactory.create_parser('javascript')
+    parser = ParserFactory.create_parser("javascript")
     if not parser:
         print("JavaScript parser is not available")
         return
-    
+
     # Parse the code
     ast = parser.parse(code)
-    
+
     # Format AST for output (removes circular references)
     serializable_ast = format_ast_for_output(ast)
     print(json.dumps(serializable_ast, indent=2, default=str))
-    
+
     # Print the symbol table
     print("\nSymbol Table:")
     symbols_by_scope = parser.symbol_table.get_symbols_by_scope()
-    
+
     for scope, symbols in symbols_by_scope.items():
         print(f"\nScope: {scope}")
         for symbol in symbols:
-            print(f"  {symbol.name} ({symbol.symbol_type}) at line {symbol.line}, column {symbol.column}")
+            print(
+                f"  {symbol.name} ({symbol.symbol_type}) at line {symbol.line}, column {symbol.column}"
+            )
 
 
 def main() -> None:
@@ -76,9 +78,9 @@ const example = new Example(5);
 const result = factorial(example.getValue());
 console.log(`Factorial of ${example.getValue()} is ${result}`);
 """
-    
+
     parse_javascript_code(sample_code)
 
 
 if __name__ == "__main__":
-    main() 
+    main()

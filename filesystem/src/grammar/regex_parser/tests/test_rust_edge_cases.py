@@ -44,19 +44,19 @@ where
 }
 """
         elements = self.parser.parse(code)
-        
+
         # Check that we found the expected elements
         self.assertGreaterEqual(len(elements), 3)
-        
+
         # Check for the macro definitions
         say_hello_macro = next((e for e in elements if e.name == "say_hello"), None)
         if say_hello_macro:  # Macro parsing is challenging, so this is optional
             self.assertEqual(say_hello_macro.element_type, ElementType.FUNCTION)
-        
+
         # Check for struct with derive macro
         point_struct = next((e for e in elements if e.name == "Point"), None)
         self.assertIsNotNone(point_struct)
-        
+
         # Check for the use_macros function
         use_macros_func = next((e for e in elements if e.name == "use_macros"), None)
         self.assertIsNotNone(use_macros_func)
@@ -180,24 +180,42 @@ impl std::fmt::Display for MyType {
 }
 """
         elements = self.parser.parse(code)
-        
+
         # Check that we found various trait elements
         self.assertGreaterEqual(len(elements), 8)
-        
+
         # Check for traits
-        animal_trait = next((e for e in elements if e.element_type == ElementType.TRAIT 
-                           and e.name == "Animal"), None)
+        animal_trait = next(
+            (
+                e
+                for e in elements
+                if e.element_type == ElementType.TRAIT and e.name == "Animal"
+            ),
+            None,
+        )
         self.assertIsNotNone(animal_trait)
-        
-        iterator_trait = next((e for e in elements if e.element_type == ElementType.TRAIT 
-                             and e.name == "Iterator"), None)
+
+        iterator_trait = next(
+            (
+                e
+                for e in elements
+                if e.element_type == ElementType.TRAIT and e.name == "Iterator"
+            ),
+            None,
+        )
         self.assertIsNotNone(iterator_trait)
-        
+
         # Check for structs
-        dog_struct = next((e for e in elements if e.element_type == ElementType.STRUCT 
-                         and e.name == "Dog"), None)
+        dog_struct = next(
+            (
+                e
+                for e in elements
+                if e.element_type == ElementType.STRUCT and e.name == "Dog"
+            ),
+            None,
+        )
         self.assertIsNotNone(dog_struct)
-        
+
         # Check for trait implementations
         impl_elements = [e for e in elements if e.element_type == ElementType.IMPL]
         self.assertGreaterEqual(len(impl_elements), 3)
@@ -298,27 +316,51 @@ fn returns_str_slice<'a>(slice: &'a str) -> impl Iterator<Item = &'a str> + 'a {
 }
 """
         elements = self.parser.parse(code)
-        
+
         # Check that we found various elements with lifetimes
         self.assertGreaterEqual(len(elements), 5)
-        
+
         # Check for structs with lifetimes
-        ref_struct = next((e for e in elements if e.element_type == ElementType.STRUCT 
-                          and e.name == "Ref"), None)
+        ref_struct = next(
+            (
+                e
+                for e in elements
+                if e.element_type == ElementType.STRUCT and e.name == "Ref"
+            ),
+            None,
+        )
         self.assertIsNotNone(ref_struct)
-        
-        ref_pair_struct = next((e for e in elements if e.element_type == ElementType.STRUCT 
-                               and e.name == "RefPair"), None)
+
+        ref_pair_struct = next(
+            (
+                e
+                for e in elements
+                if e.element_type == ElementType.STRUCT and e.name == "RefPair"
+            ),
+            None,
+        )
         self.assertIsNotNone(ref_pair_struct)
-        
+
         # Check for function with lifetime
-        longest_func = next((e for e in elements if e.element_type == ElementType.FUNCTION 
-                            and e.name == "longest"), None)
+        longest_func = next(
+            (
+                e
+                for e in elements
+                if e.element_type == ElementType.FUNCTION and e.name == "longest"
+            ),
+            None,
+        )
         self.assertIsNotNone(longest_func)
-        
+
         # Check for trait
-        matcher_trait = next((e for e in elements if e.element_type == ElementType.TRAIT 
-                             and e.name == "Matcher"), None)
+        matcher_trait = next(
+            (
+                e
+                for e in elements
+                if e.element_type == ElementType.TRAIT and e.name == "Matcher"
+            ),
+            None,
+        )
         self.assertIsNotNone(matcher_trait)
 
     def test_advanced_patterns(self):
@@ -435,26 +477,30 @@ fn process_stack(mut stack: Vec<i32>) {
 }
 """
         elements = self.parser.parse(code)
-        
+
         # Check that we found various elements
         self.assertGreaterEqual(len(elements), 5)
-        
+
         # Check for enum
         message_enum = next((e for e in elements if e.name == "Message"), None)
         self.assertIsNotNone(message_enum)
-        
+
         # Check for structs
         point_struct = next((e for e in elements if e.name == "Point"), None)
         self.assertIsNotNone(point_struct)
-        
+
         rectangle_struct = next((e for e in elements if e.name == "Rectangle"), None)
         self.assertIsNotNone(rectangle_struct)
-        
+
         # Check for functions with pattern matching
-        process_message_func = next((e for e in elements if e.name == "process_message"), None)
+        process_message_func = next(
+            (e for e in elements if e.name == "process_message"), None
+        )
         self.assertIsNotNone(process_message_func)
-        
-        describe_number_func = next((e for e in elements if e.name == "describe_number"), None)
+
+        describe_number_func = next(
+            (e for e in elements if e.name == "describe_number"), None
+        )
         self.assertIsNotNone(describe_number_func)
 
     def test_unsafe_code(self):
@@ -555,26 +601,28 @@ fn reinterpret_bytes() {
 }
 """
         elements = self.parser.parse(code)
-        
+
         # Check that we found various elements with unsafe code
         self.assertGreaterEqual(len(elements), 5)
-        
+
         # Check for functions with unsafe blocks
         access_fn = next((e for e in elements if e.name == "access_raw_pointer"), None)
         self.assertIsNotNone(access_fn)
-        
+
         # Check for unsafe function
         dangerous_fn = next((e for e in elements if e.name == "dangerous"), None)
         self.assertIsNotNone(dangerous_fn)
-        
+
         # Check for unsafe trait
         unsafe_trait = next((e for e in elements if e.name == "UnsafeTrait"), None)
         self.assertIsNotNone(unsafe_trait)
-        
+
         # Check for extern block
-        extern_fns = [e for e in elements if "extern" in str(e.metadata.get("docstring", ""))]
+        extern_fns = [
+            e for e in elements if "extern" in str(e.metadata.get("docstring", ""))
+        ]
         self.assertGreaterEqual(len(extern_fns), 1)
-        
+
         # Check for union
         int_or_float_union = next((e for e in elements if e.name == "IntOrFloat"), None)
         self.assertIsNotNone(int_or_float_union)
@@ -728,29 +776,31 @@ impl SelfReferential {
 }
 """
         elements = self.parser.parse(code)
-        
+
         # Check that we found various advanced elements
         self.assertGreaterEqual(len(elements), 8)
-        
+
         # Check for a struct with derive attributes
         point_struct = next((e for e in elements if e.name == "Point"), None)
         self.assertIsNotNone(point_struct)
-        
+
         # Check for functions
-        optimized_fn = next((e for e in elements if e.name == "optimized_function"), None)
+        optimized_fn = next(
+            (e for e in elements if e.name == "optimized_function"), None
+        )
         self.assertIsNotNone(optimized_fn)
-        
+
         # Check for trait and implementation
         container_trait = next((e for e in elements if e.name == "Container"), None)
         self.assertIsNotNone(container_trait)
-        
+
         # Check for async functions
         fetch_data_fn = next((e for e in elements if e.name == "fetch_data"), None)
         self.assertIsNotNone(fetch_data_fn)
-        
+
         process_url_fn = next((e for e in elements if e.name == "process_url"), None)
         self.assertIsNotNone(process_url_fn)
-        
+
         # Check for struct with const generics
         array_struct = next((e for e in elements if e.name == "Array"), None)
         self.assertIsNotNone(array_struct)
@@ -820,22 +870,27 @@ fn unsafe_function() {
 """
         try:
             elements = self.parser.parse(code)
-            
+
             # Even with syntax errors, the parser should be able to identify some elements
-            self.assertGreaterEqual(len(elements), 1, "Should find at least one element despite syntax errors")
-            
+            self.assertGreaterEqual(
+                len(elements),
+                1,
+                "Should find at least one element despite syntax errors",
+            )
+
             # Check if any elements were found
             functions = [e for e in elements if e.element_type == ElementType.FUNCTION]
             structs = [e for e in elements if e.element_type == ElementType.STRUCT]
-            
-            print(f"Found {len(functions)} functions and {len(structs)} structs in incomplete code")
-            
+
+            print(
+                f"Found {len(functions)} functions and {len(structs)} structs in incomplete code"
+            )
+
             # This is a stretch goal - parsers may not handle incomplete code well
-            
+
         except Exception as e:
             self.fail(f"Parser crashed on incomplete code: {e}")
 
 
 if __name__ == "__main__":
     unittest.main()
-

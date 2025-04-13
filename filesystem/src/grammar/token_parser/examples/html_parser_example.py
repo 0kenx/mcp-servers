@@ -21,27 +21,27 @@ from grammar.token_parser.ast_utils import format_ast_for_output
 def parse_html_code(code: str) -> None:
     """
     Parse HTML code and print the AST.
-    
+
     Args:
         code: HTML source code to parse
     """
     # Get an HTML parser from the factory
-    parser = ParserFactory.create_parser('html')
+    parser = ParserFactory.create_parser("html")
     if not parser:
         print("HTML parser is not available")
         return
-    
+
     # Parse the code
     ast = parser.parse(code)
-    
+
     # Format AST for output (removes circular references)
     serializable_ast = format_ast_for_output(ast)
     print(json.dumps(serializable_ast, indent=2, default=str))
-    
+
     # Print the symbol table
     print("\nSymbol Table:")
     all_symbols = parser.symbol_table.get_symbols_by_scope()
-    
+
     for scope, symbols in all_symbols.items():
         print(f"\nScope: {scope}")
         for symbol in symbols:
@@ -49,11 +49,15 @@ def parse_html_code(code: str) -> None:
             if symbol.metadata and "attributes" in symbol.metadata:
                 attributes = symbol.metadata["attributes"]
                 if attributes:
-                    attrs = [attr.get("name", "") for attr in attributes if "name" in attr]
+                    attrs = [
+                        attr.get("name", "") for attr in attributes if "name" in attr
+                    ]
                     if attrs:
                         metadata_str = f", Attributes: {', '.join(attrs)}"
-            
-            print(f"  {symbol.name} (Type: {symbol.symbol_type}, Line: {symbol.line}, Column: {symbol.column}{metadata_str})")
+
+            print(
+                f"  {symbol.name} (Type: {symbol.symbol_type}, Line: {symbol.line}, Column: {symbol.column}{metadata_str})"
+            )
 
 
 def main() -> None:
@@ -157,9 +161,9 @@ def main() -> None:
 </body>
 </html>
 """
-    
+
     parse_html_code(sample_code)
 
 
 if __name__ == "__main__":
-    main() 
+    main()

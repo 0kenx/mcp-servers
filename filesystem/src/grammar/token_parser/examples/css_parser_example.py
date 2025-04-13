@@ -21,27 +21,27 @@ from grammar.token_parser.ast_utils import format_ast_for_output
 def parse_css_code(code: str) -> None:
     """
     Parse CSS code and print the AST.
-    
+
     Args:
         code: CSS source code to parse
     """
     # Get a CSS parser from the factory
-    parser = ParserFactory.create_parser('css')
+    parser = ParserFactory.create_parser("css")
     if not parser:
         print("CSS parser is not available")
         return
-    
+
     # Parse the code
     ast = parser.parse(code)
-    
+
     # Format AST for output (removes circular references)
     serializable_ast = format_ast_for_output(ast)
     print(json.dumps(serializable_ast, indent=2, default=str))
-    
+
     # Print the symbol table
     print("\nSymbol Table:")
     all_symbols = parser.symbol_table.get_symbols_by_scope()
-    
+
     for scope, symbols in all_symbols.items():
         print(f"\nScope: {scope}")
         for symbol in symbols:
@@ -51,8 +51,10 @@ def parse_css_code(code: str) -> None:
                     metadata_str = f", Value: {symbol.metadata['value']}"
                 elif "parameters" in symbol.metadata:
                     metadata_str = f", Parameters: {symbol.metadata['parameters']}"
-                
-            print(f"  {symbol.name} (Type: {symbol.symbol_type}, Line: {symbol.line}, Column: {symbol.column}{metadata_str})")
+
+            print(
+                f"  {symbol.name} (Type: {symbol.symbol_type}, Line: {symbol.line}, Column: {symbol.column}{metadata_str})"
+            )
 
 
 def main() -> None:
@@ -218,9 +220,9 @@ footer {
     animation: fadeIn 0.5s ease forwards;
 }
 """
-    
+
     parse_css_code(sample_code)
 
 
 if __name__ == "__main__":
-    main() 
+    main()

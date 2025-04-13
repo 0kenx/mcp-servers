@@ -8,7 +8,6 @@ the language of the input code.
 """
 
 import sys
-import json
 from pathlib import Path
 
 # Add the parent directory to the Python path
@@ -16,41 +15,42 @@ parent_dir = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.append(str(parent_dir))
 
 from grammar.token_parser import ParserFactory
-from grammar.token_parser.ast_utils import format_ast_for_output
 
 
 def parse_code(code: str, language: str) -> None:
     """
     Parse code using the appropriate parser.
-    
+
     Args:
         code: Source code to parse
         language: Programming language of the code
     """
     print(f"\n=== Parsing {language.upper()} Code ===\n")
-    
+
     # Get the appropriate parser from the factory
     parser = ParserFactory.create_parser(language)
     if not parser:
         print(f"{language} parser is not available")
         return
-    
+
     # Parse the code
     ast = parser.parse(code)
-    
+
     # Print basic info about the AST
     print(f"AST Type: {ast.get('type')}")
     print(f"Body Length: {len(ast.get('body', []))}")
     print(f"Children: {len(ast.get('children', []))}")
-    
+
     # Print the symbol table
     print("\nSymbol Table:")
     symbols_by_scope = parser.symbol_table.get_symbols_by_scope()
-    
+
     for scope, symbols in symbols_by_scope.items():
         print(f"\nScope: {scope}")
         for symbol in symbols:
-            print(f"  {symbol.name} ({symbol.symbol_type}) at line {symbol.line}, column {symbol.column}")
+            print(
+                f"  {symbol.name} ({symbol.symbol_type}) at line {symbol.line}, column {symbol.column}"
+            )
 
 
 def main() -> None:
@@ -58,7 +58,7 @@ def main() -> None:
     # Print available parsers
     supported_languages = ParserFactory.get_supported_languages()
     print(f"Supported languages: {', '.join(supported_languages)}")
-    
+
     # Sample Python code
     python_code = """
 def greeting(name: str) -> str:
@@ -76,7 +76,7 @@ user = User("World")
 message = user.greet()
 print(message)
 """
-    
+
     # Sample JavaScript code
     javascript_code = """
 function greeting(name) {
@@ -421,7 +421,7 @@ begin program
     endwhile
 end program
 """
-    
+
     # Parse each language
     parse_code(python_code, "python")
     parse_code(javascript_code, "javascript")

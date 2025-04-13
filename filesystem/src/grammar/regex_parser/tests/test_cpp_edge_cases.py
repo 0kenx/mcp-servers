@@ -84,19 +84,21 @@ public:
 };
 """
         elements = self.parser.parse(code)
-        
+
         # Should identify at least the main template classes and functions
         self.assertGreaterEqual(len(elements), 3)
-        
+
         # Check for the AdvancedContainer class
-        container_class = next((e for e in elements if e.name == "AdvancedContainer"), None)
+        container_class = next(
+            (e for e in elements if e.name == "AdvancedContainer"), None
+        )
         self.assertIsNotNone(container_class)
         self.assertEqual(container_class.element_type, ElementType.CLASS)
-        
+
         # Check for the sum function
         sum_func = next((e for e in elements if e.name == "sum"), None)
         self.assertIsNotNone(sum_func)
-        
+
         # Check for template specialization
         is_pointer_struct = next((e for e in elements if e.name == "IsPointer"), None)
         self.assertIsNotNone(is_pointer_struct)
@@ -160,15 +162,15 @@ public:
 };
 """
         elements = self.parser.parse(code)
-        
+
         # Should identify all classes
         classes = [e for e in elements if e.element_type == ElementType.CLASS]
         self.assertGreaterEqual(len(classes), 7)
-        
+
         # Check for the Derived class
         derived_class = next((c for c in classes if c.name == "Derived"), None)
         self.assertIsNotNone(derived_class)
-        
+
         # Check for the Diamond class
         diamond_class = next((c for c in classes if c.name == "Diamond"), None)
         self.assertIsNotNone(diamond_class)
@@ -247,21 +249,27 @@ std::ostream& operator<<(std::ostream& os, const Complex& c) {
 }
 """
         elements = self.parser.parse(code)
-        
+
         # Should identify the class and operators
         self.assertGreaterEqual(len(elements), 1)
-        
+
         # Check for the Complex class
         complex_class = next((e for e in elements if e.name == "Complex"), None)
         self.assertIsNotNone(complex_class)
-        
+
         # Check for method count - should find multiple operator methods
         methods = [e for e in elements if e.element_type == ElementType.METHOD]
         self.assertGreaterEqual(len(methods), 8)
-        
+
         # Check for the non-member operator
-        operator_func = next((e for e in elements if e.element_type == ElementType.FUNCTION 
-                             and "operator" in e.name), None)
+        operator_func = next(
+            (
+                e
+                for e in elements
+                if e.element_type == ElementType.FUNCTION and "operator" in e.name
+            ),
+            None,
+        )
         self.assertIsNotNone(operator_func)
 
     def test_friend_functions_and_classes(self):
@@ -310,23 +318,23 @@ void ComplexHelper::reset(Complex& c) {
 }
 """
         elements = self.parser.parse(code)
-        
+
         # Should identify the classes and friend functions
         classes = [e for e in elements if e.element_type == ElementType.CLASS]
         self.assertGreaterEqual(len(classes), 2)
-        
+
         # Check for the Complex class
         complex_class = next((c for c in classes if c.name == "Complex"), None)
         self.assertIsNotNone(complex_class)
-        
+
         # Check for the ComplexHelper class
         helper_class = next((c for c in classes if c.name == "ComplexHelper"), None)
         self.assertIsNotNone(helper_class)
-        
+
         # Check for the friend functions
         functions = [e for e in elements if e.element_type == ElementType.FUNCTION]
         self.assertGreaterEqual(len(functions), 1)
-        
+
         # Check for at least one operator function
         operator_func = next((f for f in functions if "operator" in f.name), None)
         self.assertIsNotNone(operator_func)
@@ -385,24 +393,28 @@ namespace A::B::C {
 }
 """
         elements = self.parser.parse(code)
-        
+
         # Check for namespaces
         namespaces = [e for e in elements if e.element_type == ElementType.NAMESPACE]
         self.assertGreaterEqual(len(namespaces), 2)
-        
+
         # Check for the Outer namespace
         outer_ns = next((ns for ns in namespaces if ns.name == "Outer"), None)
         self.assertIsNotNone(outer_ns)
-        
+
         # Check for classes
         classes = [e for e in elements if e.element_type == ElementType.CLASS]
         self.assertGreaterEqual(len(classes), 2)
-        
+
         # Check for functions
-        functions = [e for e in elements if e.element_type == ElementType.FUNCTION 
-                    or e.element_type == ElementType.METHOD]
+        functions = [
+            e
+            for e in elements
+            if e.element_type == ElementType.FUNCTION
+            or e.element_type == ElementType.METHOD
+        ]
         self.assertGreaterEqual(len(functions), 2)
-        
+
         # This is a stretch goal - checking for nested elements with correct parent-child relationships
         # The parent-child relationships for nested namespaces and classes are complex
         # and may not be fully captured
@@ -478,29 +490,45 @@ int process(int value) {
 }
 """
         elements = self.parser.parse(code)
-        
+
         # Should identify classes and functions despite preprocessor directives
         self.assertGreaterEqual(len(elements), 3)
-        
+
         # Check for includes
         includes = [e for e in elements if e.element_type == ElementType.IMPORT]
         self.assertGreaterEqual(len(includes), 2)
-        
+
         # Check for the class
-        test_class = next((e for e in elements if e.element_type == ElementType.CLASS 
-                          and e.name == "TestClass"), None)
+        test_class = next(
+            (
+                e
+                for e in elements
+                if e.element_type == ElementType.CLASS and e.name == "TestClass"
+            ),
+            None,
+        )
         self.assertIsNotNone(test_class)
-        
+
         # Check for the function
-        process_func = next((e for e in elements if e.element_type == ElementType.FUNCTION 
-                            and e.name == "process"), None)
+        process_func = next(
+            (
+                e
+                for e in elements
+                if e.element_type == ElementType.FUNCTION and e.name == "process"
+            ),
+            None,
+        )
         self.assertIsNotNone(process_func)
-        
+
         # Check for definition of MAX_SIZE
         # This is a stretch goal - parsers may not extract preprocessor definitions
-        constants = [e for e in elements if e.element_type == ElementType.CONSTANT 
-                    or e.element_type == ElementType.VARIABLE]
-        
+        constants = [
+            e
+            for e in elements
+            if e.element_type == ElementType.CONSTANT
+            or e.element_type == ElementType.VARIABLE
+        ]
+
         if constants:
             max_size = next((c for c in constants if c.name == "MAX_SIZE"), None)
             if max_size:
@@ -610,28 +638,34 @@ public:
 #endif
 """
         elements = self.parser.parse(code)
-        
+
         # Should identify various elements despite modern C++ features
         self.assertGreaterEqual(len(elements), 5)
-        
+
         # Check for functions
         functions = [e for e in elements if e.element_type == ElementType.FUNCTION]
         self.assertGreaterEqual(len(functions), 3)
-        
+
         # Check for some specific functions
         calculate_func = next((f for f in functions if f.name == "calculate"), None)
         self.assertIsNotNone(calculate_func)
-        
+
         factorial_func = next((f for f in functions if f.name == "factorial"), None)
         self.assertIsNotNone(factorial_func)
-        
+
         # Check for variables including lambda
-        variables = [e for e in elements if e.element_type == ElementType.VARIABLE 
-                    or e.element_type == ElementType.CONSTANT]
+        variables = [
+            e
+            for e in elements
+            if e.element_type == ElementType.VARIABLE
+            or e.element_type == ElementType.CONSTANT
+        ]
         self.assertGreaterEqual(len(variables), 1)
-        
+
         # Check for templates
-        templates = [f for f in functions if "template" in f.metadata.get("docstring", "")]
+        templates = [
+            f for f in functions if "template" in f.metadata.get("docstring", "")
+        ]
         self.assertGreaterEqual(len(templates), 1)
 
     def test_incomplete_code(self):
@@ -686,22 +720,29 @@ std::vector<std::pair<int, std::string>> data
 """
         try:
             elements = self.parser.parse(code)
-            
+
             # Should identify at least some elements despite syntax errors
-            self.assertGreaterEqual(len(elements), 1, "Should find at least one element")
-            
+            self.assertGreaterEqual(
+                len(elements), 1, "Should find at least one element"
+            )
+
             # Check for some identifiable elements
             classes = [e for e in elements if e.element_type == ElementType.CLASS]
             functions = [e for e in elements if e.element_type == ElementType.FUNCTION]
-            
-            print(f"Found {len(classes)} classes and {len(functions)} functions in incomplete code")
-            
+
+            print(
+                f"Found {len(classes)} classes and {len(functions)} functions in incomplete code"
+            )
+
             # Test that the parser handled incomplete code gracefully
             for element in elements:
                 self.assertIsNotNone(element.name, "Elements should have names")
-                self.assertGreater(element.end_line, element.start_line, 
-                                 "End line should be greater than start line")
-            
+                self.assertGreater(
+                    element.end_line,
+                    element.start_line,
+                    "End line should be greater than start line",
+                )
+
         except Exception as e:
             self.fail(f"Parser crashed on incomplete code: {e}")
 
@@ -785,11 +826,13 @@ auto convert(const T& value) -> U {
 }
 """
         elements = self.parser.parse(code)
-        
+
         # Check that we found the complex function
-        complex_func = next((e for e in elements if e.name == "complex_expressions"), None)
+        complex_func = next(
+            (e for e in elements if e.name == "complex_expressions"), None
+        )
         self.assertIsNotNone(complex_func)
-        
+
         # Check that we found the template function
         convert_func = next((e for e in elements if e.name == "convert"), None)
         self.assertIsNotNone(convert_func)

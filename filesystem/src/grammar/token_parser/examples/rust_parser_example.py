@@ -20,21 +20,21 @@ from src.grammar.token_parser.token import Token
 def parse_rust_code(rust_code: str) -> None:
     """
     Parse Rust code using the RustParser and print the AST.
-    
+
     Args:
         rust_code: Rust source code to parse
     """
     # Create a parser instance
     parser_factory = ParserFactory()
     parser = parser_factory.create_parser("rust")
-    
+
     if not parser:
         print("Failed to create Rust parser.")
         return
-    
+
     # Parse the code
     ast = parser.parse(rust_code)
-    
+
     # Helper function to remove circular references for JSON serialization
     def remove_circular_refs(node):
         if isinstance(node, dict):
@@ -42,25 +42,31 @@ def parse_rust_code(rust_code: str) -> None:
             for child in node.get("children", []):
                 remove_circular_refs(child)
             # Convert Token objects to string representations
-            if "tokens" in node and node["tokens"] and isinstance(node["tokens"][0], Token):
+            if (
+                "tokens" in node
+                and node["tokens"]
+                and isinstance(node["tokens"][0], Token)
+            ):
                 node["tokens"] = [str(token) for token in node["tokens"]]
             return node
         return node
-    
+
     # Print the AST
     print("\nAST Structure:")
     ast_serializable = remove_circular_refs(ast.copy())
     print(json.dumps(ast_serializable, indent=2))
-    
+
     # Print symbols found
     print("\nSymbol Table:")
     symbol_table = parser.symbol_table
     all_symbols = symbol_table.get_symbols_by_scope()
-    
+
     for scope, symbols in all_symbols.items():
         print(f"\nScope: {scope}")
         for symbol in symbols:
-            print(f"  {symbol.name} (Type: {symbol.symbol_type}, Line: {symbol.line}, Column: {symbol.column})")
+            print(
+                f"  {symbol.name} (Type: {symbol.symbol_type}, Line: {symbol.line}, Column: {symbol.column})"
+            )
 
 
 def main():
@@ -163,10 +169,10 @@ fn main() {
     }
 }
 """
-    
+
     print("=== Parsing Rust Code ===")
     parse_rust_code(rust_code)
 
 
 if __name__ == "__main__":
-    main() 
+    main()

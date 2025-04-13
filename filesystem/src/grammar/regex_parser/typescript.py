@@ -7,7 +7,7 @@ build a structured representation of the code elements.
 """
 
 import re
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Tuple, Any
 from .javascript import JavaScriptParser
 from .base import CodeElement, ElementType
 
@@ -16,7 +16,7 @@ class TypeScriptParser(JavaScriptParser):
     """
     Parser for TypeScript code that extends the JavaScript parser.
     Handles additional TypeScript syntax elements like interfaces, type aliases, etc.
-    
+
     Includes built-in preprocessing for incomplete code and metadata extraction.
     """
 
@@ -87,22 +87,24 @@ class TypeScriptParser(JavaScriptParser):
             r"^\s*@([a-zA-Z_$][a-zA-Z0-9_$\.]*)"
             r"(?:\(.*?\))?"
         )
-        
+
         # Update allowed nestings for TypeScript
-        self.allowed_nestings.extend([
-            ('global', 'interface'),
-            ('global', 'type_definition'),
-            ('global', 'enum'),
-            ('global', 'namespace'),
-            ('namespace', 'function'),
-            ('namespace', 'interface'),
-            ('namespace', 'class'),
-            ('namespace', 'variable'),
-            ('namespace', 'enum'),
-            ('namespace', 'type_definition'),
-            ('interface', 'method'),
-            ('interface', 'variable'),
-        ])
+        self.allowed_nestings.extend(
+            [
+                ("global", "interface"),
+                ("global", "type_definition"),
+                ("global", "enum"),
+                ("global", "namespace"),
+                ("namespace", "function"),
+                ("namespace", "interface"),
+                ("namespace", "class"),
+                ("namespace", "variable"),
+                ("namespace", "enum"),
+                ("namespace", "type_definition"),
+                ("interface", "method"),
+                ("interface", "variable"),
+            ]
+        )
 
     def _extract_class_methods(
         self,
@@ -918,159 +920,177 @@ class TypeScriptParser(JavaScriptParser):
     def _fix_ts_specific(self, code: str) -> Tuple[str, bool, Dict[str, Any]]:
         """
         Apply TypeScript-specific fixes.
-        
+
         Args:
             code: Source code to fix
-            
+
         Returns:
             Tuple of (fixed code, was_modified flag, diagnostics)
         """
         # First apply JavaScript-specific fixes
         code, js_modified, js_diagnostics = self._fix_js_specific(code)
-        
+
         lines = code.splitlines()
         modified = js_modified
         diagnostics = js_diagnostics.copy() if js_modified else {"ts_fixes": []}
-        
+
         if "ts_fixes" not in diagnostics:
             diagnostics["ts_fixes"] = []
-        
+
         # Fix incomplete interface declarations
         interface_fixed_lines = []
         i = 0
         while i < len(lines):
             line = lines[i]
-            
+
             # Check for interface declarations
-            if re.match(r'^\s*(?:export\s+)?interface\s+\w+\s*\{', line) and i + 1 < len(lines):
+            if re.match(
+                r"^\s*(?:export\s+)?interface\s+\w+\s*\{", line
+            ) and i + 1 < len(lines):
                 # Look ahead to see if the interface body is empty or missing properties
                 next_line = lines[i + 1].strip()
                 if next_line == "}":
                     # Empty interface, this is allowed in TypeScript
                     interface_fixed_lines.append(line)
-                elif not next_line.endswith(";") and ":" in next_line and not next_line.endswith("{"):
+                elif (
+                    not next_line.endswith(";")
+                    and ":" in next_line
+                    and not next_line.endswith("{")
+                ):
                     # Missing semicolon in interface property
                     interface_fixed_lines.append(line)
                     interface_fixed_lines.append(lines[i + 1] + ";")
                     modified = True
-                    diagnostics["ts_fixes"].append("added_missing_semicolon_to_interface")
+                    diagnostics["ts_fixes"].append(
+                        "added_missing_semicolon_to_interface"
+                    )
                     i += 2
                     continue
-            
+
             interface_fixed_lines.append(line)
             i += 1
-        
+
         if modified:
-            code = '\n'.join(interface_fixed_lines)
-        
+            code = "\n".join(interface_fixed_lines)
+
         # Fix incomplete type declarations
         type_fixed_lines = []
         i = 0
         while i < len(lines):
             line = lines[i]
-            
+
             # Check for type declarations without semicolons
-            if re.match(r'^\s*(?:export\s+)?type\s+\w+\s*=', line) and not line.strip().endswith(";"):
+            if re.match(
+                r"^\s*(?:export\s+)?type\s+\w+\s*=", line
+            ) and not line.strip().endswith(";"):
                 # Add semicolon if missing
                 type_fixed_lines.append(line + ";")
                 modified = True
                 diagnostics["ts_fixes"].append("added_missing_semicolon_to_type")
             else:
                 type_fixed_lines.append(line)
-            
+
             i += 1
-        
+
         if modified:
-            code = '\n'.join(type_fixed_lines)
-        
+            code = "\n".join(type_fixed_lines)
+
         return code, modified, diagnostics
-    
+
     def extract_metadata(self, code: str, line_idx: int) -> Dict[str, Any]:
         """
         Extract TypeScript-specific metadata from code.
-        
+
         Args:
             code: The full source code
             line_idx: The line index where the symbol definition starts
-            
+
         Returns:
             Dictionary containing docstrings, decorators, type annotations, etc.
         """
         # Get metadata from JavaScript parser first
         metadata = super().extract_metadata(code, line_idx)
-        
+
         lines = code.splitlines()
         if line_idx >= len(lines):
             return metadata
-            
+
         line = lines[line_idx]
-        
+
         # Extract TypeScript-specific type information
         # Look for type parameters in generic functions/classes
-        if '<' in line and '>' in line and ('function' in line or 'class' in line or 'interface' in line):
-            type_params_match = re.search(r'<([^>]+)>', line)
+        if (
+            "<" in line
+            and ">" in line
+            and ("function" in line or "class" in line or "interface" in line)
+        ):
+            type_params_match = re.search(r"<([^>]+)>", line)
             if type_params_match:
                 type_params = type_params_match.group(1)
-                metadata["type_parameters"] = [p.strip() for p in type_params.split(',')]
-        
+                metadata["type_parameters"] = [
+                    p.strip() for p in type_params.split(",")
+                ]
+
         # Extract visibility modifiers for class members
-        if 'class' in metadata.get("docstring", "") or (line_idx > 0 and 'class' in lines[line_idx-1]):
-            if 'private ' in line:
+        if "class" in metadata.get("docstring", "") or (
+            line_idx > 0 and "class" in lines[line_idx - 1]
+        ):
+            if "private " in line:
                 metadata["visibility"] = "private"
-            elif 'protected ' in line:
+            elif "protected " in line:
                 metadata["visibility"] = "protected"
-            elif 'public ' in line:
+            elif "public " in line:
                 metadata["visibility"] = "public"
-                
+
         # Extract optional parameters (those with ?)
-        if '?' in line and ':' in line:
+        if "?" in line and ":" in line:
             metadata["optional"] = True
-            
+
         return metadata
-        
+
     def preprocess_incomplete_code(self, code: str) -> Tuple[str, bool, Dict[str, Any]]:
         """
         Preprocess TypeScript code that might be incomplete or have syntax errors.
-        
+
         Args:
             code: The original code that might have issues
-            
+
         Returns:
             Tuple of (preprocessed code, was_modified flag, diagnostics)
         """
         # First apply basic and JavaScript fixes
         code, basic_modified = self._apply_basic_fixes(code)
-        
+
         diagnostics = {
             "fixes_applied": [],
             "confidence_score": 1.0,
         }
-        
+
         modified = basic_modified
         if basic_modified:
             diagnostics["fixes_applied"].append("basic_syntax_fixes")
-            
+
         # Apply TypeScript-specific fixes
         code, ts_modified, ts_diagnostics = self._fix_ts_specific(code)
         if ts_modified:
             modified = True
             diagnostics["fixes_applied"].append("typescript_specific_fixes")
             diagnostics.update(ts_diagnostics)
-            
+
         # Apply structural fixes
         code, struct_modified, struct_diagnostics = self._fix_structural_issues(code)
         if struct_modified:
             modified = True
             diagnostics["fixes_applied"].append("structural_fixes")
             diagnostics.update(struct_diagnostics)
-            
+
         # Calculate overall confidence
         if modified:
             # More fixes = less confidence
             num_fixes = len(diagnostics["fixes_applied"])
             diagnostics["confidence_score"] = max(0.3, 1.0 - (num_fixes * 0.2))
-            
+
         self._preprocessing_diagnostics = diagnostics
         self._was_code_modified = modified
-            
+
         return code, modified, diagnostics

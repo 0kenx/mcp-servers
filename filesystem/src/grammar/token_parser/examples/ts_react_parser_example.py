@@ -21,36 +21,41 @@ from grammar.token_parser.ast_utils import format_ast_for_output
 def parse_tsx_code(code: str) -> None:
     """
     Parse TypeScript React code and print the AST.
-    
+
     Args:
         code: TypeScript React source code to parse
     """
     # Get a TS-React parser from the factory
-    parser = ParserFactory.create_parser('tsx')
+    parser = ParserFactory.create_parser("tsx")
     if not parser:
         print("TypeScript React parser is not available")
         return
-    
+
     # Parse the code
     ast = parser.parse(code)
-    
+
     # Format AST for output (removes circular references)
     serializable_ast = format_ast_for_output(ast)
     print(json.dumps(serializable_ast, indent=2, default=str))
-    
+
     # Print the symbol table
     print("\nSymbol Table:")
     all_symbols = parser.symbol_table.get_symbols_by_scope()
-    
+
     for scope, symbols in all_symbols.items():
         print(f"\nScope: {scope}")
         for symbol in symbols:
             metadata_str = ""
             if symbol.metadata:
-                if "attributes" in symbol.metadata and symbol.symbol_type == "jsx_element":
+                if (
+                    "attributes" in symbol.metadata
+                    and symbol.symbol_type == "jsx_element"
+                ):
                     metadata_str = f", Attributes: {symbol.metadata['attributes']}"
-                
-            print(f"  {symbol.name} (Type: {symbol.symbol_type}, Line: {symbol.line}, Column: {symbol.column}{metadata_str})")
+
+            print(
+                f"  {symbol.name} (Type: {symbol.symbol_type}, Line: {symbol.line}, Column: {symbol.column}{metadata_str})"
+            )
 
 
 def main() -> None:
@@ -165,9 +170,9 @@ const App: FC = () => {
 
 export default App;
 """
-    
+
     parse_tsx_code(sample_code)
 
 
 if __name__ == "__main__":
-    main() 
+    main()

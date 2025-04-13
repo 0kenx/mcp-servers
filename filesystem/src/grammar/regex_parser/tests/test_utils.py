@@ -50,9 +50,14 @@ def find_element_by_type_and_name(
         The matching element, or None if not found
     """
     # Special case for JS test with constructor
-    if element_type == ElementType.METHOD and name == "constructor" and parser and hasattr(parser, "_js_constructor"):
+    if (
+        element_type == ElementType.METHOD
+        and name == "constructor"
+        and parser
+        and hasattr(parser, "_js_constructor")
+    ):
         return getattr(parser, "_js_constructor")
-        
+
     # Regular search
     for element in elements:
         if element.element_type == element_type and element.name == name:
